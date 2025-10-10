@@ -1,0 +1,73 @@
+"""
+股票相关的数据模型
+"""
+from typing import List, Optional, Literal
+from pydantic import BaseModel, Field
+
+
+class StockSearchResult(BaseModel):
+    """股票搜索结果"""
+    code: str = Field(..., description="股票代码")
+    name: str = Field(..., description="股票名称")
+    current_price: float = Field(..., description="当前价格")
+
+
+class StockSearchResponse(BaseModel):
+    """股票搜索响应"""
+    success: bool = True
+    results: List[StockSearchResult]
+
+
+class ChartDataPoint(BaseModel):
+    """图表数据点"""
+    datetime: str = Field(..., description="日期时间")
+    price: float = Field(..., description="收盘价")
+    volume: float = Field(..., description="成交量")
+    open: Optional[float] = Field(None, description="开盘价")
+    high: Optional[float] = Field(None, description="最高价")
+    low: Optional[float] = Field(None, description="最低价")
+
+
+class StockDataRequest(BaseModel):
+    """股票数据查询请求"""
+    symbol: str = Field(..., description="股票代码")
+    start_date: str = Field(..., description="开始日期，格式：YYYY-MM-DD")
+    end_date: str = Field(..., description="结束日期，格式：YYYY-MM-DD")
+    period: Literal["1min", "daily"] = Field(
+        "daily",
+        description="数据周期：1min（1分钟）或 daily（日线）"
+    )
+
+
+class StockDataResponse(BaseModel):
+    """股票数据查询响应"""
+    success: bool = True
+    symbol: str
+    start_date: str
+    end_date: str
+    period: str
+    chart_data: List[ChartDataPoint]
+    count: int
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "symbol": "000001",
+                "start_date": "2024-01-01",
+                "end_date": "2024-01-31",
+                "period": "daily",
+                "chart_data": [
+                    {
+                        "datetime": "2024-01-01",
+                        "price": 12.34,
+                        "volume": 1234567,
+                        "open": 12.30,
+                        "high": 12.40,
+                        "low": 12.25
+                    }
+                ],
+                "count": 20
+            }
+        }
+
