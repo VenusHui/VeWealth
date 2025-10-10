@@ -1,8 +1,9 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { 
-  LineChart,
+  ComposedChart,
+  Bar,
   Line,
   XAxis, 
   YAxis, 
@@ -28,56 +29,88 @@ interface StockChartProps {
 }
 
 interface AggregatedDataPoint {
-  priceRange: string
   price: number
   totalVolume: number
+  binVolume: number
   count: number
   percentage: number
+  binPercentage: number
 }
 
 export default function StockChart({ data, period }: StockChartProps) {
-  // 聚合相同价格区间的成交量
+  // 控制图表显示/隐藏
+  const [showBar, setShowBar] = useState(true)
+  const [showLine, setShowLine] = useState(true)
+
+  // 聚合相同价格的成交量，并计算区间成交量
   const aggregatedData = useMemo(() => {
     if (!data || data.length === 0) return []
 
-    // 计算价格范围
-    const prices = data.map(d => d.price)
-    const minPrice = Math.min(...prices)
-    const maxPrice = Math.max(...prices)
-    const priceRange = maxPrice - minPrice
-
-    // 动态确定价格区间大小（分成约50个区间）
-    const numBins = Math.min(50, data.length)
-    const binSize = priceRange / numBins || 0.01
-
-    // 按价格区间分组并累加成交量
+    // 1. 按具体价格分组并累加成交量
     const priceMap = new Map<number, { volume: number; count: number }>()
     
     data.forEach(point => {
-      // 将价格归入最接近的区间
-      const binPrice = Math.floor(point.price / binSize) * binSize
-      const existing = priceMap.get(binPrice) || { volume: 0, count: 0 }
-      priceMap.set(binPrice, {
+      // 直接使用具体价格值（保留2位小数）
+      const price = Number(point.price.toFixed(2))
+      const existing = priceMap.get(price) || { volume: 0, count: 0 }
+      priceMap.set(price, {
         volume: existing.volume + point.volume,
         count: existing.count + 1
       })
     })
 
-    // 转换为数组并排序
-    const result = Array.from(priceMap.entries())
+    // 2. 转换为数组并排序
+    const priceData = Array.from(priceMap.entries())
       .map(([price, data]) => ({
-        price: Number(price.toFixed(2)),
-        priceRange: `${price.toFixed(2)}-${(price + binSize).toFixed(2)}`,
+        price: price,
         totalVolume: data.volume,
         count: data.count,
-        percentage: 0 // 稍后计算
       }))
       .sort((a, b) => a.price - b.price)
 
-    // 计算百分比
+    if (priceData.length === 0) return []
+
+    // 3. 计算价格区间（用于折线图）
+    const prices = priceData.map(d => d.price)
+    const minPrice = Math.min(...prices)
+    const maxPrice = Math.max(...prices)
+    const priceRange = maxPrice - minPrice
+
+    // 动态确定价格区间大小（分成约50个区间）
+    const numBins = Math.min(50, priceData.length)
+    const binSize = priceRange / numBins || 0.01
+
+    // 4. 为每个价格点计算其所属区间的总成交量
+    const binMap = new Map<number, number>()
+    
+    priceData.forEach(point => {
+      const binPrice = Math.floor(point.price / binSize) * binSize
+      const existing = binMap.get(binPrice) || 0
+      binMap.set(binPrice, existing + point.totalVolume)
+    })
+
+    // 5. 合并数据
+    const result = priceData.map(point => {
+      const binPrice = Math.floor(point.price / binSize) * binSize
+      const binVolume = binMap.get(binPrice) || 0
+      
+      return {
+        price: point.price,
+        totalVolume: point.totalVolume,
+        binVolume: binVolume,
+        count: point.count,
+        percentage: 0,
+        binPercentage: 0
+      }
+    })
+
+    // 6. 计算百分比
     const totalVolume = result.reduce((sum, item) => sum + item.totalVolume, 0)
+    const totalBinVolume = Array.from(binMap.values()).reduce((sum, vol) => sum + vol, 0)
+    
     result.forEach(item => {
       item.percentage = (item.totalVolume / totalVolume) * 100
+      item.binPercentage = (item.binVolume / totalBinVolume) * 100
     })
 
     return result
@@ -118,20 +151,28 @@ export default function StockChart({ data, period }: StockChartProps) {
       return (
         <div className="bg-white p-3 border border-gray-300 rounded-lg shadow-lg">
           <p className="text-sm font-semibold text-gray-800 mb-2">
-            价格区间: ¥{data.priceRange}
+            价格: ¥{data.price.toFixed(2)}
           </p>
           <div className="space-y-1">
-            <p className="text-sm text-blue-600">
-              累计成交量: {data.totalVolume >= 100000000 
+            <p className="text-sm text-blue-600 font-semibold">
+              该价格成交量: {data.totalVolume >= 100000000 
                 ? `${(data.totalVolume / 100000000).toFixed(2)}亿` 
                 : data.totalVolume >= 10000 
                   ? `${(data.totalVolume / 10000).toFixed(0)}万`
                   : data.totalVolume.toLocaleString()}
             </p>
-            <p className="text-sm text-green-600">
-              占比: {data.percentage.toFixed(2)}%
+            <p className="text-sm text-orange-600 font-semibold">
+              区间成交量: {data.binVolume >= 100000000 
+                ? `${(data.binVolume / 100000000).toFixed(2)}亿` 
+                : data.binVolume >= 10000 
+                  ? `${(data.binVolume / 10000).toFixed(0)}万`
+                  : data.binVolume.toLocaleString()}
             </p>
-            <p className="text-sm text-gray-600">
+            <div className="border-t border-gray-200 my-1"></div>
+            <p className="text-xs text-gray-600">
+              该价格占比: {data.percentage.toFixed(2)}%
+            </p>
+            <p className="text-xs text-gray-600">
               交易次数: {data.count}
             </p>
           </div>
@@ -188,11 +229,35 @@ export default function StockChart({ data, period }: StockChartProps) {
 
       {/* 价格分布图 */}
       <div className="h-[500px] bg-white rounded-lg p-4 border border-gray-200">
-        <h3 className="text-lg font-semibold text-gray-700 mb-2">
-          价格-成交量分布图
-        </h3>
+        <div className="flex justify-between items-center mb-2">
+          <h3 className="text-lg font-semibold text-gray-700">
+            价格-成交量分布图
+          </h3>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowBar(!showBar)}
+              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                showBar
+                  ? 'bg-blue-500 text-white hover:bg-blue-600'
+                  : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+              }`}
+            >
+              {showBar ? '✓' : ''} 柱状图
+            </button>
+            <button
+              onClick={() => setShowLine(!showLine)}
+              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                showLine
+                  ? 'bg-orange-500 text-white hover:bg-orange-600'
+                  : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+              }`}
+            >
+              {showLine ? '✓' : ''} 折线图
+            </button>
+          </div>
+        </div>
         <ResponsiveContainer width="100%" height="90%">
-          <LineChart
+          <ComposedChart
             data={aggregatedData}
             margin={{
               top: 20,
@@ -218,10 +283,9 @@ export default function StockChart({ data, period }: StockChartProps) {
             />
             <YAxis 
               type="number"
-              dataKey="totalVolume" 
-              name="累计成交量"
+              name="成交量"
               label={{ 
-                value: '累计成交量', 
+                value: '成交量', 
                 angle: -90, 
                 position: 'insideLeft',
                 style: { fontSize: '14px', fontWeight: 'bold' }
@@ -229,7 +293,7 @@ export default function StockChart({ data, period }: StockChartProps) {
               tick={{ fontSize: 12 }}
               tickFormatter={formatVolume}
             />
-            <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: '3 3' }} />
+            <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(59, 130, 246, 0.1)' }} />
             <Legend 
               verticalAlign="top" 
               height={36}
@@ -256,16 +320,28 @@ export default function StockChart({ data, period }: StockChartProps) {
               />
             )}
             
-            <Line 
-              type="monotone"
-              dataKey="totalVolume"
-              name="成交量分布"
-              stroke="#3b82f6"
-              strokeWidth={3}
-              dot={{ r: 3, fill: '#3b82f6' }}
-              activeDot={{ r: 6 }}
-            />
-          </LineChart>
+            {/* 柱状图：具体价格成交量 */}
+            {showBar && (
+              <Bar 
+                dataKey="totalVolume"
+                name="该价格成交量"
+                fill="#3b82f6"
+                radius={[4, 4, 0, 0]}
+              />
+            )}
+            
+            {/* 折线图：区间成交量趋势 */}
+            {showLine && (
+              <Line 
+                type="monotone"
+                dataKey="binVolume"
+                name="区间成交量趋势"
+                stroke="#f97316"
+                strokeWidth={3}
+                dot={false}
+              />
+            )}
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
     </div>
