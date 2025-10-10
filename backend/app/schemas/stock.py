@@ -33,10 +33,6 @@ class StockDataRequest(BaseModel):
     symbol: str = Field(..., description="股票代码")
     start_date: str = Field(..., description="开始日期，格式：YYYY-MM-DD")
     end_date: str = Field(..., description="结束日期，格式：YYYY-MM-DD")
-    period: Literal["1min", "daily"] = Field(
-        "daily",
-        description="数据周期：1min（1分钟）或 daily（日线）"
-    )
 
 
 class StockDataResponse(BaseModel):

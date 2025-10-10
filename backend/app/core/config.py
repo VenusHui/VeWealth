@@ -27,9 +27,8 @@ class Settings(BaseSettings):
     AKSHARE_TIMEOUT: int = 30  # 请求超时时间（秒）
     MAX_SEARCH_RESULTS: int = 20  # 搜索结果最大返回数量
     
-    # 数据查询限制
-    MAX_DAILY_QUERY_DAYS: int = 365  # 日线数据最大查询天数
-    MAX_MINUTE_QUERY_DAYS: int = 999999  # 分钟数据无限制
+    # 数据查询限制（1分钟数据）
+    MAX_MINUTE_QUERY_DAYS: int = 999999  # 无限制
     
     # 多线程配置
     MAX_WORKERS: int = 4  # 数据处理最大线程数
