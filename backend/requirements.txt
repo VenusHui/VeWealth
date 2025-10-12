@@ -4,4 +4,5 @@ akshare==1.17.63
 pandas==2.3.3
 python-dateutil==2.8.2
 pydantic-settings==2.11.0
-chinese-calendar==1.9.1
+scikit-learn==1.7.2
+scipy==1.16.2

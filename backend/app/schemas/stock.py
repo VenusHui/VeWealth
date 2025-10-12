@@ -35,6 +35,28 @@ class StockDataRequest(BaseModel):
     end_date: str = Field(..., description="结束日期，格式：YYYY-MM-DD")
 
 
+class GaussianComponent(BaseModel):
+    """高斯分量参数"""
+    mean: float = Field(..., description="均值（价格）")
+    std: float = Field(..., description="标准差")
+    weight: float = Field(..., description="权重")
+    volume: float = Field(..., description="该分量对应的成交量")
+
+
+class FitCurvePoint(BaseModel):
+    """拟合曲线数据点"""
+    price: float = Field(..., description="价格")
+    fitVolume: float = Field(..., description="拟合的成交量")
+
+
+class FitResult(BaseModel):
+    """高斯混合模型拟合结果"""
+    n_components: int = Field(..., description="高斯分量数量")
+    components: List[GaussianComponent] = Field(..., description="各高斯分量参数")
+    fit_curve: List[FitCurvePoint] = Field(..., description="拟合曲线数据")
+    bic: float = Field(..., description="BIC评分")
+
+
 class StockDataResponse(BaseModel):
     """股票数据查询响应"""
     success: bool = True
@@ -44,6 +66,7 @@ class StockDataResponse(BaseModel):
     period: str
     chart_data: List[ChartDataPoint]
     count: int
+    fit_result: Optional[FitResult] = Field(None, description="正态分布拟合结果")
     
     class Config:
         json_schema_extra = {

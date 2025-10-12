@@ -11,7 +11,8 @@ import {
   Tooltip, 
   ResponsiveContainer,
   Legend,
-  ReferenceLine
+  ReferenceLine,
+  Area
 } from 'recharts'
 
 interface ChartDataPoint {
@@ -23,9 +24,29 @@ interface ChartDataPoint {
   low?: number
 }
 
+interface GaussianComponent {
+  mean: number
+  std: number
+  weight: number
+  volume: number
+}
+
+interface FitCurvePoint {
+  price: number
+  fitVolume: number
+}
+
+interface FitResult {
+  n_components: number
+  components: GaussianComponent[]
+  fit_curve: FitCurvePoint[]
+  bic: number
+}
+
 interface StockChartProps {
   data: ChartDataPoint[]
   period: string
+  fitResult?: FitResult | null
 }
 
 interface AggregatedDataPoint {
@@ -35,12 +56,16 @@ interface AggregatedDataPoint {
   count: number
   percentage: number
   binPercentage: number
+  fitVolume?: number
+  isHighlighted?: boolean
 }
 
-export default function StockChart({ data, period }: StockChartProps) {
+export default function StockChart({ data, period, fitResult }: StockChartProps) {
   // 控制图表显示/隐藏
   const [showBar, setShowBar] = useState(true)
   const [showLine, setShowLine] = useState(true)
+  const [showFitCurve, setShowFitCurve] = useState(true)
+  const [densityThreshold, setDensityThreshold] = useState(80) // 0-100%
 
   // 聚合相同价格的成交量，并计算区间成交量
   const aggregatedData = useMemo(() => {
@@ -90,7 +115,7 @@ export default function StockChart({ data, period }: StockChartProps) {
     })
 
     // 5. 合并数据
-    const result = priceData.map(point => {
+    const result: AggregatedDataPoint[] = priceData.map(point => {
       const binPrice = Math.floor(point.price / binSize) * binSize
       const binVolume = binMap.get(binPrice) || 0
       
@@ -100,7 +125,9 @@ export default function StockChart({ data, period }: StockChartProps) {
         binVolume: binVolume,
         count: point.count,
         percentage: 0,
-        binPercentage: 0
+        binPercentage: 0,
+        fitVolume: undefined,
+        isHighlighted: undefined
       }
     })
 
@@ -113,8 +140,43 @@ export default function StockChart({ data, period }: StockChartProps) {
       item.binPercentage = (item.binVolume / totalBinVolume) * 100
     })
 
+    // 7. 如果有拟合结果，合并拟合曲线数据
+    if (fitResult && fitResult.fit_curve) {
+      // 创建拟合数据的price -> fitVolume映射
+      const fitMap = new Map<number, number>()
+      fitResult.fit_curve.forEach(point => {
+        fitMap.set(Number(point.price.toFixed(2)), point.fitVolume)
+      })
+      
+      // 找到拟合曲线的最大值，用于计算阈值
+      const maxFitVolume = Math.max(...fitResult.fit_curve.map(p => p.fitVolume))
+      const thresholdVolume = maxFitVolume * (densityThreshold / 100)
+      
+      // 为每个价格点添加拟合数据和高亮标记
+      result.forEach(item => {
+        // 查找最接近的拟合点
+        const fitVolume = fitMap.get(item.price)
+        if (fitVolume !== undefined) {
+          item.fitVolume = fitVolume
+          item.isHighlighted = fitVolume >= thresholdVolume
+        } else {
+          // 如果没有精确匹配，进行线性插值
+          const sortedFitPrices = fitResult.fit_curve.map(p => p.price).sort((a, b) => a - b)
+          const lowerIdx = sortedFitPrices.findIndex(p => p > item.price) - 1
+          if (lowerIdx >= 0 && lowerIdx < sortedFitPrices.length - 1) {
+            const p1 = fitResult.fit_curve[lowerIdx]
+            const p2 = fitResult.fit_curve[lowerIdx + 1]
+            const ratio = (item.price - p1.price) / (p2.price - p1.price)
+            const interpolatedVolume = p1.fitVolume + ratio * (p2.fitVolume - p1.fitVolume)
+            item.fitVolume = interpolatedVolume
+            item.isHighlighted = interpolatedVolume >= thresholdVolume
+          }
+        }
+      })
+    }
+
     return result
-  }, [data])
+  }, [data, fitResult, densityThreshold])
 
   // 找出成交量最大的价格区间（峰值）
   const peakData = useMemo(() => {
@@ -168,6 +230,16 @@ export default function StockChart({ data, period }: StockChartProps) {
                   ? `${(data.binVolume / 10000).toFixed(0)}万`
                   : data.binVolume.toLocaleString()}
             </p>
+            {data.fitVolume !== undefined && (
+              <p className="text-sm text-purple-600 font-semibold">
+                拟合成交量: {data.fitVolume >= 100000000 
+                  ? `${(data.fitVolume / 100000000).toFixed(2)}亿` 
+                  : data.fitVolume >= 10000 
+                    ? `${(data.fitVolume / 10000).toFixed(0)}万`
+                    : data.fitVolume.toLocaleString()}
+                {data.isHighlighted && <span className="ml-2 text-xs">⭐</span>}
+              </p>
+            )}
             <div className="border-t border-gray-200 my-1"></div>
             <p className="text-xs text-gray-600">
               该价格占比: {data.percentage.toFixed(2)}%
@@ -228,7 +300,7 @@ export default function StockChart({ data, period }: StockChartProps) {
       )}
 
       {/* 价格分布图 */}
-      <div className="h-[500px] bg-white rounded-lg p-4 border border-gray-200">
+      <div className="bg-white rounded-lg p-4 border border-gray-200">
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-lg font-semibold text-gray-700">
             价格-成交量分布图
@@ -254,8 +326,62 @@ export default function StockChart({ data, period }: StockChartProps) {
             >
               {showLine ? '✓' : ''} 折线图
             </button>
+            {fitResult && (
+              <button
+                onClick={() => setShowFitCurve(!showFitCurve)}
+                className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                  showFitCurve
+                    ? 'bg-purple-500 text-white hover:bg-purple-600'
+                    : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                }`}
+              >
+                {showFitCurve ? '✓' : ''} 拟合曲线
+              </button>
+            )}
           </div>
         </div>
+
+        {/* 拟合参数信息和阈值控制 */}
+        {fitResult && showFitCurve && (
+          <div className="mb-3 p-3 bg-purple-50 rounded-lg border border-purple-200">
+            <div className="flex justify-between items-center mb-2">
+              <div className="text-sm">
+                <span className="font-semibold text-purple-700">
+                  多峰拟合：
+                </span>
+                <span className="text-purple-600 ml-2">
+                  {fitResult.n_components} 个高斯分量
+                </span>
+                {fitResult.components.map((comp, idx) => (
+                  <span key={idx} className="ml-3 text-xs text-gray-600">
+                    峰{idx + 1}: ¥{comp.mean.toFixed(2)} (σ={comp.std.toFixed(2)})
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                高亮阈值:
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={densityThreshold}
+                onChange={(e) => setDensityThreshold(Number(e.target.value))}
+                className="flex-1 h-2 bg-gradient-to-r from-gray-300 via-purple-300 to-purple-500 rounded-lg appearance-none cursor-pointer"
+              />
+              <span className="text-sm font-semibold text-purple-600 w-12">
+                {densityThreshold}%
+              </span>
+            </div>
+            <div className="text-xs text-gray-500 mt-1">
+              高亮显示拟合曲线中概率密度 ≥ {densityThreshold}% 最大值的区域
+            </div>
+          </div>
+        )}
+
+        <div className="h-[500px]">
         <ResponsiveContainer width="100%" height="90%">
           <ComposedChart
             data={aggregatedData}
@@ -282,6 +408,7 @@ export default function StockChart({ data, period }: StockChartProps) {
               tickFormatter={(value) => `¥${value.toFixed(2)}`}
             />
             <YAxis 
+              yAxisId="left"
               type="number"
               name="成交量"
               label={{ 
@@ -293,6 +420,24 @@ export default function StockChart({ data, period }: StockChartProps) {
               tick={{ fontSize: 12 }}
               tickFormatter={formatVolume}
             />
+            
+            {/* 右侧Y轴：用于拟合曲线 */}
+            {showFitCurve && fitResult && (
+              <YAxis 
+                yAxisId="right"
+                orientation="right"
+                type="number"
+                name="拟合成交量"
+                label={{ 
+                  value: '拟合成交量', 
+                  angle: 90, 
+                  position: 'insideRight',
+                  style: { fontSize: '14px', fontWeight: 'bold', fill: '#9333ea' }
+                }}
+                tick={{ fontSize: 12, fill: '#9333ea' }}
+                tickFormatter={formatVolume}
+              />
+            )}
             <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(59, 130, 246, 0.1)' }} />
             <Legend 
               verticalAlign="top" 
@@ -303,6 +448,7 @@ export default function StockChart({ data, period }: StockChartProps) {
             {/* 加权平均价参考线 */}
             {statistics && (
               <ReferenceLine 
+                yAxisId="left"
                 x={statistics.meanPrice} 
                 stroke="#10b981" 
                 strokeDasharray="5 5"
@@ -313,6 +459,7 @@ export default function StockChart({ data, period }: StockChartProps) {
             {/* 峰值参考线 */}
             {peakData && (
               <ReferenceLine 
+                yAxisId="left"
                 x={peakData.price} 
                 stroke="#ef4444" 
                 strokeDasharray="5 5"
@@ -323,6 +470,7 @@ export default function StockChart({ data, period }: StockChartProps) {
             {/* 柱状图：具体价格成交量 */}
             {showBar && (
               <Bar 
+                yAxisId="left"
                 dataKey="totalVolume"
                 name="该价格成交量"
                 fill="#3b82f6"
@@ -333,6 +481,7 @@ export default function StockChart({ data, period }: StockChartProps) {
             {/* 折线图：区间成交量趋势 */}
             {showLine && (
               <Line 
+                yAxisId="left"
                 type="monotone"
                 dataKey="binVolume"
                 name="区间成交量趋势"
@@ -341,8 +490,36 @@ export default function StockChart({ data, period }: StockChartProps) {
                 dot={false}
               />
             )}
+            
+            {/* 高亮区域：概率密度高于阈值的区域 */}
+            {showFitCurve && fitResult && (
+              <Area
+                yAxisId="right"
+                type="monotone"
+                dataKey={(data: AggregatedDataPoint) => data.isHighlighted ? data.fitVolume : null}
+                fill="#a855f7"
+                fillOpacity={0.3}
+                stroke="none"
+                name="高密度区域"
+              />
+            )}
+            
+            {/* 拟合曲线：正态分布拟合 */}
+            {showFitCurve && fitResult && (
+              <Line 
+                yAxisId="right"
+                type="monotone"
+                dataKey="fitVolume"
+                name="拟合曲线"
+                stroke="#9333ea"
+                strokeWidth={2}
+                dot={false}
+                strokeDasharray="5 5"
+              />
+            )}
           </ComposedChart>
         </ResponsiveContainer>
+        </div>
       </div>
     </div>
   )

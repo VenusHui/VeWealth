@@ -20,6 +20,25 @@ interface ChartDataPoint {
   low?: number
 }
 
+interface GaussianComponent {
+  mean: number
+  std: number
+  weight: number
+  volume: number
+}
+
+interface FitCurvePoint {
+  price: number
+  fitVolume: number
+}
+
+interface FitResult {
+  n_components: number
+  components: GaussianComponent[]
+  fit_curve: FitCurvePoint[]
+  bic: number
+}
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 export default function Home() {
@@ -28,6 +47,7 @@ export default function Home() {
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
+  const [fitResult, setFitResult] = useState<FitResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -75,6 +95,7 @@ export default function Home() {
 
       if (response.data.success) {
         setChartData(response.data.chart_data)
+        setFitResult(response.data.fit_result || null)
         // 查询成功后，可以尝试获取股票名称
         setStockName(stockCode.trim())
       }
@@ -86,6 +107,7 @@ export default function Home() {
         setError(errorMsg)
       }
       setChartData([]) // 清空图表数据
+      setFitResult(null) // 清空拟合结果
     } finally {
       setLoading(false)
     }
@@ -212,7 +234,7 @@ export default function Home() {
                 <span>⏱️ 粒度: 1分钟</span>
               </div>
             </div>
-            <StockChart data={chartData} period="1min" />
+            <StockChart data={chartData} period="1min" fitResult={fitResult} />
           </div>
         )}
       </div>
