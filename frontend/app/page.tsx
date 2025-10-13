@@ -50,6 +50,12 @@ export default function Home() {
   const [fitResult, setFitResult] = useState<FitResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  
+  // 搜索相关状态
+  const [searchKeyword, setSearchKeyword] = useState('')
+  const [searchResults, setSearchResults] = useState<StockSearchResult[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [showSearchResults, setShowSearchResults] = useState(false)
 
   // 初始化日期（默认最近1天）
   useEffect(() => {
@@ -60,6 +66,43 @@ export default function Home() {
     setEndDate(format(end, 'yyyy-MM-dd'))
     setStartDate(format(start, 'yyyy-MM-dd'))
   }, [])
+
+  // 搜索股票
+  const handleSearch = async () => {
+    if (!searchKeyword.trim()) {
+      setSearchResults([])
+      setShowSearchResults(false)
+      return
+    }
+
+    try {
+      setSearchLoading(true)
+      const response = await axios.get(`${API_BASE_URL}/api/stock/search`, {
+        params: {
+          keyword: searchKeyword.trim()
+        }
+      })
+
+      if (response.data.success) {
+        setSearchResults(response.data.results)
+        setShowSearchResults(true)
+      }
+    } catch (err: any) {
+      console.error('搜索失败:', err)
+      setSearchResults([])
+    } finally {
+      setSearchLoading(false)
+    }
+  }
+
+  // 选择股票
+  const handleSelectStock = (stock: StockSearchResult) => {
+    setStockCode(stock.code)
+    setStockName(stock.name)
+    setSearchKeyword('')
+    setSearchResults([])
+    setShowSearchResults(false)
+  }
 
   // 获取股票数据
   const handleFetchData = async () => {
@@ -83,7 +126,8 @@ export default function Home() {
     try {
       setLoading(true)
       setError('')
-      setStockName('') // 清空之前的股票名称
+      // 如果没有股票名称，则在查询成功后设置为代码
+      const hasStockName = !!stockName
       
       const response = await axios.get(`${API_BASE_URL}/api/stock/data`, {
         params: {
@@ -96,8 +140,10 @@ export default function Home() {
       if (response.data.success) {
         setChartData(response.data.chart_data)
         setFitResult(response.data.fit_result || null)
-        // 查询成功后，可以尝试获取股票名称
-        setStockName(stockCode.trim())
+        // 只有在没有股票名称时才设置为代码
+        if (!hasStockName) {
+          setStockName(stockCode.trim())
+        }
       }
     } catch (err: any) {
       const errorMsg = err.response?.data?.detail || '获取数据失败'
@@ -134,11 +180,87 @@ export default function Home() {
             </div>
           </div>
 
+          {/* 股票搜索区域 */}
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              🔍 搜索股票
+            </label>
+            <div className="flex gap-2">
+              <div className="flex-1 relative">
+                <input
+                  type="text"
+                  value={searchKeyword}
+                  onChange={(e) => setSearchKeyword(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                  placeholder="输入股票代码或名称搜索，如：平安银行 或 000001"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                />
+                {searchKeyword && (
+                  <button
+                    onClick={() => {
+                      setSearchKeyword('')
+                      setSearchResults([])
+                      setShowSearchResults(false)
+                    }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <button
+                onClick={handleSearch}
+                disabled={searchLoading || !searchKeyword.trim()}
+                className="px-6 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 disabled:bg-gray-400 transition-colors"
+              >
+                {searchLoading ? '搜索中...' : '搜索'}
+              </button>
+            </div>
+
+            {/* 搜索结果 */}
+            {showSearchResults && (
+              <div className="mt-2 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                {searchResults.length > 0 ? (
+                  <div className="divide-y">
+                    {searchResults.map((stock) => (
+                      <button
+                        key={stock.code}
+                        onClick={() => handleSelectStock(stock)}
+                        className="w-full px-4 py-3 text-left hover:bg-blue-50 transition-colors flex justify-between items-center"
+                      >
+                        <div>
+                          <div className="font-medium text-gray-800">
+                            {stock.name}
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            代码: {stock.code}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm font-medium text-blue-600">
+                            ¥{stock.current_price.toFixed(2)}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            当前价
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="px-4 py-3 text-center text-gray-500">
+                    未找到相关股票
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* 股票代码输入 */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                股票代码
+                股票代码 {stockName && <span className="text-green-600">({stockName})</span>}
               </label>
               <input
                 type="text"
@@ -150,7 +272,7 @@ export default function Home() {
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               <p className="mt-1 text-xs text-gray-500">
-                示例：000001（平安银行）、600519（贵州茅台）
+                或使用上方搜索功能选择股票
               </p>
             </div>
 
@@ -209,16 +331,6 @@ export default function Home() {
               </div>
             </div>
           )}
-
-          {/* 当前查询的股票信息 */}
-          {stockName && chartData.length > 0 && (
-            <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <div className="text-sm text-gray-600">当前股票：</div>
-              <div className="text-lg font-medium text-gray-800">
-                {stockName}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* 图表展示 */}
@@ -226,7 +338,10 @@ export default function Home() {
           <div className="bg-white rounded-lg shadow-lg p-6">
             <div className="mb-4">
               <h2 className="text-2xl font-bold text-gray-800">
-                股票代码: {stockName}
+                {stockName || stockCode}
+                {stockName && stockCode !== stockName && (
+                  <span className="text-lg text-gray-500 ml-2">({stockCode})</span>
+                )}
               </h2>
               <div className="mt-2 flex flex-wrap gap-4 text-sm text-gray-600">
                 <span>📊 数据点数: {chartData.length}</span>
