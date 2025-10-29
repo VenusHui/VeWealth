@@ -48,7 +48,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-服务将运行在 http://localhost:8000
+服务将运行在 http://localhost:8001
 
 ### 运行测试
 
@@ -59,8 +59,8 @@ python test_api.py
 ## 📚 API文档
 
 启动服务后访问：
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
+- **Swagger UI**: http://localhost:8001/docs
+- **ReDoc**: http://localhost:8001/redoc
 
 ## 🔌 主要接口
 
@@ -133,7 +133,7 @@ GET /api/stock/data?symbol=000001&start_date=2024-01-01&end_date=2024-01-31&peri
 APP_NAME = "VeWealth A股股票平台API"
 APP_VERSION = "1.1.0"
 HOST = "0.0.0.0"
-PORT = 8000
+PORT = 8001
 CORS_ORIGINS = ["http://localhost:3000"]
 MAX_SEARCH_RESULTS = 20
 MAX_DAILY_QUERY_DAYS = 365

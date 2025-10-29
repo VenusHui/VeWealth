@@ -61,6 +61,6 @@ frontend/
 创建 `.env.local` 文件：
 
 ```
-NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_API_URL=http://localhost:8001
 ```
 

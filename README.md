@@ -88,7 +88,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-后端服务将运行在 `http://localhost:8000`
+后端服务将运行在 `http://localhost:8001`
 
 ### 前端安装与启动
 

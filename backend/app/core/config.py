@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     
     # 服务器配置
     HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    PORT: int = 8001
     
     # AKShare配置
     AKSHARE_TIMEOUT: int = 30  # 请求超时时间（秒）

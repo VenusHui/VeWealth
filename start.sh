@@ -19,7 +19,7 @@ cd backend
 pip install -r requirements.txt > /dev/null 2>&1
 
 # 在后台启动后端
-echo "后端服务启动中... (http://localhost:8000)"
+echo "后端服务启动中... (http://localhost:8001)"
 python main.py &
 BACKEND_PID=$!
 cd ..
@@ -47,8 +47,8 @@ echo ""
 echo "==================================="
 echo "✅ 服务启动成功！"
 echo "==================================="
-echo "后端API: http://localhost:8000"
-echo "API文档: http://localhost:8000/docs"
+echo "后端API: http://localhost:8001"
+echo "API文档: http://localhost:8001/docs"
 echo "前端应用: http://localhost:3000"
 echo ""
 echo "按 Ctrl+C 停止所有服务"
