@@ -10,13 +10,13 @@ class Settings(BaseSettings):
     
     # 应用信息
     APP_NAME: str = "VeWealth A股股票平台API"
-    APP_VERSION: str = "2.0.0"
+    APP_VERSION: str = "1.1.0"
     API_PREFIX: str = "/api"
     
     # CORS配置
     CORS_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
     ]
     
     # 服务器配置
@@ -24,21 +24,21 @@ class Settings(BaseSettings):
     PORT: int = 8001
     
     # 数据库配置
-    DATABASE_URL: str = "postgresql://vewealth:vewealth123@localhost:5432/vewealth"
+    DATABASE_URL: str = "postgresql://postgres:Hh20011207_@124.221.239.27:5432/vewealth"
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
     
     # JWT配置
-    SECRET_KEY: str = "your-secret-key-change-this-in-production"  # 生产环境请修改
-    MASTER_KEY: str = "master-key-change-this"  # 主密钥，用于生成用户token
+    SECRET_KEY: str = "5o1seto5kWhHD+GLSeyUeSQM/jzwelkPEP/FmJ9oJjk="  # 生产环境请修改
+    MASTER_KEY: str = "abcdefg"  # 主密钥，用于生成用户token
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 43200  # 30天
     
     # 微信公众号配置
-    WECHAT_APP_ID: str = ""  # 微信公众号 AppID
-    WECHAT_APP_SECRET: str = ""  # 微信公众号 AppSecret
+    WECHAT_APP_ID: str = "wx449dbfbd2292060c"  # 微信公众号 AppID
+    WECHAT_APP_SECRET: str = "422799b769b2be16a96ce811ee32ecdf"  # 微信公众号 AppSecret
     WECHAT_TOKEN: str = ""  # 微信公众号 Token
-    WECHAT_ENCODING_AES_KEY: str = ""  # 微信公众号 EncodingAESKey
+    WECHAT_ENCODING_AES_KEY: str = "DYsrDlUHbJ5mZUbI4H2JDkG9PINyRuIAGYy1Iunurb0"  # 微信公众号 EncodingAESKey
     
     # AKShare配置
     AKSHARE_TIMEOUT: int = 30  # 请求超时时间（秒）
