@@ -20,5 +20,17 @@ yarn-error.log*
 .env.local
 .env.*.local
 
+# Docker
+docker-compose.override.yml
+.docker/
+
+# Database
+*.sql
+*.db
+*.sqlite
+
+# Backend logs
+backend/logs/
+
 # For test
 test.py

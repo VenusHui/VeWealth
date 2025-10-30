@@ -103,20 +103,60 @@ VeWealth/
 
 ## 🚀 快速开始
 
-### 环境要求
+### 方式一：使用 Docker（推荐）🐳
+
+最简单的部署方式，自动配置所有服务（后端、前端、数据库）。
+
+#### 环境要求
+- Docker 20.10+
+- Docker Compose 2.0+
+
+#### 启动步骤
+
+```bash
+# 1. 克隆项目
+git clone https://github.com/yourusername/VeWealth.git
+cd VeWealth
+
+# 2. 配置环境变量
+cp env.example .env
+# 编辑 .env 文件，至少修改以下配置：
+# - POSTGRES_PASSWORD
+# - SECRET_KEY
+# - MASTER_KEY
+
+# 3. 启动所有服务
+./docker-start.sh
+
+# 或手动启动
+docker-compose up -d
+```
+
+服务将在以下地址运行：
+- 前端应用：http://localhost:3000
+- 后端API：http://localhost:8001
+- API文档：http://localhost:8001/docs
+
+更多 Docker 相关命令和配置，请查看 [Docker 部署指南](./DOCKER_DEPLOYMENT.md)
+
+---
+
+### 方式二：本地开发部署
+
+#### 环境要求
 
 - Python 3.8+
 - Node.js 18+
 - PostgreSQL 12+
 
-### 1. 克隆项目
+#### 1. 克隆项目
 
 ```bash
 git clone https://github.com/yourusername/VeWealth.git
 cd VeWealth
 ```
 
-### 2. 数据库设置
+#### 2. 数据库设置
 
 创建 PostgreSQL 数据库：
 
@@ -126,7 +166,7 @@ CREATE USER vewealth WITH PASSWORD 'vewealth123';
 GRANT ALL PRIVILEGES ON DATABASE vewealth TO vewealth;
 ```
 
-### 3. 后端设置
+#### 3. 后端设置
 
 ```bash
 cd backend
@@ -148,7 +188,7 @@ python main.py
 
 后端将在 http://localhost:8001 运行
 
-### 4. 前端设置
+#### 4. 前端设置
 
 ```bash
 cd frontend

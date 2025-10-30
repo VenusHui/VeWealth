@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+
+  # 后端 API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vewealth-backend
+    restart: unless-stopped
+    environment:
+      # 数据库配置
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-your_secure_password}@postgres:5432/vewealth
+      
+      # JWT 配置
+      SECRET_KEY: ${SECRET_KEY:-5o1seto5kWhHD+GLSeyUeSQM/jzwelkPEP/FmJ9oJjk=}
+      MASTER_KEY: ${MASTER_KEY:-abcdefg}
+      
+      # 微信公众号配置
+      WECHAT_APP_ID: ${WECHAT_APP_ID:-wx449dbfbd2292060c}
+      WECHAT_APP_SECRET: ${WECHAT_APP_SECRET:-422799b769b2be16a96ce811ee32ecdf}
+      WECHAT_TOKEN: ${WECHAT_TOKEN:-}
+      WECHAT_ENCODING_AES_KEY: ${WECHAT_ENCODING_AES_KEY:-DYsrDlUHbJ5mZUbI4H2JDkG9PINyRuIAGYy1Iunurb0}
+      
+      # 调度器配置
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+      
+      # CORS 配置
+      CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - vewealth-network
+    volumes:
+      - ./backend/logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 前端应用
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: vewealth-frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8001
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - vewealth-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000', (r) => {if(r.statusCode !== 200) throw new Error(r.statusCode)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  vewealth-network:
+    driver: bridge
+
+
