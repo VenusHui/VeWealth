@@ -15,8 +15,8 @@ class Settings(BaseSettings):
     
     # CORS配置
     CORS_ORIGINS: List[str] = [
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
     ]
     
     # 服务器配置

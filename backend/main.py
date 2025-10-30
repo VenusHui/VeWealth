@@ -7,9 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.database import init_db
-from app.routers import stock_router
-from app.routers.auth import router as auth_router
-from app.routers.watchlist import router as watchlist_router
+from app.routers import stock_router, auth_router, watchlist_router
 from app.services.scheduler import app_scheduler
 
 
