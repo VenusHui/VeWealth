@@ -1,5 +1,10 @@
 # VeWealth - A股股票智能分析与监控平台 💰
 
+[![CI/CD Pipeline](https://github.com/VenusHui/VeWealth/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/VenusHui/VeWealth/actions/workflows/ci-cd.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
+[![Node.js 20](https://img.shields.io/badge/node-20-green.svg)](https://nodejs.org/)
+
 一个基于 FastAPI 和 Next.js 的现代化A股股票数据分析平台，提供实时数据查询、价格分布分析、长期数据存储、智能预警和微信通知等功能。
 
 ## ✨ 核心功能
@@ -102,6 +107,8 @@ VeWealth/
 ```
 
 ## 🚀 快速开始
+
+> **💡 提示**：项目已配置 GitHub Actions CI/CD 自动部署。查看 [CI/CD 快速配置指南](.github/QUICK_START.md) 了解如何设置自动部署到云服务器。
 
 ### 方式一：使用 Docker（推荐）🐳
 
@@ -418,6 +425,31 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 - 检查 Cron 表达式是否正确
 - 查看后端日志确认任务状态
 
+## 🚢 部署指南
+
+### 自动部署（GitHub Actions CI/CD）
+
+本项目已配置完整的 CI/CD 流程，支持自动构建和部署到云服务器。
+
+- **[快速配置指南](.github/QUICK_START.md)** - 5 分钟快速设置
+- **[完整部署文档](.github/DEPLOYMENT.md)** - 详细配置、故障排除、监控等
+
+**工作流程**：
+1. 推送代码到 `main` 或 `dev/v1.0.0` 分支
+2. 自动执行代码检查和构建测试
+3. 通过 SSH 自动部署到服务器
+4. 执行健康检查确保服务正常
+
+**支持的部署分支**：
+- `main` - 生产环境
+- `dev/v1.0.0` - 开发环境
+
+**手动部署**：在 GitHub Actions 页面可以手动触发部署。
+
+### 传统部署
+
+参考上面的 Docker 部署步骤，或查看[完整部署文档](.github/DEPLOYMENT.md)。
+
 ## 🤝 贡献指南
 
 欢迎贡献代码、报告问题或提出建议！
@@ -427,6 +459,21 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
 4. 推送到分支 (`git push origin feature/AmazingFeature`)
 5. 开启 Pull Request
+
+**开发流程**：
+- 推送到 `main` 分支：自动部署到生产环境
+- 推送到 `dev/v1.0.0` 分支：自动部署到开发环境
+- 推送到其他 `dev/*` 分支：仅执行 CI 检查，不部署
+- 创建 Pull Request：自动运行测试
+
+**本地测试工具**：
+```bash
+# 测试 Docker 构建
+./.github/scripts/test-build.sh
+
+# 测试代码质量
+./.github/scripts/local-lint.sh
+```
 
 ## 📄 开源协议
 
