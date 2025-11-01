@@ -22,7 +22,7 @@ RUN apt-get update && \
 COPY requirements.txt .
 
 # 安装 Python 依赖
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt --index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
 
 # 复制应用代码
 COPY . .

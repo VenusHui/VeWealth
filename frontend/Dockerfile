@@ -13,6 +13,9 @@ RUN npm ci
 # 复制应用代码
 COPY . .
 
+# 确保 public 目录存在
+RUN mkdir -p public
+
 # 构建 Next.js 应用
 RUN npm run build
 
