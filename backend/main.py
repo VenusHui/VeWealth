@@ -1,6 +1,7 @@
 """
 VeWealth A股股票分析平台 - 后端主入口
 """
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,12 +19,12 @@ async def lifespan(app: FastAPI):
     print("[应用] 正在初始化数据库...")
     init_db()
     print("[应用] 数据库初始化完成")
-    
+
     print("[应用] 正在启动定时任务调度器...")
     app_scheduler.start()
-    
+
     yield
-    
+
     # 关闭时执行
     print("[应用] 正在关闭定时任务调度器...")
     app_scheduler.shutdown()
@@ -36,7 +37,7 @@ app = FastAPI(
     description="实时A股股票数据查询与分析平台API，支持监控列表、价格预警和微信通知",
     docs_url="/docs",
     redoc_url="/redoc",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # 配置CORS中间件
@@ -73,10 +74,5 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        app,
-        host=settings.HOST,
-        port=settings.PORT,
-        log_level="info"
-    )
 
+    uvicorn.run(app, host=settings.HOST, port=settings.PORT, log_level="info")

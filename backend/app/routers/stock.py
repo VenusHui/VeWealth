@@ -2,6 +2,7 @@
 股票相关API路由
 负责处理HTTP请求和响应，不包含业务逻辑
 """
+
 from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas.stock import StockSearchResponse, StockDataResponse
@@ -16,7 +17,7 @@ async def search_stock(
 ):
     """
     搜索股票
-    
+
     支持按代码或名称模糊搜索A股股票
     """
     try:
@@ -30,11 +31,11 @@ async def search_stock(
 async def get_stock_data(
     symbol: str = Query(..., description="股票代码，例如：000001"),
     start_date: str = Query(..., description="开始日期，格式：YYYY-MM-DD"),
-    end_date: str = Query(..., description="结束日期，格式：YYYY-MM-DD")
+    end_date: str = Query(..., description="结束日期，格式：YYYY-MM-DD"),
 ):
     """
     获取股票1分钟级数据
-    
+
     特性：
     - 1分钟级数据，最细粒度
     - 无日期限制，使用多线程加速获取
@@ -43,12 +44,10 @@ async def get_stock_data(
     """
     try:
         data = stock_service.get_stock_data(
-            symbol=symbol,
-            start_date=start_date,
-            end_date=end_date
+            symbol=symbol, start_date=start_date, end_date=end_date
         )
         return StockDataResponse(**data)
-        
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

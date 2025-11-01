@@ -142,7 +142,7 @@ class StockService:
 
         # 转换为图表数据
         chart_data = self.data_processor.to_chart_data(df)
-        
+
         # 进行高斯混合模型拟合（多峰正态分布拟合）
         fit_result = self.data_processor.fit_gaussian_mixture(chart_data)
 

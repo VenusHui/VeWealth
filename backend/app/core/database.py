@@ -1,6 +1,7 @@
 """
 数据库连接和会话管理
 """
+
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -12,7 +13,7 @@ engine = create_engine(
     pool_size=settings.DATABASE_POOL_SIZE,
     max_overflow=settings.DATABASE_MAX_OVERFLOW,
     pool_pre_ping=True,  # 连接池健康检查
-    echo=False  # 生产环境设为False
+    echo=False,  # 生产环境设为False
 )
 
 # 创建会话工厂
@@ -40,5 +41,5 @@ def init_db():
     创建所有表
     """
     from app.models import user, watchlist, stock_data  # noqa
-    Base.metadata.create_all(bind=engine)
 
+    Base.metadata.create_all(bind=engine)

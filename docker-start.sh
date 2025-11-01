@@ -6,6 +6,7 @@ echo "==================================="
 
 # 设置环境变量
 export ENV=prod
+export NEXT_PUBLIC_API_URL=http://124.221.239.27:8001
 
 # 检查配置文件是否存在
 if [ ! -f backend/settings/.prod.env ]; then

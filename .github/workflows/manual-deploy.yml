@@ -1,0 +1,153 @@
+name: Manual Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: '部署环境'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+      skip_tests:
+        description: '跳过测试（不推荐）'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  manual-deploy:
+    name: Manual Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Display deployment info
+        run: |
+          echo "=========================================="
+          echo "🚀 手动部署触发"
+          echo "=========================================="
+          echo "环境: ${{ inputs.environment }}"
+          echo "分支: ${{ github.ref }}"
+          echo "提交: ${{ github.sha }}"
+          echo "触发者: ${{ github.actor }}"
+          echo "跳过测试: ${{ inputs.skip_tests }}"
+          echo "=========================================="
+
+      - name: Run tests
+        if: ${{ !inputs.skip_tests }}
+        run: |
+          echo "⏭️  跳过测试已禁用，正在运行测试..."
+          echo "如需完整测试，请查看主 CI/CD 工作流"
+
+      - name: Deploy to Server
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            echo "=========================================="
+            echo "🚀 手动部署 VeWealth - ${{ inputs.environment }}"
+            echo "=========================================="
+            
+            DEPLOY_DIR="${{ secrets.DEPLOY_PATH || '/home/ubuntu/repo/VeWealth' }}"
+            
+            cd $DEPLOY_DIR
+            
+            # 拉取最新代码
+            echo "📥 拉取最新代码..."
+            git fetch origin
+            git reset --hard origin/${{ github.ref_name }}
+            
+            # 显示当前版本信息
+            echo "📋 当前版本信息："
+            echo "  提交: $(git rev-parse --short HEAD)"
+            echo "  作者: $(git log -1 --pretty=format:'%an')"
+            echo "  时间: $(git log -1 --pretty=format:'%ar')"
+            echo "  消息: $(git log -1 --pretty=format:'%s')"
+            
+            # 检查配置文件
+            if [ ! -f backend/settings/.prod.env ]; then
+              echo "❌ 错误: backend/settings/.prod.env 文件不存在"
+              exit 1
+            fi
+            
+            # 停止服务
+            echo "🛑 停止服务..."
+            docker-compose down
+            
+            # 构建并启动
+            echo "🏗️  构建并启动服务..."
+            ENV=prod docker-compose up -d --build
+            
+            # 等待服务启动
+            echo "⏳ 等待服务启动..."
+            sleep 10
+            
+            # 健康检查
+            echo "🏥 健康检查..."
+            max_retries=30
+            retry_count=0
+            
+            while [ $retry_count -lt $max_retries ]; do
+              if curl -f http://localhost:8001/health > /dev/null 2>&1; then
+                echo "✅ 后端服务正常"
+                break
+              fi
+              retry_count=$((retry_count + 1))
+              echo "等待后端服务... ($retry_count/$max_retries)"
+              sleep 2
+            done
+            
+            if [ $retry_count -eq $max_retries ]; then
+              echo "❌ 后端服务健康检查失败"
+              docker-compose logs --tail=50 backend
+              exit 1
+            fi
+            
+            retry_count=0
+            while [ $retry_count -lt $max_retries ]; do
+              if curl -f http://localhost:3000 > /dev/null 2>&1; then
+                echo "✅ 前端服务正常"
+                break
+              fi
+              retry_count=$((retry_count + 1))
+              echo "等待前端服务... ($retry_count/$max_retries)"
+              sleep 2
+            done
+            
+            if [ $retry_count -eq $max_retries ]; then
+              echo "❌ 前端服务健康检查失败"
+              docker-compose logs --tail=50 frontend
+              exit 1
+            fi
+            
+            # 显示服务状态
+            echo ""
+            echo "📊 服务状态："
+            docker-compose ps
+            
+            echo ""
+            echo "=========================================="
+            echo "✅ 手动部署完成！"
+            echo "=========================================="
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "### 🚀 手动部署摘要" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **环境**: ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **分支**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **提交**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **触发者**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **状态**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "查看详细日志以获取更多信息。" >> $GITHUB_STEP_SUMMARY
+
