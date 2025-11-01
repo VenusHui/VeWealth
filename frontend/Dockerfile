@@ -11,10 +11,11 @@ ARG NEXT_PUBLIC_API_URL=http://localhost:8001
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
 # 复制 package.json 和 package-lock.json
-COPY package*.json ./
+COPY package.json package-lock.json* ./
 
-# 安装依赖
-RUN npm ci
+# 确保 npm 版本足够新并安装依赖
+RUN npm install -g npm@latest && \
+    npm ci --prefer-offline --no-audit
 
 # 复制应用代码
 COPY . .
