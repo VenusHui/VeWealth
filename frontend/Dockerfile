@@ -14,7 +14,7 @@ ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 COPY package*.json ./
 
 # 安装依赖
-RUN npm ci
+RUN npm intsall
 
 # 复制应用代码
 COPY . .
