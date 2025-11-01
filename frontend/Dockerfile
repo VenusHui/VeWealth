@@ -4,6 +4,12 @@ FROM node:20-alpine AS builder
 # 设置工作目录
 WORKDIR /app
 
+# 接收构建参数
+ARG NEXT_PUBLIC_API_URL=http://localhost:8001
+
+# 设置为环境变量，供 Next.js 构建时使用
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
 # 复制 package.json 和 package-lock.json
 COPY package*.json ./
 
