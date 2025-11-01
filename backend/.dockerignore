@@ -1,0 +1,45 @@
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# 虚拟环境
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 测试和临时文件
+.pytest_cache/
+.coverage
+*.log
+*.tmp
+
+# 环境变量（生产环境应该单独配置）
+.env
+.env.local
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# 文档
+*.md
+ARCHITECTURE.md
+MIGRATION_GUIDE.md
+

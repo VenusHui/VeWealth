@@ -1,271 +1,451 @@
-# VeWealth - A股股票分析平台
+# VeWealth - A股股票智能分析与监控平台 💰
 
-一个基于 FastAPI 和 Next.js 的现代化A股股票数据分析平台，实时获取股票数据并进行可视化分析。
+一个基于 FastAPI 和 Next.js 的现代化A股股票数据分析平台，提供实时数据查询、价格分布分析、长期数据存储、智能预警和微信通知等功能。
 
-## 技术栈
+## ✨ 核心功能
+
+### 📊 股票分析
+- **实时数据查询** - 通过 AKShare 获取A股分时数据
+- **价格分布分析** - 按价格聚合成交量，直观展示价格分布
+- **多峰正态分布拟合** - 使用 GMM（高斯混合模型）拟合价格分布曲线
+- **智能阈值可视化** - 可调节阈值滑块，高亮显示概率密度区间
+- **双轴图表** - 独立Y轴显示成交量和拟合曲线，避免量纲差异
+- **交互式图表** - 支持柱状图、折线图、拟合曲线的独立显隐控制
+
+### 👁️ 监控列表
+- **股票监控管理** - 添加关注的股票到个人监控列表
+- **自动数据采集** - 定时任务每日自动采集监控股票的分时数据
+- **长期数据存储** - 突破 AKShare 5日限制，PostgreSQL 永久保存历史数据
+- **个性化设置** - 每只股票可单独设置预警开关和阈值
+
+### ⚡ 智能预警
+- **价格预警** - 当股票价格超过正态分布设定阈值时自动触发
+- **微信通知** - 通过微信公众号实时推送预警消息
+- **防重复通知** - 同一股票1小时内不重复预警
+- **交易时段监控** - 交易时间每5分钟检查一次
+
+### 🔐 用户认证
+- **主密钥注册** - 需要主密钥才能注册，保护系统安全
+- **JWT 认证** - 基于 Token 的无状态认证
+- **多用户支持** - 每个用户独立的监控列表和预警设置
+
+## 🛠️ 技术栈
 
 ### 后端
-- **FastAPI** - 现代化、高性能的Python Web框架
+- **FastAPI** - 现代化、高性能的 Python Web 框架
+- **SQLAlchemy** - ORM 数据库操作
+- **PostgreSQL** - 关系型数据库，存储用户数据和历史分时数据
+- **APScheduler** - 定时任务调度
 - **AKShare** - 免费开源的股票数据接口
-- **Pandas** - 数据处理库
+- **scikit-learn** - GMM 模型和机器学习
+- **wechatpy** - 微信公众号 SDK
+- **JWT** - Token 认证
 
 ### 前端
-- **Next.js 14** - React框架（App Router）
+- **Next.js 14** - React 框架（App Router）
 - **TypeScript** - 类型安全
-- **Tailwind CSS** - 现代化UI样式
+- **Tailwind CSS** - 现代化 UI 样式
 - **Recharts** - 数据可视化图表库
-- **Axios** - HTTP客户端
+- **Axios** - HTTP 客户端
 
-## 功能特性
-
-✅ **股票搜索** - 支持通过代码或名称搜索A股股票  
-✅ **多周期数据** - 支持1分钟、3分钟、5分钟、15分钟、30分钟、60分钟、日线多种数据粒度  
-✅ **时间范围选择** - 自定义查询的起止日期  
-✅ **双折线图展示** - 价格走势图和成交量折线图分开展示，清晰直观  
-✅ **3分钟合单** - 支持将1分钟数据重采样为3分钟合单数据  
-✅ **实时数据** - 通过AKShare实时获取最新股票数据  
-✅ **响应式设计** - 适配各种屏幕尺寸  
-
-## 项目结构
+## 📦 项目结构
 
 ```
 VeWealth/
-├── backend/              # 后端FastAPI项目（分层架构）
-│   ├── main.py          # FastAPI主应用入口
-│   ├── app/             # 主应用包
-│   │   ├── routers/     # API路由层
-│   │   ├── services/    # 业务逻辑层
-│   │   ├── utils/       # 工具函数层
-│   │   ├── schemas/     # 数据模型层
-│   │   └── core/        # 核心配置
-│   ├── requirements.txt # Python依赖
-│   ├── ARCHITECTURE.md  # 架构说明
-│   └── .gitignore
-├── frontend/            # 前端Next.js项目
-│   ├── app/            # Next.js App Router
-│   │   ├── page.tsx    # 主页面
-│   │   ├── layout.tsx  # 布局组件
-│   │   ├── globals.css # 全局样式
-│   │   └── components/ # React组件
-│   │       └── StockChart.tsx  # 图表组件
-│   ├── package.json    # Node.js依赖
-│   ├── tsconfig.json   # TypeScript配置
-│   ├── next.config.js  # Next.js配置
-│   └── tailwind.config.js  # Tailwind配置
-└── README.md           # 项目文档
+├── backend/                    # 后端 FastAPI 项目
+│   ├── main.py                # 应用主入口
+│   ├── app/
+│   │   ├── core/              # 核心配置
+│   │   │   ├── config.py      # 应用配置
+│   │   │   ├── database.py    # 数据库连接
+│   │   │   ├── security.py    # 安全认证
+│   │   │   └── deps.py        # 依赖注入
+│   │   ├── models/            # 数据库模型
+│   │   │   ├── user.py        # 用户模型
+│   │   │   ├── watchlist.py   # 监控列表模型
+│   │   │   └── stock_data.py  # 股票数据模型
+│   │   ├── schemas/           # Pydantic 模型
+│   │   │   ├── auth.py        # 认证相关
+│   │   │   ├── watchlist.py   # 监控列表相关
+│   │   │   └── stock.py       # 股票相关
+│   │   ├── routers/           # API 路由
+│   │   │   ├── auth.py        # 认证路由
+│   │   │   ├── watchlist.py   # 监控列表路由
+│   │   │   └── stock.py       # 股票数据路由
+│   │   ├── services/          # 业务逻辑
+│   │   │   ├── stock_service.py      # 股票服务
+│   │   │   ├── data_collector.py     # 数据采集
+│   │   │   ├── alert_service.py      # 预警服务
+│   │   │   ├── wechat_service.py     # 微信服务
+│   │   │   └── scheduler.py          # 定时任务
+│   │   └── utils/             # 工具函数
+│   │       └── data_processor.py     # 数据处理
+│   └── requirements.txt       # Python 依赖
+│
+├── frontend/                   # 前端 Next.js 项目
+│   ├── app/
+│   │   ├── page.tsx           # 首页
+│   │   ├── layout.tsx         # 根布局
+│   │   ├── login/             # 登录页面
+│   │   ├── analysis/          # 股票分析页面
+│   │   ├── watchlist/         # 监控列表页面
+│   │   ├── components/        # React 组件
+│   │   │   ├── Navbar.tsx     # 导航栏
+│   │   │   └── StockChart.tsx # 股票图表
+│   │   └── lib/               # 工具库
+│   │       └── auth.ts        # 认证工具
+│   ├── package.json
+│   └── tailwind.config.js
+│
+├── README.md
+└── LICENSE
 ```
 
-## 快速开始
+## 🚀 快速开始
 
-### 前置要求
+### 方式一：使用 Docker（推荐）🐳
 
-- Python 3.8+
-- Node.js 18+
-- npm 或 yarn
+最简单的部署方式，自动配置所有服务（后端、前端、数据库）。
 
-### 后端安装与启动
+#### 环境要求
+- Docker 20.10+
+- Docker Compose 2.0+
 
-1. 进入后端目录：
+#### 启动步骤
+
 ```bash
-cd backend
+# 1. 克隆项目
+git clone https://github.com/yourusername/VeWealth.git
+cd VeWealth
+
+# 2. 配置环境（支持 local 和 prod 两个环境）
+# 本地开发环境配置已预设好，可直接使用
+# 生产环境需要修改 backend/settings/.prod.env 中的敏感信息
+
+# 3. 启动服务
+# 启动本地开发环境（默认）
+./docker-start-local.sh
+
+# 或启动生产环境
+./docker-start-prod.sh
+
+# 或手动指定环境
+ENV=local docker-compose up -d   # 本地环境
+ENV=prod docker-compose up -d    # 生产环境
 ```
 
-2. 创建虚拟环境（推荐）：
-```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 或
-venv\Scripts\activate  # Windows
-```
+服务将在以下地址运行：
+- 前端应用：http://localhost:3000
+- 后端API：http://localhost:8001
+- API文档：http://localhost:8001/docs
 
-3. 安装依赖：
-```bash
-pip install -r requirements.txt
-```
-
-4. 启动后端服务：
-```bash
-python main.py
-```
-
-后端服务将运行在 `http://localhost:8001`
-
-### 前端安装与启动
-
-1. 进入前端目录：
-```bash
-cd frontend
-```
-
-2. 安装依赖：
-```bash
-npm install
-# 或
-yarn install
-```
-
-3. 启动开发服务器：
-```bash
-npm run dev
-# 或
-yarn dev
-```
-
-前端应用将运行在 `http://localhost:3000`
-
-## 使用说明
-
-1. **选择数据粒度**
-   - **1分钟（类似每笔）** - 获取最细粒度的分钟数据
-   - **3分钟合单** - 将1分钟数据聚合为3分钟周期
-   - **5分钟、15分钟、30分钟、60分钟** - 不同时间周期
-   - **日线** - 每日收盘数据
-   - ⚠️ 注意：分钟级数据通常只支持查询最近几天的数据
-
-2. **搜索股票**
-   - 在搜索框输入股票代码（如：000001）或名称（如：平安银行）
-   - 点击"搜索"按钮或按回车键
-   - 从下拉列表中选择目标股票
-
-3. **设置日期范围**
-   - 选择开始日期和结束日期
-   - 日线默认为最近30天
-   - 分钟线默认为最近1天
-
-4. **查询数据**
-   - 点击"查询股票数据"按钮
-   - 等待数据加载
-
-5. **查看图表**
-   - 上方图表显示价格走势
-   - 下方图表显示成交量变化
-   - 鼠标悬停在数据点上查看详细信息（包括时间、价格、成交量、最高价、最低价）
-
-## API接口说明
-
-### 搜索股票
-```
-GET /api/stock/search?keyword={keyword}
-```
-
-参数：
-- `keyword`: 股票代码或名称关键词
-
-返回示例：
-```json
-{
-  "success": true,
-  "results": [
-    {
-      "code": "000001",
-      "name": "平安银行",
-      "current_price": 12.34
-    }
-  ]
-}
-```
-
-### 获取股票数据
-```
-GET /api/stock/data?symbol={symbol}&start_date={start_date}&end_date={end_date}&period={period}
-```
-
-参数：
-- `symbol`: 股票代码（如：000001）
-- `start_date`: 开始日期（格式：YYYY-MM-DD）
-- `end_date`: 结束日期（格式：YYYY-MM-DD）
-- `period`: 数据周期（可选值：1min、3min、5min、15min、30min、60min、daily，默认：daily）
-
-返回示例：
-```json
-{
-  "success": true,
-  "symbol": "000001",
-  "start_date": "2024-01-01",
-  "end_date": "2024-01-31",
-  "period": "3min",
-  "data": [...],
-  "chart_data": [
-    {
-      "datetime": "2024-01-01 09:30:00",
-      "price": 12.34,
-      "volume": 1234567,
-      "open": 12.30,
-      "high": 12.40,
-      "low": 12.25
-    }
-  ],
-  "count": 240
-}
-```
-
-## 架构特点
-
-### 后端架构
-
-采用**分层架构**设计，代码组织清晰：
-
-- **Routers（路由层）**: 处理HTTP请求和响应
-- **Services（服务层）**: 实现业务逻辑
-- **Utils（工具层）**: 通用数据处理函数
-- **Schemas（模型层）**: Pydantic数据模型
-- **Core（配置层）**: 应用配置管理
-
-详见 [`backend/ARCHITECTURE.md`](backend/ARCHITECTURE.md)
-
-### 前端架构
-
-基于 **Next.js 14 App Router**：
-
-- 服务端渲染（SSR）支持
-- 组件化开发
-- TypeScript类型安全
-- Tailwind CSS样式管理
-
-## 开发计划
-
-- [x] 添加折线图展示价格和成交量
-- [x] 支持多种数据粒度（1分钟、3分钟合单等）
-- [x] 后端代码重构为分层架构
-- [ ] 添加K线图（蜡烛图）
-- [ ] 支持多股票对比
-- [ ] 添加技术指标计算（MA、MACD、RSI等）
-- [ ] 实现数据缓存机制（Redis）
-- [ ] 添加用户收藏功能
-- [ ] 支持导出数据为Excel/CSV
-- [ ] 单元测试和集成测试
-
-## 注意事项
-
-1. AKShare数据来源于公开数据，仅供学习和研究使用
-2. 股票数据存在延迟，不建议用于实盘交易决策
-3. 请合理使用API，避免频繁请求导致被限流
-4. 首次运行时AKShare可能需要下载数据，请耐心等待
-
-## 常见问题
-
-**Q: 为什么搜索不到某些股票？**  
-A: 请确保输入的是A股股票代码或名称，暂不支持港股、美股等其他市场。
-
-**Q: 数据获取失败怎么办？**  
-A: 检查网络连接，确认股票代码正确，或稍后重试。AKShare依赖外部数据源，可能存在临时不可用的情况。
-
-**Q: 如何修改API端口？**  
-A: 修改 `backend/main.py` 中的端口配置，同时更新 `frontend/.env.local` 中的 `NEXT_PUBLIC_API_URL`。
-
-## 许可证
-
-本项目采用 MIT 许可证。
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 联系方式
-
-如有问题或建议，请通过 Issue 与我们联系。
+**环境配置说明：**
+- `backend/settings/.local.env` - 本地开发环境配置
+- `backend/settings/.prod.env` - 生产环境配置（需要修改敏感信息）
+- 通过 `ENV` 环境变量切换：`ENV=local` 或 `ENV=prod`
 
 ---
 
-**免责声明**：本平台仅供学习和研究使用，不构成任何投资建议。投资有风险，入市需谨慎。
+### 方式二：本地开发部署
 
+#### 环境要求
+
+- Python 3.8+
+- Node.js 18+
+- PostgreSQL 12+
+
+#### 1. 克隆项目
+
+```bash
+git clone https://github.com/yourusername/VeWealth.git
+cd VeWealth
+```
+
+#### 2. 数据库设置
+
+创建 PostgreSQL 数据库：
+
+```sql
+CREATE DATABASE vewealth;
+CREATE USER vewealth WITH PASSWORD 'vewealth123';
+GRANT ALL PRIVILEGES ON DATABASE vewealth TO vewealth;
+```
+
+#### 3. 后端设置
+
+```bash
+cd backend
+
+# 创建虚拟环境
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 配置环境（本地开发环境配置已预设好）
+# 如需修改，请编辑 backend/settings/.local.env
+
+# 启动后端服务（默认使用 local 环境）
+python main.py
+
+# 或指定环境
+ENV=local python main.py   # 本地环境
+ENV=prod python main.py    # 生产环境
+```
+
+后端将在 http://localhost:8001 运行
+
+#### 4. 前端设置
+
+```bash
+cd frontend
+
+# 安装依赖
+npm install
+
+# 启动开发服务器
+npm run dev
+```
+
+前端将在 http://localhost:3000 运行
+
+## 📝 配置说明
+
+### 多环境配置
+
+本项目支持 **local**（本地开发）和 **prod**（生产环境）两套配置，通过 `ENV` 环境变量切换。
+
+### 后端配置
+
+配置文件位置：
+- `backend/settings/.local.env` - 本地开发环境
+- `backend/settings/.prod.env` - 生产环境
+
+主要配置项（完整配置请查看 [backend/settings/README.md](./backend/settings/README.md)）：
+
+```bash
+# 环境标识
+ENV=local  # 或 prod
+
+# 数据库配置
+DATABASE_URL=postgresql://user:password@host:port/database
+
+# JWT 配置（⚠️ 生产环境必须修改）
+SECRET_KEY=your_secret_key
+MASTER_KEY=your_master_key
+
+# 微信公众号配置
+WECHAT_APP_ID=your_wechat_app_id
+WECHAT_APP_SECRET=your_wechat_app_secret
+
+# 定时任务配置
+SCHEDULER_ENABLED=true
+DATA_COLLECT_CRON=0 15 * * 1-5          # 每个交易日 15:00 采集数据
+ALERT_CHECK_CRON=*/5 9-15 * * 1-5       # 交易时间每 5 分钟检查预警
+
+# CORS 配置（JSON 数组格式）
+CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000"]
+```
+
+**⚠️ 生产环境安全提示：**
+1. 使用 `openssl rand -base64 32` 生成强随机密钥
+2. 修改所有默认密码和密钥
+3. 设置正确的 CORS 域名
+4. 保护配置文件权限：`chmod 400 backend/settings/.prod.env`
+
+### 前端配置 (frontend/.env.local)
+
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8001
+```
+
+## 📖 使用指南
+
+### 1. 注册账号
+
+1. 访问 http://localhost:3000
+2. 点击"登录/注册"
+3. 输入用户名和主密钥（默认主密钥需在后端配置文件中设置）
+4. 注册成功后自动登录
+
+### 2. 添加监控股票
+
+1. 登录后点击导航栏的"监控列表"
+2. 点击"+ 添加股票"
+3. 输入股票代码（如：000001）
+4. 设置是否启用预警和预警阈值
+5. 点击"添加到监控列表"
+
+### 3. 数据采集
+
+系统会在每个交易日 15:00 自动采集监控列表中所有股票的分时数据，无需手动操作。
+
+### 4. 股票分析
+
+1. 点击导航栏的"股票分析"
+2. 可以通过搜索功能找到股票并选择
+3. 选择日期范围
+4. 点击"查询股票数据"
+5. 查看价格分布图表和拟合曲线
+6. 调节阈值滑块查看不同概率密度区间
+7. 可以独立控制柱状图、折线图、拟合曲线的显示
+
+### 5. 价格预警
+
+1. 在监控列表中启用股票的预警功能
+2. 在用户设置中绑定微信 OpenID（需要关注公众号）
+3. 系统会在交易时间每 5 分钟检查一次
+4. 当价格超过设定阈值时，通过微信公众号发送通知
+
+## 🎯 核心算法
+
+### 多峰正态分布拟合 (GMM)
+
+系统使用高斯混合模型（Gaussian Mixture Model）对价格-成交量分布进行拟合：
+
+1. **数据准备**：将分时数据按价格聚合，得到每个价格点的总成交量
+2. **模型选择**：通过 BIC（贝叶斯信息准则）自动选择最优的峰数（2-5个峰）
+3. **拟合计算**：使用 EM 算法拟合多峰正态分布
+4. **曲线生成**：在价格范围内生成拟合曲线点
+5. **阈值判断**：计算当前价格在分布中的密度百分位，与设定阈值比较
+
+## 📊 数据模型
+
+### 用户表 (users)
+- id: 主键
+- username: 用户名（唯一）
+- wechat_openid: 微信 OpenID
+- is_active: 是否激活
+- alert_threshold: 默认预警阈值
+- created_at / updated_at: 时间戳
+
+### 监控列表表 (watchlists)
+- id: 主键
+- user_id: 用户 ID（外键）
+- stock_code: 股票代码
+- stock_name: 股票名称
+- alert_enabled: 是否启用预警
+- alert_threshold: 个性化预警阈值
+- last_alerted_at: 最后预警时间
+- created_at / updated_at: 时间戳
+
+### 股票分时数据表 (stock_minute_data)
+- id: 主键
+- stock_code: 股票代码（索引）
+- trade_date: 交易日期（索引）
+- trade_time: 交易时间（索引）
+- open_price / high_price / low_price / close_price: OHLC
+- volume: 成交量
+- created_at: 创建时间
+
+## 🔧 API 接口
+
+### 认证相关
+- `POST /api/auth/register` - 用户注册
+- `GET /api/auth/me` - 获取当前用户信息
+- `PUT /api/auth/me` - 更新用户信息
+
+### 监控列表
+- `GET /api/watchlist` - 获取监控列表
+- `POST /api/watchlist` - 添加股票
+- `PUT /api/watchlist/{id}` - 更新监控项
+- `DELETE /api/watchlist/{id}` - 删除监控项
+
+### 股票数据
+- `GET /api/stock/search` - 搜索股票
+- `GET /api/stock/data` - 获取股票数据
+
+详细 API 文档：http://localhost:8001/docs
+
+## 🎨 界面预览
+
+### 首页
+- 功能介绍
+- 技术栈展示
+- 快速导航
+
+### 股票分析页面
+- 股票搜索
+- 日期范围选择
+- 交互式图表
+- 拟合曲线控制
+
+### 监控列表页面
+- 添加/删除股票
+- 预警设置
+- 状态管理
+
+## 📈 定时任务
+
+### 数据采集任务
+- **执行时间**：每个交易日 15:00
+- **执行内容**：采集所有监控列表中股票的当日分时数据
+- **Cron 表达式**：`0 15 * * 1-5`
+
+### 价格预警任务
+- **执行时间**：交易时间（9:00-15:00）每 5 分钟
+- **执行内容**：检查所有启用预警的股票价格，触发预警通知
+- **Cron 表达式**：`*/5 9-15 * * 1-5`
+
+## 🔒 安全性
+
+- JWT Token 认证保护 API
+- 主密钥限制用户注册
+- 密码使用 bcrypt 哈希
+- SQL 注入防护（SQLAlchemy ORM）
+- CORS 跨域保护
+
+## 🐛 故障排除
+
+### 后端启动失败
+- 检查 PostgreSQL 是否运行
+- 检查数据库连接配置是否正确
+- 检查 Python 版本和依赖是否安装完整
+
+### 前端无法连接后端
+- 检查后端是否正常运行
+- 检查 NEXT_PUBLIC_API_URL 配置
+- 检查 CORS 配置
+
+### 微信通知未收到
+- 检查微信公众号配置是否正确
+- 检查用户是否绑定了微信 OpenID
+- 检查模板消息 ID 是否配置
+
+### 定时任务未执行
+- 检查 SCHEDULER_ENABLED 是否为 true
+- 检查 Cron 表达式是否正确
+- 查看后端日志确认任务状态
+
+## 🤝 贡献指南
+
+欢迎贡献代码、报告问题或提出建议！
+
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 开启 Pull Request
+
+## 📄 开源协议
+
+本项目采用 MIT 协议，详见 [LICENSE](LICENSE) 文件。
+
+## 📮 联系方式
+
+如有问题或建议，欢迎通过以下方式联系：
+
+- Issue: [GitHub Issues](https://github.com/yourusername/VeWealth/issues)
+- Email: your.email@example.com
+
+## 🙏 致谢
+
+- [AKShare](https://github.com/akfamily/akshare) - 提供免费的股票数据接口
+- [FastAPI](https://fastapi.tiangolo.com/) - 优秀的 Python Web 框架
+- [Next.js](https://nextjs.org/) - 强大的 React 框架
+- [Recharts](https://recharts.org/) - 灵活的图表库
+
+---
+
+⭐ 如果这个项目对您有帮助，请给个 Star！

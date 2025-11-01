@@ -1,9 +1,10 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import Navbar from './components/Navbar'
 
 export const metadata: Metadata = {
-  title: 'A股股票平台',
-  description: '实时A股股票数据查询与分析平台',
+  title: 'VeWealth - A股股票分析平台',
+  description: '实时A股股票数据查询、分析与监控平台，支持价格预警和微信通知',
 }
 
 export default function RootLayout({
@@ -13,7 +14,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="zh-CN">
-      <body>{children}</body>
+      <body>
+        <Navbar />
+        {children}
+      </body>
     </html>
   )
 }
