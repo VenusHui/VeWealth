@@ -118,18 +118,20 @@ VeWealth/
 git clone https://github.com/yourusername/VeWealth.git
 cd VeWealth
 
-# 2. 配置环境变量
-cp env.example .env
-# 编辑 .env 文件，至少修改以下配置：
-# - POSTGRES_PASSWORD
-# - SECRET_KEY
-# - MASTER_KEY
+# 2. 配置环境（支持 local 和 prod 两个环境）
+# 本地开发环境配置已预设好，可直接使用
+# 生产环境需要修改 backend/settings/.prod.env 中的敏感信息
 
-# 3. 启动所有服务
-./docker-start.sh
+# 3. 启动服务
+# 启动本地开发环境（默认）
+./docker-start-local.sh
 
-# 或手动启动
-docker-compose up -d
+# 或启动生产环境
+./docker-start-prod.sh
+
+# 或手动指定环境
+ENV=local docker-compose up -d   # 本地环境
+ENV=prod docker-compose up -d    # 生产环境
 ```
 
 服务将在以下地址运行：
@@ -137,7 +139,10 @@ docker-compose up -d
 - 后端API：http://localhost:8001
 - API文档：http://localhost:8001/docs
 
-更多 Docker 相关命令和配置，请查看 [Docker 部署指南](./DOCKER_DEPLOYMENT.md)
+**环境配置说明：**
+- `backend/settings/.local.env` - 本地开发环境配置
+- `backend/settings/.prod.env` - 生产环境配置（需要修改敏感信息）
+- 通过 `ENV` 环境变量切换：`ENV=local` 或 `ENV=prod`
 
 ---
 
@@ -178,12 +183,15 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 # 安装依赖
 pip install -r requirements.txt
 
-# 配置环境变量（可选）
-cp .env.example .env
-# 编辑 .env 文件，配置数据库连接、密钥等
+# 配置环境（本地开发环境配置已预设好）
+# 如需修改，请编辑 backend/settings/.local.env
 
-# 启动后端服务
+# 启动后端服务（默认使用 local 环境）
 python main.py
+
+# 或指定环境
+ENV=local python main.py   # 本地环境
+ENV=prod python main.py    # 生产环境
 ```
 
 后端将在 http://localhost:8001 运行
@@ -204,32 +212,47 @@ npm run dev
 
 ## 📝 配置说明
 
-### 后端配置 (backend/.env)
+### 多环境配置
+
+本项目支持 **local**（本地开发）和 **prod**（生产环境）两套配置，通过 `ENV` 环境变量切换。
+
+### 后端配置
+
+配置文件位置：
+- `backend/settings/.local.env` - 本地开发环境
+- `backend/settings/.prod.env` - 生产环境
+
+主要配置项（完整配置请查看 [backend/settings/README.md](./backend/settings/README.md)）：
 
 ```bash
-# 数据库配置
-DATABASE_URL=postgresql://vewealth:vewealth123@localhost:5432/vewealth
+# 环境标识
+ENV=local  # 或 prod
 
-# JWT 配置
-SECRET_KEY=your-secret-key-change-this-in-production
-MASTER_KEY=master-key-change-this
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=43200
+# 数据库配置
+DATABASE_URL=postgresql://user:password@host:port/database
+
+# JWT 配置（⚠️ 生产环境必须修改）
+SECRET_KEY=your_secret_key
+MASTER_KEY=your_master_key
 
 # 微信公众号配置
 WECHAT_APP_ID=your_wechat_app_id
 WECHAT_APP_SECRET=your_wechat_app_secret
-WECHAT_TOKEN=your_wechat_token
-WECHAT_ENCODING_AES_KEY=your_encoding_aes_key
 
 # 定时任务配置
 SCHEDULER_ENABLED=true
 DATA_COLLECT_CRON=0 15 * * 1-5          # 每个交易日 15:00 采集数据
 ALERT_CHECK_CRON=*/5 9-15 * * 1-5       # 交易时间每 5 分钟检查预警
 
-# 预警配置
-DEFAULT_ALERT_THRESHOLD=0.7              # 默认预警阈值（70%）
+# CORS 配置（JSON 数组格式）
+CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000"]
 ```
+
+**⚠️ 生产环境安全提示：**
+1. 使用 `openssl rand -base64 32` 生成强随机密钥
+2. 修改所有默认密码和密钥
+3. 设置正确的 CORS 域名
+4. 保护配置文件权限：`chmod 400 backend/settings/.prod.env`
 
 ### 前端配置 (frontend/.env.local)
 

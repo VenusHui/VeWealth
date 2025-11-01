@@ -20,6 +20,9 @@ yarn-error.log*
 .env.local
 .env.*.local
 
+# Backend environment configs (except README)
+backend/settings/.*.env
+
 # Docker
 docker-compose.override.yml
 .docker/

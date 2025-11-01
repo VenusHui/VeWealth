@@ -8,30 +8,15 @@ services:
     container_name: vewealth-backend
     restart: unless-stopped
     environment:
-      # 数据库配置
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-your_secure_password}@postgres:5432/vewealth
-      
-      # JWT 配置
-      SECRET_KEY: ${SECRET_KEY:-5o1seto5kWhHD+GLSeyUeSQM/jzwelkPEP/FmJ9oJjk=}
-      MASTER_KEY: ${MASTER_KEY:-abcdefg}
-      
-      # 微信公众号配置
-      WECHAT_APP_ID: ${WECHAT_APP_ID:-wx449dbfbd2292060c}
-      WECHAT_APP_SECRET: ${WECHAT_APP_SECRET:-422799b769b2be16a96ce811ee32ecdf}
-      WECHAT_TOKEN: ${WECHAT_TOKEN:-}
-      WECHAT_ENCODING_AES_KEY: ${WECHAT_ENCODING_AES_KEY:-DYsrDlUHbJ5mZUbI4H2JDkG9PINyRuIAGYy1Iunurb0}
-      
-      # 调度器配置
-      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
-      
-      # CORS 配置
-      CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
+      # 环境标识：local 或 prod
+      ENV: ${ENV:-local}
     ports:
       - "8001:8001"
     networks:
       - vewealth-network
     volumes:
       - ./backend/logs:/app/logs
+      - ./backend/settings:/app/settings:ro  # 挂载环境配置文件（只读）
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 30s
