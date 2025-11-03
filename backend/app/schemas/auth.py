@@ -10,7 +10,8 @@ class RegisterRequest(BaseModel):
     """用户注册请求"""
 
     username: str = Field(..., min_length=3, max_length=50, description="用户名")
-    master_key: str = Field(..., description="主密钥")
+    password: str = Field(..., min_length=6, max_length=100, description="密码")
+    master_key: str = Field(..., description="主密钥（管理员提供的注册令牌）")
 
 
 class RegisterResponse(BaseModel):
@@ -22,6 +23,13 @@ class RegisterResponse(BaseModel):
     token_type: str = "bearer"
     user_id: Optional[int] = None
     username: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    """用户登录请求"""
+
+    username: str = Field(..., description="用户名")
+    password: str = Field(..., description="密码")
 
 
 class TokenResponse(BaseModel):
