@@ -51,6 +51,7 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
         hashed_password=hash_password(request.password),
         is_active=True,
     )
+    print(new_user)
     db.add(new_user)
     db.commit()
     db.refresh(new_user)

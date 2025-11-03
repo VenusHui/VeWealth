@@ -122,59 +122,6 @@ export default function HomePage() {
           </div>
         </div>
       </div>
-
-      {/* Technology Stack */}
-      <div className="pb-20 px-4">
-        <div className="max-w-6xl mx-auto">
-          <div className="bg-white rounded-xl shadow-lg p-8">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 text-center">
-              技术架构
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-              <div className="text-center">
-                <div className="text-3xl mb-2">⚡</div>
-                <div className="font-medium text-gray-800">FastAPI</div>
-                <div className="text-sm text-gray-500">后端框架</div>
-              </div>
-              <div className="text-center">
-                <div className="text-3xl mb-2">⚛️</div>
-                <div className="font-medium text-gray-800">Next.js</div>
-                <div className="text-sm text-gray-500">前端框架</div>
-              </div>
-              <div className="text-center">
-                <div className="text-3xl mb-2">🐘</div>
-                <div className="font-medium text-gray-800">PostgreSQL</div>
-                <div className="text-sm text-gray-500">数据库</div>
-              </div>
-              <div className="text-center">
-                <div className="text-3xl mb-2">📱</div>
-                <div className="font-medium text-gray-800">WeChat</div>
-                <div className="text-sm text-gray-500">消息通知</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* CTA Section */}
-      {!isLoggedIn && (
-        <div className="pb-20 px-4">
-          <div className="max-w-4xl mx-auto bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl shadow-2xl p-12 text-center text-white">
-            <h2 className="text-3xl font-bold mb-4">
-              立即开始使用
-            </h2>
-            <p className="text-xl mb-8 opacity-90">
-              注册账号，开启智能股票分析之旅
-            </p>
-            <Link
-              href="/login"
-              className="inline-block px-8 py-4 bg-white text-indigo-600 text-lg font-medium rounded-lg hover:bg-gray-100 transition-colors shadow-lg"
-            >
-              免费注册
-            </Link>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
