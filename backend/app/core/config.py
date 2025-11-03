@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "default_secret_key_please_change_in_production"
     MASTER_KEY: str = "default_master_key_please_change"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 43200  # 30天
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 1天
 
     # 微信公众号配置
     WECHAT_APP_ID: str = ""

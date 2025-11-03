@@ -6,11 +6,17 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.deps import get_current_active_user
-from app.core.security import create_access_token, verify_master_key
+from app.core.security import (
+    create_access_token,
+    verify_master_key,
+    hash_password,
+    verify_password,
+)
 from app.models.user import User
 from app.schemas.auth import (
     RegisterRequest,
     RegisterResponse,
+    LoginRequest,
     TokenResponse,
     UserInfo,
     UpdateUserRequest,
@@ -24,7 +30,7 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
     """
     用户注册
 
-    需要提供主密钥才能注册
+    需要提供管理员的主密钥（注册令牌）才能注册
     """
     # 验证主密钥
     if not verify_master_key(request.master_key):
@@ -39,8 +45,12 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST, detail="用户名已存在"
         )
 
-    # 创建用户
-    new_user = User(username=request.username, is_active=True)
+    # 创建用户（哈希密码）
+    new_user = User(
+        username=request.username,
+        hashed_password=hash_password(request.password),
+        is_active=True,
+    )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
@@ -54,6 +64,47 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
         access_token=access_token,
         user_id=new_user.id,
         username=new_user.username,
+    )
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(request: LoginRequest, db: Session = Depends(get_db)):
+    """
+    用户登录
+
+    使用用户名和密码登录，返回JWT令牌
+    """
+    # 查找用户
+    user = db.query(User).filter(User.username == request.username).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="用户名或密码错误",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # 验证密码
+    if not verify_password(request.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="用户名或密码错误",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # 检查用户是否激活
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="用户已被禁用"
+        )
+
+    # 生成访问令牌
+    access_token = create_access_token(data={"sub": user.id})
+
+    return TokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user_id=user.id,
+        username=user.username,
     )
 
 
