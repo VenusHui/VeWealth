@@ -164,7 +164,7 @@ jobs:
             
             # 构建并启动新容器
             echo "🏗️  构建并启动容器..."
-            ENV=prod docker-compose up -d --build
+            ENV=prod bash docker-start.sh
             
             # 等待服务启动
             echo "⏳ 等待服务启动..."
