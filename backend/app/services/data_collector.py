@@ -2,7 +2,6 @@
 数据采集服务
 """
 
-import akshare as ak
 import pandas as pd
 from datetime import datetime, date
 from typing import List, Optional
@@ -11,6 +10,7 @@ from sqlalchemy import and_
 from app.models.stock_data import StockMinuteData
 from app.models.watchlist import WatchList
 from app.core.config import settings
+from app.utils.stock_data_fetcher import stock_data_fetcher
 
 
 class DataCollector:
@@ -31,34 +31,24 @@ class DataCollector:
             采集的数据条数
         """
         try:
-            # 获取分时数据
-            df = ak.stock_zh_a_hist_min_em(
-                symbol=stock_code,
+            # 使用统一的数据获取工具获取分时数据（不复权）
+            df = stock_data_fetcher.fetch_minute_data(
+                stock_code=stock_code,
+                start_date=trade_date,
+                end_date=trade_date,
                 period="1",
-                start_date=trade_date.strftime("%Y-%m-%d"),
-                end_date=trade_date.strftime("%Y-%m-%d"),
                 adjust="",
             )
 
             if df is None or df.empty:
                 return 0
 
-            # 数据清洗
-            df = df.rename(
-                columns={
-                    "时间": "trade_time",
-                    "开盘": "open_price",
-                    "收盘": "close_price",
-                    "最高": "high_price",
-                    "最低": "low_price",
-                    "成交量": "volume",
-                }
+            # 使用统一的数据清洗方法
+            df = stock_data_fetcher.clean_minute_data_for_storage(
+                df=df,
+                stock_code=stock_code,
+                trade_date=trade_date,
             )
-
-            # 转换时间格式
-            df["trade_time"] = pd.to_datetime(df["trade_time"])
-            df["trade_date"] = trade_date
-            df["stock_code"] = stock_code
 
             # 批量插入数据库
             count = 0

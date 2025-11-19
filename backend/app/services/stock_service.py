@@ -3,7 +3,6 @@
 负责调用AKShare API获取数据并进行处理
 """
 
-import akshare as ak
 import pandas as pd
 from typing import List, Dict, Any
 from datetime import datetime
@@ -11,6 +10,7 @@ import logging
 
 from app.schemas.stock import StockSearchResult
 from app.utils.data_processor import DataProcessor
+from app.utils.stock_data_fetcher import stock_data_fetcher
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -36,8 +36,8 @@ class StockService:
             Exception: 搜索失败时抛出异常
         """
         try:
-            # 获取A股实时行情数据
-            df = ak.stock_zh_a_spot_em()
+            # 使用统一的数据获取工具获取实时行情
+            df = stock_data_fetcher.fetch_realtime_data()
 
             if df is None or df.empty:
                 return []
@@ -91,16 +91,18 @@ class StockService:
             start_dt = datetime.strptime(start_date, "%Y-%m-%d")
             end_dt = datetime.strptime(end_date, "%Y-%m-%d")
 
-            df = ak.stock_zh_a_hist_min_em(
-                symbol=symbol,
-                period="1",
+            # 使用统一的数据获取工具获取分时数据（前复权）
+            df = stock_data_fetcher.fetch_minute_data(
+                stock_code=symbol,
                 start_date=start_dt,
                 end_date=end_dt,
+                period="1",
                 adjust="qfq",
             )
 
             if df is not None and not df.empty:
-                df = self.data_processor.clean_minute_data(df)
+                # 使用统一的数据清洗方法（用于分析）
+                df = stock_data_fetcher.clean_minute_data_for_analysis(df)
                 return df
 
             return pd.DataFrame()

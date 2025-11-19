@@ -11,36 +11,7 @@ from scipy import stats
 
 
 class DataProcessor:
-    """数据处理器"""
-
-    @staticmethod
-    def clean_minute_data(df: pd.DataFrame) -> pd.DataFrame:
-        """
-        清洗分钟数据
-
-        Args:
-            df: 原始分钟数据DataFrame
-
-        Returns:
-            清洗后的DataFrame
-        """
-        if df is None or df.empty:
-            return pd.DataFrame()
-
-        # 重命名列
-        column_mapping = {
-            "时间": "datetime",
-            "开盘": "open",
-            "收盘": "close",
-            "最高": "high",
-            "最低": "low",
-            "成交量": "volume",
-            "成交额": "amount",
-        }
-
-        df = df.rename(columns=column_mapping)
-
-        return df
+    """数据处理器 - 负责高级数据分析和转换"""
 
     @staticmethod
     def to_chart_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
