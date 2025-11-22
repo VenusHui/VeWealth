@@ -40,9 +40,17 @@ class StockDataFetcher:
             if end_date is None:
                 end_date = start_date
 
-            # 转换日期格式
-            start_date_str = start_date.strftime("%Y-%m-%d") if isinstance(start_date, date) else start_date
-            end_date_str = end_date.strftime("%Y-%m-%d") if isinstance(end_date, date) else end_date
+            # 转换日期格式，固定时间范围为9:00-16:00
+            start_date_str = (
+                start_date.strftime("%Y-%m-%d 09:00:00")
+                if isinstance(start_date, date)
+                else start_date
+            )
+            end_date_str = (
+                end_date.strftime("%Y-%m-%d 16:00:00")
+                if isinstance(end_date, date)
+                else end_date
+            )
 
             # 调用 AKShare API 获取数据
             df = ak.stock_zh_a_hist_min_em(
@@ -54,7 +62,9 @@ class StockDataFetcher:
             )
 
             if df is None or df.empty:
-                logger.warning(f"股票 {stock_code} 在 {start_date_str} 到 {end_date_str} 期间无数据")
+                logger.warning(
+                    f"股票 {stock_code} 在 {start_date_str} 到 {end_date_str} 期间无数据"
+                )
                 return None
 
             return df
@@ -73,7 +83,7 @@ class StockDataFetcher:
         """
         try:
             df = ak.stock_zh_a_spot_em()
-            
+
             if df is None or df.empty:
                 logger.warning("获取实时行情数据为空")
                 return None
@@ -86,18 +96,16 @@ class StockDataFetcher:
 
     @staticmethod
     def clean_minute_data_for_storage(
-        df: pd.DataFrame,
-        stock_code: str,
-        trade_date: date
+        df: pd.DataFrame, stock_code: str, trade_date: date
     ) -> pd.DataFrame:
         """
         清洗分时数据，准备存储到数据库
-        
+
         Args:
             df: 原始分时数据DataFrame
             stock_code: 股票代码
             trade_date: 交易日期
-            
+
         Returns:
             清洗后的DataFrame，包含数据库所需的列
         """
@@ -127,10 +135,10 @@ class StockDataFetcher:
     def clean_minute_data_for_analysis(df: pd.DataFrame) -> pd.DataFrame:
         """
         清洗分时数据，准备用于分析和展示
-        
+
         Args:
             df: 原始分时数据DataFrame
-            
+
         Returns:
             清洗后的DataFrame，包含分析所需的列
         """
@@ -155,4 +163,3 @@ class StockDataFetcher:
 
 # 创建全局实例
 stock_data_fetcher = StockDataFetcher()
-

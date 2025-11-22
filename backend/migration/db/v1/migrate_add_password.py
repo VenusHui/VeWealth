@@ -23,7 +23,7 @@ def migrate():
                 """
                 )
             )
-            
+
             if result.fetchone():
                 print("✅ hashed_password 字段已存在，无需迁移")
                 return
@@ -68,4 +68,3 @@ if __name__ == "__main__":
     print("=" * 60)
     print("迁移完成！")
     print("=" * 60)
-

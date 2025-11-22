@@ -17,9 +17,7 @@ class User(Base):
     username = Column(
         String(50), unique=True, index=True, nullable=False, comment="用户名"
     )
-    hashed_password = Column(
-        String(255), nullable=False, comment="哈希密码"
-    )
+    hashed_password = Column(String(255), nullable=False, comment="哈希密码")
     wechat_openid = Column(
         String(100), unique=True, index=True, nullable=True, comment="微信OpenID"
     )

@@ -9,21 +9,29 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 
 
-def collect_daily_data():
+def collect_daily_data(trade_date: date = None):
     """
     每日数据采集任务
+    
+    Args:
+        trade_date: 交易日期，默认为今天
     """
     from app.services.data_collector import DataCollector
 
-    print(f"[定时任务] 开始采集数据: {date.today()}")
+    if trade_date is None:
+        trade_date = date.today()
+    
+    print(f"[定时任务] 开始采集数据: {trade_date}")
 
     db = SessionLocal()
     try:
         collector = DataCollector(db)
-        results = collector.collect_all_watchlist_stocks()
+        results = collector.collect_all_watchlist_stocks(trade_date=trade_date)
         print(f"[定时任务] 数据采集完成: {results}")
+        return results
     except Exception as e:
         print(f"[定时任务] 数据采集失败: {str(e)}")
+        return None
     finally:
         db.close()
 
