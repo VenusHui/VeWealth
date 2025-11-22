@@ -79,7 +79,7 @@ class Settings(BaseSettings):
 
     # 定时任务配置
     SCHEDULER_ENABLED: bool = True
-    DATA_COLLECT_CRON: str = "0 15 * * 1-5"
+    DATA_COLLECT_CRON: str = "0 20 * * 1-5"  # 每周一到周五的20:00执行
     ALERT_CHECK_CRON: str = "*/5 9-15 * * 1-5"
 
     # 预警配置
