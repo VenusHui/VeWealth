@@ -43,10 +43,23 @@ interface FitResult {
   bic: number
 }
 
+interface CyqInfo {
+  date: string
+  profit_ratio: number
+  avg_cost: number
+  cost_90_low: number
+  cost_90_high: number
+  concentration_90: number
+  cost_70_low: number
+  cost_70_high: number
+  concentration_70: number
+}
+
 interface StockChartProps {
   data: ChartDataPoint[]
   period: string
   fitResult?: FitResult | null
+  cyqInfo?: CyqInfo | null
 }
 
 interface AggregatedDataPoint {
@@ -60,11 +73,12 @@ interface AggregatedDataPoint {
   isHighlighted?: boolean
 }
 
-export default function StockChart({ data, period, fitResult }: StockChartProps) {
+export default function StockChart({ data, period, fitResult, cyqInfo }: StockChartProps) {
   // 控制图表显示/隐藏
   const [showBar, setShowBar] = useState(true)
   const [showLine, setShowLine] = useState(true)
   const [showFitCurve, setShowFitCurve] = useState(true)
+  const [showCyq, setShowCyq] = useState(true)
   const [densityThreshold, setDensityThreshold] = useState(80) // 0-100%
 
   // 聚合相同价格的成交量，并计算区间成交量
@@ -338,6 +352,18 @@ export default function StockChart({ data, period, fitResult }: StockChartProps)
                 {showFitCurve ? '✓' : ''} 拟合曲线
               </button>
             )}
+            {cyqInfo && (
+              <button
+                onClick={() => setShowCyq(!showCyq)}
+                className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                  showCyq
+                    ? 'bg-green-500 text-white hover:bg-green-600'
+                    : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                }`}
+              >
+                {showCyq ? '✓' : ''} 筹码分布
+              </button>
+            )}
           </div>
         </div>
 
@@ -467,6 +493,87 @@ export default function StockChart({ data, period, fitResult }: StockChartProps)
               />
             )}
             
+            {/* 筹码分布参考线 */}
+            {showCyq && cyqInfo && (
+              <>
+                {/* 平均成本线 */}
+                <ReferenceLine 
+                  yAxisId="left"
+                  x={cyqInfo.avg_cost} 
+                  stroke="#16a34a" 
+                  strokeWidth={2}
+                  strokeDasharray="3 3"
+                  label={{ 
+                    value: `平均成本 ¥${cyqInfo.avg_cost.toFixed(2)}`, 
+                    position: 'top', 
+                    fill: '#16a34a', 
+                    fontSize: 11,
+                    fontWeight: 'bold'
+                  }}
+                />
+                
+                {/* 90%成本区间下限 */}
+                <ReferenceLine 
+                  yAxisId="left"
+                  x={cyqInfo.cost_90_low} 
+                  stroke="#f59e0b" 
+                  strokeWidth={1.5}
+                  strokeDasharray="2 2"
+                  label={{ 
+                    value: `90%低 ¥${cyqInfo.cost_90_low.toFixed(2)}`, 
+                    position: 'bottom', 
+                    fill: '#f59e0b', 
+                    fontSize: 10
+                  }}
+                />
+                
+                {/* 90%成本区间上限 */}
+                <ReferenceLine 
+                  yAxisId="left"
+                  x={cyqInfo.cost_90_high} 
+                  stroke="#f59e0b" 
+                  strokeWidth={1.5}
+                  strokeDasharray="2 2"
+                  label={{ 
+                    value: `90%高 ¥${cyqInfo.cost_90_high.toFixed(2)}`, 
+                    position: 'bottom', 
+                    fill: '#f59e0b', 
+                    fontSize: 10
+                  }}
+                />
+                
+                {/* 70%成本区间下限 */}
+                <ReferenceLine 
+                  yAxisId="left"
+                  x={cyqInfo.cost_70_low} 
+                  stroke="#06b6d4" 
+                  strokeWidth={1}
+                  strokeDasharray="1 1"
+                  label={{ 
+                    value: `70%低 ¥${cyqInfo.cost_70_low.toFixed(2)}`, 
+                    position: 'insideTopLeft', 
+                    fill: '#06b6d4', 
+                    fontSize: 9
+                  }}
+                />
+                
+                {/* 70%成本区间上限 */}
+                <ReferenceLine 
+                  yAxisId="left"
+                  x={cyqInfo.cost_70_high} 
+                  stroke="#06b6d4" 
+                  strokeWidth={1}
+                  strokeDasharray="1 1"
+                  label={{ 
+                    value: `70%高 ¥${cyqInfo.cost_70_high.toFixed(2)}`, 
+                    position: 'insideTopRight', 
+                    fill: '#06b6d4', 
+                    fontSize: 9
+                  }}
+                />
+              </>
+            )}
+            
             {/* 柱状图：具体价格成交量 */}
             {showBar && (
               <Bar 
@@ -521,6 +628,56 @@ export default function StockChart({ data, period, fitResult }: StockChartProps)
         </ResponsiveContainer>
         </div>
       </div>
+
+      {/* 筹码分布信息面板 */}
+      {showCyq && cyqInfo && (
+        <div className="bg-white rounded-lg p-4 border border-gray-200 mt-6">
+          <h3 className="text-lg font-semibold text-gray-700 mb-3">
+            📊 筹码分布信息 <span className="text-sm text-gray-500 font-normal">（数据日期: {cyqInfo.date}）</span>
+          </h3>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* 基本信息 */}
+            <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+              <div className="text-sm text-gray-600 mb-1">平均成本</div>
+              <div className="text-2xl font-bold text-green-600">
+                ¥{cyqInfo.avg_cost.toFixed(2)}
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                获利比例: {(cyqInfo.profit_ratio * 100).toFixed(2)}%
+              </div>
+            </div>
+            
+            {/* 90%成本区间 */}
+            <div className="bg-orange-50 p-4 rounded-lg border border-orange-200">
+              <div className="text-sm text-gray-600 mb-1">90%成本区间</div>
+              <div className="text-lg font-bold text-orange-600">
+                ¥{cyqInfo.cost_90_low.toFixed(2)} - ¥{cyqInfo.cost_90_high.toFixed(2)}
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                集中度: {(cyqInfo.concentration_90 * 100).toFixed(2)}%
+              </div>
+              <div className="text-xs text-gray-500">
+                区间: ¥{(cyqInfo.cost_90_high - cyqInfo.cost_90_low).toFixed(2)}
+              </div>
+            </div>
+            
+            {/* 70%成本区间 */}
+            <div className="bg-cyan-50 p-4 rounded-lg border border-cyan-200">
+              <div className="text-sm text-gray-600 mb-1">70%成本区间</div>
+              <div className="text-lg font-bold text-cyan-600">
+                ¥{cyqInfo.cost_70_low.toFixed(2)} - ¥{cyqInfo.cost_70_high.toFixed(2)}
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                集中度: {(cyqInfo.concentration_70 * 100).toFixed(2)}%
+              </div>
+              <div className="text-xs text-gray-500">
+                区间: ¥{(cyqInfo.cost_70_high - cyqInfo.cost_70_low).toFixed(2)}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -145,6 +145,32 @@ class StockDataFetcher:
 
         return df
 
+    @staticmethod
+    def fetch_cyq_data(stock_code: str, adjust: str = "") -> Optional[pd.DataFrame]:
+        """
+        获取股票筹码分布数据
+
+        Args:
+            stock_code: 股票代码（6位数字）
+            adjust: 复权类型，""表示不复权，"qfq"表示前复权，"hfq"表示后复权
+
+        Returns:
+            筹码分布DataFrame，如果获取失败返回None
+        """
+        try:
+            # 调用 AKShare API 获取筹码分布数据
+            df = ak.stock_cyq_em(symbol=stock_code, adjust=adjust)
+
+            if df is None or df.empty:
+                logger.warning(f"股票 {stock_code} 无筹码分布数据")
+                return None
+
+            return df
+
+        except Exception as e:
+            logger.error(f"获取股票 {stock_code} 筹码分布数据失败: {str(e)}")
+            return None
+
 
 # 创建全局实例
 stock_data_fetcher = StockDataFetcher()

@@ -39,6 +39,18 @@ interface FitResult {
   bic: number
 }
 
+interface CyqInfo {
+  date: string
+  profit_ratio: number
+  avg_cost: number
+  cost_90_low: number
+  cost_90_high: number
+  concentration_90: number
+  cost_70_low: number
+  cost_70_high: number
+  concentration_70: number
+}
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
 
 export default function Home() {
@@ -48,6 +60,7 @@ export default function Home() {
   const [endDate, setEndDate] = useState('')
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
   const [fitResult, setFitResult] = useState<FitResult | null>(null)
+  const [cyqInfo, setCyqInfo] = useState<CyqInfo | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   
@@ -108,7 +121,7 @@ export default function Home() {
     setShowSearchResults(false)
   }
 
-  // 获取股票数据
+  // 获取股票数据和筹码分布
   const handleFetchData = async () => {
     // 验证股票代码
     if (!stockCode.trim()) {
@@ -133,35 +146,64 @@ export default function Home() {
       // 如果没有股票名称，则在查询成功后设置为代码
       const hasStockName = !!stockName
       
-      const response = await axios.get(`${API_BASE_URL}/api/stock/data`, {
-        params: {
-          symbol: stockCode.trim(),
-          start_date: startDate,
-          end_date: endDate
-        }
-      })
+      // 并行请求股票数据和筹码分布数据
+      const [stockDataResponse, cyqDataResponse] = await Promise.allSettled([
+        axios.get(`${API_BASE_URL}/api/stock/data`, {
+          params: {
+            symbol: stockCode.trim(),
+            start_date: startDate,
+            end_date: endDate
+          }
+        }),
+        axios.get(`${API_BASE_URL}/api/stock/cyq`, {
+          params: {
+            symbol: stockCode.trim(),
+            adjust: '' // 不复权
+          }
+        })
+      ])
 
-      if (response.data.success) {
-        setChartData(response.data.chart_data)
-        setFitResult(response.data.fit_result || null)
-        // 设置实际的数据时间范围
-        setActualStartDate(response.data.actual_start_date || startDate)
-        setActualEndDate(response.data.actual_end_date || endDate)
-        // 只有在没有股票名称时才设置为代码
+      // 处理股票数据响应
+      if (stockDataResponse.status === 'fulfilled' && stockDataResponse.value.data.success) {
+        setChartData(stockDataResponse.value.data.chart_data)
+        setFitResult(stockDataResponse.value.data.fit_result || null)
+        setActualStartDate(stockDataResponse.value.data.actual_start_date || startDate)
+        setActualEndDate(stockDataResponse.value.data.actual_end_date || endDate)
         if (!hasStockName) {
           setStockName(stockCode.trim())
         }
+      } else {
+        const errorMsg = stockDataResponse.status === 'rejected' 
+          ? (stockDataResponse.reason?.response?.data?.detail || '获取股票数据失败')
+          : '获取股票数据失败'
+        
+        if (errorMsg.includes('未找到')) {
+          setError(`股票代码 ${stockCode} 不存在或数据不可用，请检查代码是否正确`)
+        } else {
+          setError(errorMsg)
+        }
+        setChartData([])
+        setFitResult(null)
+        setActualStartDate('')
+        setActualEndDate('')
       }
+
+      // 处理筹码分布数据响应
+      if (cyqDataResponse.status === 'fulfilled' && cyqDataResponse.value.data.success) {
+        setCyqInfo(cyqDataResponse.value.data.cyq_info)
+      } else {
+        // 筹码分布获取失败不影响主流程，只是设置为null
+        setCyqInfo(null)
+        console.warn('获取筹码分布数据失败:', cyqDataResponse.status === 'rejected' ? cyqDataResponse.reason : '未知错误')
+      }
+
     } catch (err: any) {
       const errorMsg = err.response?.data?.detail || '获取数据失败'
-      if (errorMsg.includes('未找到')) {
-        setError(`股票代码 ${stockCode} 不存在或数据不可用，请检查代码是否正确`)
-      } else {
-        setError(errorMsg)
-      }
-      setChartData([]) // 清空图表数据
-      setFitResult(null) // 清空拟合结果
-      setActualStartDate('') // 清空实际时间范围
+      setError(errorMsg)
+      setChartData([])
+      setFitResult(null)
+      setCyqInfo(null)
+      setActualStartDate('')
       setActualEndDate('')
     } finally {
       setLoading(false)
@@ -327,7 +369,7 @@ export default function Home() {
                   </svg>
                   加载中...
                 </span>
-              ) : '查询股票数据'}
+              ) : '📊 查询股票数据'}
             </button>
           </div>
 
@@ -369,7 +411,7 @@ export default function Home() {
                 )}
               </div>
             </div>
-            <StockChart data={chartData} period="1min" fitResult={fitResult} />
+            <StockChart data={chartData} period="1min" fitResult={fitResult} cyqInfo={cyqInfo} />
           </div>
         )}
       </div>
