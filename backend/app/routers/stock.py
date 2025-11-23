@@ -5,7 +5,7 @@
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas.stock import StockSearchResponse, StockDataResponse
+from app.schemas.stock import StockSearchResponse, StockDataResponse, CyqDataResponse
 from app.services.stock_service import stock_service
 
 router = APIRouter(prefix="/stock", tags=["stock"])
@@ -50,5 +50,26 @@ async def get_stock_data(
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/cyq", response_model=CyqDataResponse)
+async def get_cyq_data(
+    symbol: str = Query(..., description="股票代码，例如：000001"),
+    adjust: str = Query("", description="复权类型，''表示不复权，'qfq'表示前复权"),
+):
+    """
+    获取股票筹码分布数据
+
+    特性：
+    - 筹码分布数据（获利比例、平均成本等）
+    - 支持复权选项
+    - 用于分析主力成本和散户持仓情况
+    """
+    try:
+        data = stock_service.get_cyq_data(symbol=symbol, adjust=adjust)
+        return CyqDataResponse(**data)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

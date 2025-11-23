@@ -236,6 +236,57 @@ class StockService:
             "fit_result": fit_result,  # 添加拟合结果
         }
 
+    def get_cyq_data(self, symbol: str, adjust: str = "") -> Dict[str, Any]:
+        """
+        获取股票筹码分布数据
+
+        Args:
+            symbol: 股票代码
+            adjust: 复权类型，""表示不复权，"qfq"表示前复权，"hfq"表示后复权
+
+        Returns:
+            包含筹码分布数据的字典
+
+        Raises:
+            Exception: 数据获取失败
+        """
+        try:
+            # 使用统一的数据获取工具获取筹码分布数据
+            df = stock_data_fetcher.fetch_cyq_data(stock_code=symbol, adjust=adjust)
+
+            if df is None or df.empty:
+                raise Exception(f"未找到股票 {symbol} 的筹码分布数据")
+
+            # akshare返回的是按日期的时间序列数据
+            # 列名：日期, 获利比例, 平均成本, 90成本-低, 90成本-高, 90集中度, 70成本-低, 70成本-高, 70集中度
+            
+            # 获取最新的一条数据（最后一行）
+            latest_data = df.iloc[-1]
+            
+            # 提取关键信息
+            cyq_info = {
+                "date": str(latest_data.get("日期", "")),
+                "profit_ratio": float(latest_data.get("获利比例", 0)),
+                "avg_cost": float(latest_data.get("平均成本", 0)),
+                "cost_90_low": float(latest_data.get("90成本-低", 0)),
+                "cost_90_high": float(latest_data.get("90成本-高", 0)),
+                "concentration_90": float(latest_data.get("90集中度", 0)),
+                "cost_70_low": float(latest_data.get("70成本-低", 0)),
+                "cost_70_high": float(latest_data.get("70成本-高", 0)),
+                "concentration_70": float(latest_data.get("70集中度", 0)),
+            }
+
+            return {
+                "success": True,
+                "symbol": symbol,
+                "adjust": adjust,
+                "cyq_info": cyq_info,
+            }
+
+        except Exception as e:
+            logger.error(f"获取筹码分布数据失败: {str(e)}")
+            raise Exception(f"获取筹码分布数据失败: {str(e)}")
+
 
 # 创建全局服务实例
 stock_service = StockService()

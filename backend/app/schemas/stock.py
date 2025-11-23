@@ -100,3 +100,46 @@ class StockDataResponse(BaseModel):
                 "count": 20,
             }
         }
+
+
+class CyqInfo(BaseModel):
+    """筹码分布信息"""
+
+    date: str = Field(..., description="数据日期")
+    profit_ratio: float = Field(..., description="获利比例")
+    avg_cost: float = Field(..., description="平均成本")
+    cost_90_low: float = Field(..., description="90%成本区间下限")
+    cost_90_high: float = Field(..., description="90%成本区间上限")
+    concentration_90: float = Field(..., description="90%集中度")
+    cost_70_low: float = Field(..., description="70%成本区间下限")
+    cost_70_high: float = Field(..., description="70%成本区间上限")
+    concentration_70: float = Field(..., description="70%集中度")
+
+
+class CyqDataResponse(BaseModel):
+    """筹码分布数据响应"""
+
+    success: bool = True
+    symbol: str = Field(..., description="股票代码")
+    adjust: str = Field(..., description="复权类型")
+    cyq_info: CyqInfo = Field(..., description="筹码分布信息")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "symbol": "000001",
+                "adjust": "",
+                "cyq_info": {
+                    "date": "2024-01-11",
+                    "profit_ratio": 0.074399,
+                    "avg_cost": 11.25,
+                    "cost_90_low": 9.16,
+                    "cost_90_high": 12.56,
+                    "concentration_90": 0.173302,
+                    "cost_70_low": 9.33,
+                    "cost_70_high": 12.56,
+                    "concentration_70": 0.147273,
+                },
+            }
+        }
