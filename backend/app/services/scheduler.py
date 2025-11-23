@@ -7,6 +7,10 @@ from apscheduler.triggers.cron import CronTrigger
 from datetime import date
 from app.core.config import settings
 from app.core.database import SessionLocal
+from app.core.logger import get_module_logger
+
+# 获取logger
+logger = get_module_logger("scheduler")
 
 
 def collect_daily_data(trade_date: date = None):
@@ -21,16 +25,16 @@ def collect_daily_data(trade_date: date = None):
     if trade_date is None:
         trade_date = date.today()
     
-    print(f"[定时任务] 开始采集数据: {trade_date}")
+    logger.info(f"开始采集数据: {trade_date}")
 
     db = SessionLocal()
     try:
         collector = DataCollector(db)
         results = collector.collect_all_watchlist_stocks(trade_date=trade_date)
-        print(f"[定时任务] 数据采集完成: {results}")
+        logger.info(f"数据采集完成: {results}")
         return results
     except Exception as e:
-        print(f"[定时任务] 数据采集失败: {str(e)}")
+        logger.error(f"数据采集失败: {str(e)}", exc_info=True)
         return None
     finally:
         db.close()
@@ -42,15 +46,15 @@ def check_price_alerts():
     """
     from app.services.alert_service import AlertService
 
-    print(f"[定时任务] 开始检查价格预警: {date.today()}")
+    logger.info(f"开始检查价格预警: {date.today()}")
 
     db = SessionLocal()
     try:
         alert_service = AlertService(db)
         results = alert_service.check_all_alerts()
-        print(f"[定时任务] 预警检查完成: {results}")
+        logger.info(f"预警检查完成: {results}")
     except Exception as e:
-        print(f"[定时任务] 预警检查失败: {str(e)}")
+        logger.error(f"预警检查失败: {str(e)}", exc_info=True)
     finally:
         db.close()
 
@@ -65,7 +69,7 @@ class AppScheduler:
     def _setup_jobs(self):
         """设置定时任务"""
         if not settings.SCHEDULER_ENABLED:
-            print("[调度器] 定时任务已禁用")
+            logger.info("定时任务已禁用")
             return
 
         # 每日数据采集任务
@@ -76,7 +80,7 @@ class AppScheduler:
             name="每日数据采集",
             replace_existing=True,
         )
-        print(f"[调度器] 已添加任务: 每日数据采集 ({settings.DATA_COLLECT_CRON})")
+        logger.info(f"已添加任务: 每日数据采集 ({settings.DATA_COLLECT_CRON})")
 
         # 价格预警检查任务
         self.scheduler.add_job(
@@ -86,7 +90,7 @@ class AppScheduler:
             name="价格预警检查",
             replace_existing=True,
         )
-        print(f"[调度器] 已添加任务: 价格预警检查 ({settings.ALERT_CHECK_CRON})")
+        logger.info(f"已添加任务: 价格预警检查 ({settings.ALERT_CHECK_CRON})")
 
     def start(self):
         """启动调度器"""
@@ -95,13 +99,13 @@ class AppScheduler:
 
         if not self.scheduler.running:
             self.scheduler.start()
-            print("[调度器] 定时任务调度器已启动")
+            logger.info("定时任务调度器已启动")
 
     def shutdown(self):
         """关闭调度器"""
         if self.scheduler.running:
             self.scheduler.shutdown()
-            print("[调度器] 定时任务调度器已关闭")
+            logger.info("定时任务调度器已关闭")
 
 
 # 全局调度器实例

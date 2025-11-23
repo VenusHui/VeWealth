@@ -6,14 +6,16 @@
 
 ```
 backend/
-├── main.py                 # 应用入口
+├── main.py                 # 应用入口（生产模式）
+├── dev_server.py          # 开发服务器（热重载） ⭐
 ├── requirements.txt        # 依赖包
-├── test_api.py            # API测试脚本
 ├── README.md              # 本文档
-├── ARCHITECTURE.md        # 架构详细说明
+├── logs/                  # 日志文件目录
+│   └── vewealth.log       # 应用日志
 └── app/                   # 主应用包
     ├── core/              # 核心配置
-    │   └── config.py      # 应用配置
+    │   ├── config.py      # 应用配置
+    │   └── logger.py      # 日志配置
     ├── schemas/           # 数据模型
     │   └── stock.py       # 股票相关模型
     ├── services/          # 业务逻辑层
@@ -32,8 +34,6 @@ backend/
 - **Services（服务层）**: 实现业务逻辑
 - **Utils（工具层）**: 通用数据处理
 
-详细架构说明请查看 [ARCHITECTURE.md](./ARCHITECTURE.md)
-
 ## 🚀 快速开始
 
 ### 安装依赖
@@ -43,6 +43,25 @@ pip install -r requirements.txt
 ```
 
 ### 运行服务
+
+#### 开发模式（推荐）- 支持热重载
+
+```bash
+python dev_server.py
+```
+
+**特性：**
+- ✅ 文件修改后自动重启服务器
+- ✅ 实时应用代码更改，无需手动重启
+- ✅ 提高开发效率
+- ✅ 监控 `app/` 目录下的所有Python文件
+
+**使用场景：**
+- 本地开发和调试
+- 快速迭代和测试
+- API开发和测试
+
+#### 生产模式
 
 ```bash
 python main.py
@@ -61,6 +80,38 @@ python test_api.py
 启动服务后访问：
 - **Swagger UI**: http://localhost:8001/docs
 - **ReDoc**: http://localhost:8001/redoc
+
+## 📝 日志系统
+
+项目采用规范的日志系统，所有日志统一管理：
+
+### 日志文件位置
+```
+backend/logs/vewealth.log
+```
+
+### 查看日志
+```bash
+# 实时查看日志
+tail -f logs/vewealth.log
+
+# 查看错误日志
+grep ERROR logs/vewealth.log
+
+# 查看最近的日志
+tail -n 100 logs/vewealth.log
+```
+
+### 测试日志系统
+```bash
+python test_logging.py
+```
+
+### 日志特性
+- ✅ 统一的日志格式（包含时间、级别、模块、函数、行号）
+- ✅ 异常自动记录traceback信息，方便debug
+- ✅ 自动日志文件轮转（单文件最大10MB，保留5个备份）
+- ✅ 控制台和文件双输出
 
 ## 🔌 主要接口
 

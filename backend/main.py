@@ -8,27 +8,39 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.database import init_db
+from app.core.logger import get_module_logger
 from app.routers import stock_router, auth_router, watchlist_router
 from app.routers.scheduler import router as scheduler_router
 from app.services.scheduler import app_scheduler
+
+# 获取logger
+logger = get_module_logger("main")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时执行
-    print("[应用] 正在初始化数据库...")
-    init_db()
-    print("[应用] 数据库初始化完成")
+    try:
+        logger.info("正在初始化数据库...")
+        init_db()
+        logger.info("数据库初始化完成")
 
-    print("[应用] 正在启动定时任务调度器...")
-    app_scheduler.start()
+        logger.info("正在启动定时任务调度器...")
+        app_scheduler.start()
+    except Exception as e:
+        logger.error(f"应用启动失败: {str(e)}", exc_info=True)
+        raise
 
     yield
 
     # 关闭时执行
-    print("[应用] 正在关闭定时任务调度器...")
-    app_scheduler.shutdown()
+    try:
+        logger.info("正在关闭定时任务调度器...")
+        app_scheduler.shutdown()
+        logger.info("应用已关闭")
+    except Exception as e:
+        logger.error(f"应用关闭时出错: {str(e)}", exc_info=True)
 
 
 # 创建FastAPI应用实例

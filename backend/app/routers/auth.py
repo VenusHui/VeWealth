@@ -12,6 +12,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.core.logger import get_module_logger
 from app.models.user import User
 from app.schemas.auth import (
     RegisterRequest,
@@ -21,6 +22,9 @@ from app.schemas.auth import (
     UserInfo,
     UpdateUserRequest,
 )
+
+# 获取logger
+logger = get_module_logger("auth")
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
@@ -51,7 +55,7 @@ async def register(request: RegisterRequest, db: Session = Depends(get_db)):
         hashed_password=hash_password(request.password),
         is_active=True,
     )
-    print(new_user)
+    logger.info(f"创建新用户: {new_user.username}")
     db.add(new_user)
     db.commit()
     db.refresh(new_user)

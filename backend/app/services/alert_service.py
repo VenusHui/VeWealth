@@ -13,6 +13,10 @@ from app.models.watchlist import WatchList
 from app.models.stock_data import StockMinuteData
 from app.utils.data_processor import DataProcessor
 from app.services.wechat_service import wechat_service
+from app.core.logger import get_module_logger
+
+# 获取logger
+logger = get_module_logger("alert_service")
 
 
 class AlertService:
@@ -194,7 +198,7 @@ class AlertService:
                         )
 
             except Exception as e:
-                print(f"检查预警失败 {item.stock_code}: {str(e)}")
+                logger.error(f"检查预警失败 {item.stock_code}: {str(e)}", exc_info=True)
                 continue
 
         return results
@@ -233,5 +237,5 @@ class AlertService:
             return None
 
         except Exception as e:
-            print(f"获取价格失败 {stock_code}: {str(e)}")
+            logger.error(f"获取价格失败 {stock_code}: {str(e)}", exc_info=True)
             return None

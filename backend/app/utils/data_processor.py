@@ -8,6 +8,10 @@ import numpy as np
 from typing import Dict, List, Any, Optional
 from sklearn.mixture import GaussianMixture
 from scipy import stats
+from app.core.logger import get_module_logger
+
+# 获取logger
+logger = get_module_logger("data_processor")
 
 
 class DataProcessor:
@@ -164,5 +168,5 @@ class DataProcessor:
             }
 
         except Exception as e:
-            print(f"GMM拟合失败: {str(e)}")
+            logger.error(f"GMM拟合失败: {str(e)}", exc_info=True)
             return None
