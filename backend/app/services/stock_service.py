@@ -4,14 +4,17 @@
 """
 
 import pandas as pd
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from datetime import datetime
 import logging
+from sqlalchemy.orm import Session
 
 from app.schemas.stock import StockSearchResult
 from app.utils.data_processor import DataProcessor
 from app.utils.stock_data_fetcher import stock_data_fetcher
 from app.core.config import settings
+from app.core.database import SessionLocal
+from app.models.stock_data import StockMinuteData
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +74,9 @@ class StockService:
         symbol: str,
         start_date: str,
         end_date: str,
-    ) -> pd.DataFrame:
+    ) -> Tuple[pd.DataFrame, str, str]:
         """
-        获取分钟数据
+        获取分钟数据，优先从数据库获取历史数据，然后从API获取最近数据
 
         Args:
             symbol: 股票代码
@@ -81,35 +84,104 @@ class StockService:
             end_date: 结束日期
 
         Returns:
-            分钟数据DataFrame
+            (分钟数据DataFrame, 实际开始日期, 实际结束日期)
 
         Raises:
             Exception: 获取数据失败时抛出异常
         """
         try:
-            # 获取日期范围内的所有交易日
+            # 获取日期范围
             start_dt = datetime.strptime(start_date, "%Y-%m-%d")
             end_dt = datetime.strptime(end_date, "%Y-%m-%d")
 
-            # 使用统一的数据获取工具获取分时数据（前复权）
-            df = stock_data_fetcher.fetch_minute_data(
+            # 设置交易时间范围（09:00:00 到 16:00:00）
+            start_datetime_str = start_dt.strftime("%Y-%m-%d 09:00:00")
+            end_datetime_str = end_dt.strftime("%Y-%m-%d 16:00:00")
+
+            # 1. 从数据库查询历史数据
+            db = SessionLocal()
+            try:
+                db_records = (
+                    db.query(StockMinuteData)
+                    .filter(
+                        StockMinuteData.stock_code == symbol,
+                        StockMinuteData.trade_date >= start_dt.date(),
+                        StockMinuteData.trade_date <= end_dt.date(),
+                    )
+                    .order_by(StockMinuteData.trade_time)
+                    .all()
+                )
+
+                # 转换数据库记录为DataFrame
+                db_data = []
+                if db_records:
+                    for record in db_records:
+                        db_data.append(
+                            {
+                                "datetime": record.trade_time.strftime(
+                                    "%Y-%m-%d %H:%M:%S"
+                                ),
+                                "open": record.open_price,
+                                "high": record.high_price,
+                                "low": record.low_price,
+                                "close": record.close_price,
+                                "volume": record.volume,
+                            }
+                        )
+                    logger.info(
+                        f"从数据库获取到 {len(db_data)} 条历史数据，股票: {symbol}"
+                    )
+
+                db_df = pd.DataFrame(db_data) if db_data else pd.DataFrame()
+
+            finally:
+                db.close()
+
+            # 2. 使用统一的数据获取工具获取分时数据（前复权）- 最近5个交易日
+            api_df = stock_data_fetcher.fetch_minute_data(
                 stock_code=symbol,
-                start_date=start_dt,
-                end_date=end_dt,
+                start_datetime=start_datetime_str,
+                end_datetime=end_datetime_str,
                 period="1",
                 adjust="qfq",
             )
 
-            if df is not None and not df.empty:
+            if api_df is not None and not api_df.empty:
                 # 使用统一的数据清洗方法（用于分析）
-                df = stock_data_fetcher.clean_minute_data_for_analysis(df)
-                return df
+                api_df = stock_data_fetcher.clean_minute_data_for_analysis(api_df)
+                logger.info(f"从API获取到 {len(api_df)} 条数据，股票: {symbol}")
+            else:
+                api_df = pd.DataFrame()
 
-            return pd.DataFrame()
+            # 3. 合并数据库数据和API数据
+            if not db_df.empty and not api_df.empty:
+                # 合并两个DataFrame
+                combined_df = pd.concat([db_df, api_df], ignore_index=True)
+                # 去重（基于datetime列）
+                combined_df = combined_df.drop_duplicates(
+                    subset=["datetime"], keep="last"
+                )
+                # 按时间排序
+                combined_df = combined_df.sort_values("datetime").reset_index(drop=True)
+                logger.info(f"合并后共 {len(combined_df)} 条数据，股票: {symbol}")
+                result_df = combined_df
+            elif not db_df.empty:
+                result_df = db_df
+            elif not api_df.empty:
+                result_df = api_df
+            else:
+                result_df = pd.DataFrame()
+
+            # 4. 计算实际的时间范围
+            actual_start = result_df["datetime"].min()
+            actual_end = result_df["datetime"].max()
+
+            return result_df, actual_start, actual_end
 
         except ValueError:
             raise
         except Exception as e:
+            logger.error(f"获取分钟数据失败: {str(e)}")
             raise Exception(f"获取分钟数据失败: {str(e)}")
 
     def get_stock_data(
@@ -137,10 +209,13 @@ class StockService:
         except ValueError as e:
             raise ValueError(f"日期格式错误: {str(e)}")
 
-        df = self.get_minute_data(symbol, start_date, end_date)
+        df, actual_start_date, actual_end_date = self.get_minute_data(
+            symbol, start_date, end_date
+        )
 
         # 确保datetime列是字符串格式
-        df["datetime"] = df["datetime"].astype(str)
+        if not df.empty:
+            df["datetime"] = df["datetime"].astype(str)
 
         # 转换为图表数据
         chart_data = self.data_processor.to_chart_data(df)
@@ -153,6 +228,8 @@ class StockService:
             "symbol": symbol,
             "start_date": start_date,
             "end_date": end_date,
+            "actual_start_date": actual_start_date,
+            "actual_end_date": actual_end_date,
             "period": "1min",
             "chart_data": chart_data,
             "count": len(chart_data),

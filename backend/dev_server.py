@@ -16,4 +16,3 @@ if __name__ == "__main__":
         reload_dirs=["app"],  # 监控的目录
         log_level="info",
     )
-

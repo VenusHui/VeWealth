@@ -15,13 +15,15 @@ router = APIRouter(prefix="/scheduler", tags=["调度器管理"])
 @router.post("/run/collect-data")
 async def run_collect_data(
     current_user: User = Depends(get_current_active_user),
-    trade_date: Optional[date] = Query(None, description="交易日期，格式：YYYY-MM-DD，默认为今天"),
+    trade_date: Optional[date] = Query(
+        None, description="交易日期，格式：YYYY-MM-DD，默认为今天"
+    ),
 ):
     """
     手动触发数据采集任务
 
     需要登录才能访问
-    
+
     Args:
         trade_date: 交易日期，默认为今天
     """

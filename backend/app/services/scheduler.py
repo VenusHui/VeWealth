@@ -16,7 +16,7 @@ logger = get_module_logger("scheduler")
 def collect_daily_data(trade_date: date = None):
     """
     每日数据采集任务
-    
+
     Args:
         trade_date: 交易日期，默认为今天
     """
@@ -24,7 +24,7 @@ def collect_daily_data(trade_date: date = None):
 
     if trade_date is None:
         trade_date = date.today()
-    
+
     logger.info(f"开始采集数据: {trade_date}")
 
     db = SessionLocal()
