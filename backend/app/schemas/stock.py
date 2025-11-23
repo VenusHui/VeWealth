@@ -72,6 +72,8 @@ class StockDataResponse(BaseModel):
     symbol: str
     start_date: str
     end_date: str
+    actual_start_date: str
+    actual_end_date: str
     period: str
     chart_data: List[ChartDataPoint]
     count: int

@@ -35,11 +35,15 @@ class DataCollector:
             采集的数据条数
         """
         try:
+            # 构造交易时间范围（09:00:00 到 16:00:00）
+            start_datetime_str = trade_date.strftime("%Y-%m-%d 09:00:00")
+            end_datetime_str = trade_date.strftime("%Y-%m-%d 16:00:00")
+
             # 使用统一的数据获取工具获取分时数据（不复权）
             df = stock_data_fetcher.fetch_minute_data(
                 stock_code=stock_code,
-                start_date=trade_date,
-                end_date=trade_date,
+                start_datetime=start_datetime_str,
+                end_datetime=end_datetime_str,
                 period="1",
                 adjust="",
             )

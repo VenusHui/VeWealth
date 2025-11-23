@@ -51,6 +51,10 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   
+  // 实际数据时间范围
+  const [actualStartDate, setActualStartDate] = useState('')
+  const [actualEndDate, setActualEndDate] = useState('')
+  
   // 搜索相关状态
   const [searchKeyword, setSearchKeyword] = useState('')
   const [searchResults, setSearchResults] = useState<StockSearchResult[]>([])
@@ -140,6 +144,9 @@ export default function Home() {
       if (response.data.success) {
         setChartData(response.data.chart_data)
         setFitResult(response.data.fit_result || null)
+        // 设置实际的数据时间范围
+        setActualStartDate(response.data.actual_start_date || startDate)
+        setActualEndDate(response.data.actual_end_date || endDate)
         // 只有在没有股票名称时才设置为代码
         if (!hasStockName) {
           setStockName(stockCode.trim())
@@ -154,6 +161,8 @@ export default function Home() {
       }
       setChartData([]) // 清空图表数据
       setFitResult(null) // 清空拟合结果
+      setActualStartDate('') // 清空实际时间范围
+      setActualEndDate('')
     } finally {
       setLoading(false)
     }
@@ -345,8 +354,19 @@ export default function Home() {
               </h2>
               <div className="mt-2 flex flex-wrap gap-4 text-sm text-gray-600">
                 <span>📊 数据点数: {chartData.length}</span>
-                <span>📅 {startDate} 至 {endDate}</span>
                 <span>⏱️ 粒度: 1分钟</span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-4 text-sm">
+                <div className="flex flex-col gap-1">
+                  <span className="text-gray-500">📅 请求时间范围:</span>
+                  <span className="text-gray-700 font-medium">{startDate} 至 {endDate}</span>
+                </div>
+                {actualStartDate && actualEndDate && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-gray-500">✅ 实际数据范围:</span>
+                    <span className="text-green-700 font-medium">{actualStartDate} 至 {actualEndDate}</span>
+                  </div>
+                )}
               </div>
             </div>
             <StockChart data={chartData} period="1min" fitResult={fitResult} />

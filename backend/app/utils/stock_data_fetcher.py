@@ -18,8 +18,8 @@ class StockDataFetcher:
     @staticmethod
     def fetch_minute_data(
         stock_code: str,
-        start_date: date,
-        end_date: Optional[date] = None,
+        start_datetime: str,
+        end_datetime: str,
         period: str = "1",
         adjust: str = "",
     ) -> Optional[pd.DataFrame]:
@@ -28,8 +28,8 @@ class StockDataFetcher:
 
         Args:
             stock_code: 股票代码
-            start_date: 开始日期
-            end_date: 结束日期，如果为None则使用start_date
+            start_datetime: 开始时间，格式为 "YYYY-MM-DD HH:MM:SS"
+            end_datetime: 结束时间，格式为 "YYYY-MM-DD HH:MM:SS"
             period: 时间周期，默认"1"表示1分钟
             adjust: 复权类型，""表示不复权，"qfq"表示前复权，"hfq"表示后复权
 
@@ -37,33 +37,18 @@ class StockDataFetcher:
             原始分时数据DataFrame，如果获取失败返回None
         """
         try:
-            if end_date is None:
-                end_date = start_date
-
-            # 转换日期格式，固定时间范围为9:00-16:00
-            start_date_str = (
-                start_date.strftime("%Y-%m-%d 09:00:00")
-                if isinstance(start_date, date)
-                else start_date
-            )
-            end_date_str = (
-                end_date.strftime("%Y-%m-%d 16:00:00")
-                if isinstance(end_date, date)
-                else end_date
-            )
-
             # 调用 AKShare API 获取数据
             df = ak.stock_zh_a_hist_min_em(
                 symbol=stock_code,
                 period=period,
-                start_date=start_date_str,
-                end_date=end_date_str,
+                start_date=start_datetime,
+                end_date=end_datetime,
                 adjust=adjust,
             )
 
             if df is None or df.empty:
                 logger.warning(
-                    f"股票 {stock_code} 在 {start_date_str} 到 {end_date_str} 期间无数据"
+                    f"股票 {stock_code} 在 {start_datetime} 到 {end_datetime} 期间无数据"
                 )
                 return None
 
