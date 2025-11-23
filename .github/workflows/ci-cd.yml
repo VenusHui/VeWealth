@@ -162,55 +162,7 @@ jobs:
             echo "🧹 清理旧镜像..."
             docker image prune -f
             
-            # 构建并启动新容器
-            echo "🏗️  构建并启动容器..."
-            ENV=prod bash docker-start.sh
-            
-            # 等待服务启动
-            echo "⏳ 等待服务启动..."
-            sleep 10
-            
-            # 检查服务状态
-            echo "🔍 检查服务状态..."
-            docker-compose ps
-            
-            # 健康检查
-            echo "🏥 执行健康检查..."
-            max_retries=30
-            retry_count=0
-            
-            while [ $retry_count -lt $max_retries ]; do
-              if curl -f http://localhost:8001/health > /dev/null 2>&1; then
-                echo "✅ 后端服务健康"
-                break
-              fi
-              retry_count=$((retry_count + 1))
-              echo "等待后端服务... ($retry_count/$max_retries)"
-              sleep 2
-            done
-            
-            if [ $retry_count -eq $max_retries ]; then
-              echo "❌ 后端服务启动失败"
-              docker-compose logs backend
-              exit 1
-            fi
-            
-            retry_count=0
-            while [ $retry_count -lt $max_retries ]; do
-              if curl -f http://localhost:3000 > /dev/null 2>&1; then
-                echo "✅ 前端服务健康"
-                break
-              fi
-              retry_count=$((retry_count + 1))
-              echo "等待前端服务... ($retry_count/$max_retries)"
-              sleep 2
-            done
-            
-            if [ $retry_count -eq $max_retries ]; then
-              echo "❌ 前端服务启动失败"
-              docker-compose logs frontend
-              exit 1
-            fi
+            bash docker-start.sh
             
             echo "=========================================="
             echo "✅ 部署完成！"
