@@ -20,7 +20,7 @@ pip install -r requirements.txt > /dev/null 2>&1
 
 # 在后台启动后端
 echo "后端服务启动中... (http://localhost:8001)"
-python main.py &
+python dev_server.py &
 BACKEND_PID=$!
 cd ..
 

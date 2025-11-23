@@ -6,13 +6,12 @@
 
 ```
 backend/
-├── main.py                 # 应用入口
+├── main.py                 # 应用入口（生产模式）
+├── dev_server.py          # 开发服务器（热重载） ⭐
 ├── requirements.txt        # 依赖包
 ├── README.md              # 本文档
 ├── logs/                  # 日志文件目录
 │   └── vewealth.log       # 应用日志
-├── docs/                  # 文档目录
-│   └── LOGGING.md         # 日志使用指南
 └── app/                   # 主应用包
     ├── core/              # 核心配置
     │   ├── config.py      # 应用配置
@@ -44,6 +43,25 @@ pip install -r requirements.txt
 ```
 
 ### 运行服务
+
+#### 开发模式（推荐）- 支持热重载
+
+```bash
+python dev_server.py
+```
+
+**特性：**
+- ✅ 文件修改后自动重启服务器
+- ✅ 实时应用代码更改，无需手动重启
+- ✅ 提高开发效率
+- ✅ 监控 `app/` 目录下的所有Python文件
+
+**使用场景：**
+- 本地开发和调试
+- 快速迭代和测试
+- API开发和测试
+
+#### 生产模式
 
 ```bash
 python main.py
