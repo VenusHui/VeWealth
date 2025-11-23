@@ -24,7 +24,6 @@ DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 def setup_logger(
     name: str = "vewealth",
     level: int = logging.INFO,
-    log_dir: str = None,
     max_bytes: int = 10 * 1024 * 1024,  # 10MB
     backup_count: int = 5,
 ) -> logging.Logger:
@@ -59,24 +58,6 @@ def setup_logger(
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
     
-    # 文件handler - 可选
-    if log_dir:
-        log_path = Path(log_dir)
-        log_path.mkdir(parents=True, exist_ok=True)
-        
-        # 按日期创建日志文件
-        log_file = log_path / f"{name}.log"
-        
-        file_handler = RotatingFileHandler(
-            filename=log_file,
-            maxBytes=max_bytes,
-            backupCount=backup_count,
-            encoding="utf-8",
-        )
-        file_handler.setLevel(level)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-    
     return logger
 
 
@@ -102,13 +83,11 @@ def get_logger(name: str = None) -> logging.Logger:
 # 创建全局logger实例
 # 后端根目录的logs文件夹
 backend_dir = Path(__file__).parent.parent.parent
-log_dir = backend_dir / "logs"
 
 # 主应用logger
 app_logger = setup_logger(
     name="vewealth",
     level=logging.INFO,
-    log_dir=str(log_dir),
 )
 
 # 为不同模块创建子logger
