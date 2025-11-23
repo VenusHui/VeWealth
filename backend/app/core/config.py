@@ -3,10 +3,14 @@
 """
 
 import os
+import logging
 from pathlib import Path
 from typing import List
 from pydantic_settings import BaseSettings
 import json
+
+# 使用标准logging，因为logger模块依赖config
+logger = logging.getLogger("vewealth.config")
 
 
 def get_env_file() -> str:
@@ -21,10 +25,10 @@ def get_env_file() -> str:
     env_file = base_dir / "settings" / f".{env}.env"
 
     if not env_file.exists():
-        print(f"⚠️  警告: 环境配置文件 {env_file} 不存在，将使用默认配置")
+        logger.warning(f"环境配置文件 {env_file} 不存在，将使用默认配置")
         return ""
 
-    print(f"✅ 加载环境配置: {env_file} (ENV={env})")
+    logger.info(f"加载环境配置: {env_file} (ENV={env})")
     return str(env_file)
 
 
@@ -97,7 +101,7 @@ class Settings(BaseSettings):
             try:
                 self.CORS_ORIGINS = json.loads(self.CORS_ORIGINS)
             except json.JSONDecodeError:
-                print(f"⚠️  警告: CORS_ORIGINS 格式错误，使用默认值")
+                logger.warning("CORS_ORIGINS 格式错误，使用默认值")
                 self.CORS_ORIGINS = ["http://localhost:3000"]
 
 

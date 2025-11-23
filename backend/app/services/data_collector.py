@@ -10,7 +10,11 @@ from sqlalchemy import and_
 from app.models.stock_data import StockMinuteData
 from app.models.watchlist import WatchList
 from app.core.config import settings
+from app.core.logger import get_module_logger
 from app.utils.stock_data_fetcher import stock_data_fetcher
+
+# 获取logger
+logger = get_module_logger("data_collector")
 
 
 class DataCollector:
@@ -80,10 +84,11 @@ class DataCollector:
                     count += 1
 
             self.db.commit()
+            logger.info(f"成功采集股票 {stock_code} 数据，共 {count} 条")
             return count
 
         except Exception as e:
-            print(f"采集股票 {stock_code} 数据失败: {str(e)}")
+            logger.error(f"采集股票 {stock_code} 数据失败: {str(e)}", exc_info=True)
             self.db.rollback()
             return 0
 

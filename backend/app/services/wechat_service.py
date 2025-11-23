@@ -6,6 +6,10 @@ from typing import Optional
 from wechatpy import WeChatClient
 from wechatpy.exceptions import WeChatClientException
 from app.core.config import settings
+from app.core.logger import get_module_logger
+
+# 获取logger
+logger = get_module_logger("wechat_service")
 
 
 class WeChatService:
@@ -17,10 +21,11 @@ class WeChatService:
                 settings.WECHAT_APP_ID, settings.WECHAT_APP_SECRET
             )
             self.enabled = True
+            logger.info("微信服务已启用")
         else:
             self.client = None
             self.enabled = False
-            print("[微信服务] 未配置微信公众号参数，微信通知功能已禁用")
+            logger.info("未配置微信公众号参数，微信通知功能已禁用")
 
     def send_template_message(
         self, openid: str, template_id: str, data: dict, url: Optional[str] = None
@@ -38,16 +43,17 @@ class WeChatService:
             是否发送成功
         """
         if not self.enabled:
-            print("[微信服务] 微信通知功能未启用")
+            logger.warning("微信通知功能未启用")
             return False
 
         try:
             self.client.message.send_template(
                 user_id=openid, template_id=template_id, data=data, url=url
             )
+            logger.info(f"成功发送模板消息给用户 {openid}")
             return True
         except WeChatClientException as e:
-            print(f"[微信服务] 发送模板消息失败: {str(e)}")
+            logger.error(f"发送模板消息失败: {str(e)}", exc_info=True)
             return False
 
     def send_price_alert(
@@ -72,8 +78,8 @@ class WeChatService:
             是否发送成功
         """
         if not self.enabled:
-            print(
-                f"[微信服务] 模拟发送预警: {stock_name}({stock_code}) 当前价格 {current_price}, 原因: {alert_reason}"
+            logger.info(
+                f"模拟发送预警: {stock_name}({stock_code}) 当前价格 {current_price}, 原因: {alert_reason}"
             )
             return True
 
