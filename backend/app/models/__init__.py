@@ -5,5 +5,6 @@
 from .user import User
 from .watchlist import WatchList
 from .stock_data import StockMinuteData
+from .backtest import BacktestRun
 
-__all__ = ["User", "WatchList", "StockMinuteData"]
+__all__ = ["User", "WatchList", "StockMinuteData", "BacktestRun"]

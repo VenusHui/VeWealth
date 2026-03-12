@@ -31,6 +31,7 @@ export default function Navbar() {
     { href: '/', label: '首页', icon: '🏠' },
     { href: '/analysis', label: '股票分析', icon: '📊' },
     { href: '/watchlist', label: '监控列表', icon: '👁️', requireAuth: true },
+    { href: '/backtest', label: '策略回测', icon: '📈', requireAuth: true },
   ]
 
   return (
