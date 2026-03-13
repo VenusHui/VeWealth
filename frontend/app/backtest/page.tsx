@@ -2,6 +2,15 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts'
 import { getAuthHeader, isAuthenticated } from '../lib/auth'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
@@ -40,6 +49,17 @@ export default function BacktestPage() {
     () => strategies.find((s) => s.strategy_id === strategyId),
     [strategies, strategyId]
   )
+
+  const metricDescriptions: Record<string, string> = {
+    total_return: '总收益率：期末资金相对初始资金的涨跌幅。',
+    annual_return: '年化收益率：将区间收益折算到全年水平。',
+    max_drawdown: '最大回撤：资金从阶段高点回落的最大幅度。',
+    sharpe: '夏普比率：单位波动风险对应的超额收益能力。',
+    win_rate: '胜率：盈利平仓交易占全部平仓交易的比例。',
+    profit_loss_ratio: '盈亏比：平均盈利金额 / 平均亏损金额。',
+    turnover: '换手率：累计成交金额 / 初始资金。',
+    total_trades: '总交易笔数：回测区间内买卖成交总笔数。',
+  }
 
   useEffect(() => {
     if (!isAuthenticated()) return
@@ -225,9 +245,36 @@ export default function BacktestPage() {
       </div>
 
       {result && (
-        <div className="bg-white p-6 rounded-lg shadow space-y-4">
+        <div className="bg-white p-6 rounded-lg shadow space-y-6">
           <h2 className="text-xl font-semibold">回测结果（Run #{result.run_id}）</h2>
-          <pre className="text-xs bg-gray-100 p-3 rounded overflow-auto">{JSON.stringify(result.summary, null, 2)}</pre>
+
+          <div>
+            <div className="font-medium mb-3">指标说明</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {Object.entries(result.summary || {}).map(([key, value]) => (
+                <div key={key} className="border rounded p-3 bg-gray-50">
+                  <div className="text-sm font-semibold text-gray-800">{key}: <span className="text-indigo-600">{String(value)}</span></div>
+                  <div className="text-xs text-gray-600 mt-1">{metricDescriptions[key] || '—'}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="font-medium mb-2">整体资金曲线</div>
+            <div className="h-[320px] border rounded p-2">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={result.equity_curve || []} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="datetime" tick={{ fontSize: 11 }} minTickGap={40} />
+                  <YAxis tick={{ fontSize: 11 }} domain={["dataMin", "dataMax"]} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="equity" stroke="#4f46e5" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
           <div className="text-sm text-gray-600">交易笔数：{result.trades?.length || 0}，净值点数：{result.equity_curve?.length || 0}</div>
         </div>
       )}
