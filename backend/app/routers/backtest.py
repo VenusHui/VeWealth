@@ -12,8 +12,11 @@ from app.schemas.backtest import (
     BacktestRunListResponse,
     BacktestRunDetailResponse,
     BacktestStrategiesResponse,
+    BacktestJobCreateResponse,
+    BacktestJobListResponse,
+    BacktestJobDetailResponse,
 )
-from app.services.backtest import backtest_service
+from app.services.backtest import backtest_service, backtest_job_manager
 
 router = APIRouter(prefix="/backtest", tags=["backtest"])
 
@@ -69,3 +72,32 @@ async def get_run(
             status_code=status.HTTP_404_NOT_FOUND, detail="回测记录不存在"
         )
     return BacktestRunDetailResponse(data=run)
+
+
+@router.post("/jobs", response_model=BacktestJobCreateResponse)
+async def create_backtest_job(
+    request: BacktestRunRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    job = backtest_job_manager.create_job(request, current_user, db)
+    return BacktestJobCreateResponse(data=job)
+
+
+@router.get("/jobs", response_model=BacktestJobListResponse)
+async def list_backtest_jobs(current_user: User = Depends(get_current_active_user)):
+    _ = current_user
+    jobs = backtest_job_manager.list_jobs()
+    return BacktestJobListResponse(data=jobs)
+
+
+@router.get("/jobs/{job_id}", response_model=BacktestJobDetailResponse)
+async def get_backtest_job(
+    job_id: str,
+    current_user: User = Depends(get_current_active_user),
+):
+    _ = current_user
+    job = backtest_job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
+    return BacktestJobDetailResponse(data=job)

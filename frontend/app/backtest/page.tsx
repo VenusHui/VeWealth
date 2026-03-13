@@ -44,6 +44,8 @@ export default function BacktestPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<any>(null)
+  const [job, setJob] = useState<any>(null)
+  const [jobs, setJobs] = useState<any[]>([])
 
   const selectedStrategy = useMemo(
     () => strategies.find((s) => s.strategy_id === strategyId),
@@ -96,6 +98,48 @@ export default function BacktestPage() {
     setStrategyParams(defaults)
   }, [selectedStrategy])
 
+  const fetchJobs = async () => {
+    if (!isAuthenticated()) return
+    try {
+      const resp = await axios.get(`${API_BASE_URL}/api/backtest/jobs`, {
+        headers: getAuthHeader(),
+      })
+      setJobs(resp.data?.data || [])
+    } catch {
+      // ignore
+    }
+  }
+
+  useEffect(() => {
+    fetchJobs()
+    const timer = setInterval(fetchJobs, 3000)
+    return () => clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    if (!job?.job_id) return
+    const timer = setInterval(async () => {
+      try {
+        const resp = await axios.get(`${API_BASE_URL}/api/backtest/jobs/${job.job_id}`, {
+          headers: getAuthHeader(),
+        })
+        const detail = resp.data?.data
+        setJob(detail)
+        if (detail?.status === 'success') {
+          setResult(detail.result)
+          clearInterval(timer)
+          fetchJobs()
+        }
+        if (detail?.status === 'failed' || detail?.status === 'cancelled') {
+          clearInterval(timer)
+        }
+      } catch {
+        clearInterval(timer)
+      }
+    }, 3000)
+    return () => clearInterval(timer)
+  }, [job?.job_id])
+
   const handleRun = async () => {
     if (!isAuthenticated()) {
       setError('请先登录')
@@ -128,10 +172,13 @@ export default function BacktestPage() {
         initial_cash: Number(initialCash),
       }
 
-      const resp = await axios.post(`${API_BASE_URL}/api/backtest/run`, payload, {
+      const resp = await axios.post(`${API_BASE_URL}/api/backtest/jobs`, payload, {
         headers: getAuthHeader(),
       })
-      setResult(resp.data?.data)
+      const createdJob = resp.data?.data
+      setJob(createdJob)
+      setResult(null)
+      await fetchJobs()
     } catch (e: any) {
       setError(e.response?.data?.detail || '回测执行失败')
     } finally {
@@ -242,6 +289,28 @@ export default function BacktestPage() {
         </button>
 
         {error && <div className="text-red-600">{error}</div>}
+      </div>
+
+      {job && (
+        <div className="bg-white p-4 rounded-lg shadow space-y-2">
+          <div className="font-medium">当前任务：{job.job_id}</div>
+          <div className="text-sm text-gray-600">状态：{job.status}｜阶段：{job.stage}</div>
+          <div className="text-sm text-gray-600">进度：{job.processed_symbols}/{job.total_symbols} ({Number(job.progress_pct || 0).toFixed(1)}%)</div>
+          {job.error && <div className="text-sm text-red-600">错误：{job.error}</div>}
+        </div>
+      )}
+
+      <div className="bg-white p-4 rounded-lg shadow">
+        <div className="font-medium mb-2">离线任务列表</div>
+        <div className="space-y-2 max-h-64 overflow-auto">
+          {jobs.map((j) => (
+            <div key={j.job_id} className="text-sm border rounded px-3 py-2 flex justify-between items-center">
+              <span>{j.job_id}</span>
+              <span className="text-gray-600">{j.status} · {Number(j.progress_pct || 0).toFixed(1)}%</span>
+            </div>
+          ))}
+          {jobs.length === 0 && <div className="text-sm text-gray-500">暂无任务</div>}
+        </div>
       </div>
 
       {result && (

@@ -124,3 +124,36 @@ class BacktestRunDetail(BaseModel):
 class BacktestRunDetailResponse(BaseModel):
     success: bool = True
     data: BacktestRunDetail
+
+
+class BacktestJobItem(BaseModel):
+    job_id: str
+    status: Literal["pending", "running", "success", "failed", "cancelled"]
+    progress_pct: float = 0
+    total_symbols: int = 0
+    processed_symbols: int = 0
+    eta_seconds: Optional[int] = None
+    stage: str = "pending"
+    error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class BacktestJobDetail(BacktestJobItem):
+    request_payload: dict[str, Any]
+    result: Optional[dict[str, Any]] = None
+
+
+class BacktestJobCreateResponse(BaseModel):
+    success: bool = True
+    data: BacktestJobItem
+
+
+class BacktestJobListResponse(BaseModel):
+    success: bool = True
+    data: list[BacktestJobItem]
+
+
+class BacktestJobDetailResponse(BaseModel):
+    success: bool = True
+    data: BacktestJobDetail
