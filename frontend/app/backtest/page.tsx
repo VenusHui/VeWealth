@@ -121,14 +121,43 @@ export default function BacktestPage() {
 
       <div className="bg-white p-6 rounded-lg shadow space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <input className="border rounded px-3 py-2" value={name} onChange={(e) => setName(e.target.value)} placeholder="回测名称" />
-          <select className="border rounded px-3 py-2" value={strategyId} onChange={(e) => setStrategyId(e.target.value)}>
-            {strategies.map((s) => <option key={s.strategy_id} value={s.strategy_id}>{s.name}</option>)}
-          </select>
-          <input className="border rounded px-3 py-2" value={symbols} onChange={(e) => setSymbols(e.target.value)} placeholder="股票代码，逗号分隔" />
-          <input className="border rounded px-3 py-2" value={initialCash} onChange={(e) => setInitialCash(e.target.value)} placeholder="初始资金" />
-          <input type="date" className="border rounded px-3 py-2" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          <input type="date" className="border rounded px-3 py-2" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+          <label className="text-sm text-gray-700">
+            回测名称
+            <span className="ml-2 text-xs text-gray-500">(name)</span>
+            <input className="mt-1 w-full border rounded px-3 py-2" value={name} onChange={(e) => setName(e.target.value)} placeholder="回测名称" />
+          </label>
+
+          <label className="text-sm text-gray-700">
+            策略
+            <span className="ml-2 text-xs text-gray-500">(strategy_id)</span>
+            <select className="mt-1 w-full border rounded px-3 py-2" value={strategyId} onChange={(e) => setStrategyId(e.target.value)}>
+              {strategies.map((s) => <option key={s.strategy_id} value={s.strategy_id}>{s.name}</option>)}
+            </select>
+          </label>
+
+          <label className="text-sm text-gray-700">
+            股票代码（逗号分隔）
+            <span className="ml-2 text-xs text-gray-500">(symbols)</span>
+            <input className="mt-1 w-full border rounded px-3 py-2" value={symbols} onChange={(e) => setSymbols(e.target.value)} placeholder="股票代码，逗号分隔" />
+          </label>
+
+          <label className="text-sm text-gray-700">
+            初始资金
+            <span className="ml-2 text-xs text-gray-500">(initial_cash)</span>
+            <input className="mt-1 w-full border rounded px-3 py-2" value={initialCash} onChange={(e) => setInitialCash(e.target.value)} placeholder="初始资金" />
+          </label>
+
+          <label className="text-sm text-gray-700">
+            开始日期
+            <span className="ml-2 text-xs text-gray-500">(start_date)</span>
+            <input type="date" className="mt-1 w-full border rounded px-3 py-2" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+          </label>
+
+          <label className="text-sm text-gray-700">
+            结束日期
+            <span className="ml-2 text-xs text-gray-500">(end_date)</span>
+            <input type="date" className="mt-1 w-full border rounded px-3 py-2" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+          </label>
         </div>
 
         {selectedStrategy && (
@@ -138,6 +167,7 @@ export default function BacktestPage() {
               {selectedStrategy.param_schema.map((p) => (
                 <label key={p.key} className="text-sm text-gray-700">
                   {p.label}
+                  <span className="ml-2 text-xs text-gray-500">(strategy_params.{p.key})</span>
                   <input
                     className="mt-1 w-full border rounded px-3 py-2"
                     value={strategyParams[p.key] ?? ''}
