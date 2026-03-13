@@ -78,16 +78,14 @@ async def get_run(
 async def create_backtest_job(
     request: BacktestRunRequest,
     current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db),
 ):
-    job = backtest_job_manager.create_job(request, current_user, db)
+    job = backtest_job_manager.create_job(request, current_user)
     return BacktestJobCreateResponse(data=job)
 
 
 @router.get("/jobs", response_model=BacktestJobListResponse)
 async def list_backtest_jobs(current_user: User = Depends(get_current_active_user)):
-    _ = current_user
-    jobs = backtest_job_manager.list_jobs()
+    jobs = backtest_job_manager.list_jobs(current_user.id)
     return BacktestJobListResponse(data=jobs)
 
 
@@ -96,8 +94,29 @@ async def get_backtest_job(
     job_id: str,
     current_user: User = Depends(get_current_active_user),
 ):
-    _ = current_user
-    job = backtest_job_manager.get_job(job_id)
+    job = backtest_job_manager.get_job(job_id, current_user.id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
+    return BacktestJobDetailResponse(data=job)
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=BacktestJobDetailResponse)
+async def cancel_backtest_job(
+    job_id: str,
+    current_user: User = Depends(get_current_active_user),
+):
+    job = backtest_job_manager.cancel_job(job_id, current_user.id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
+    return BacktestJobDetailResponse(data=job)
+
+
+@router.post("/jobs/{job_id}/retry", response_model=BacktestJobDetailResponse)
+async def retry_backtest_job(
+    job_id: str,
+    current_user: User = Depends(get_current_active_user),
+):
+    job = backtest_job_manager.retry_job(job_id, current_user.id)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
     return BacktestJobDetailResponse(data=job)

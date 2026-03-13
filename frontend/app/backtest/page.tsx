@@ -140,6 +140,27 @@ export default function BacktestPage() {
     return () => clearInterval(timer)
   }, [job?.job_id])
 
+  const handleCancelJob = async (jobId: string) => {
+    try {
+      await axios.post(`${API_BASE_URL}/api/backtest/jobs/${jobId}/cancel`, {}, { headers: getAuthHeader() })
+      await fetchJobs()
+      if (job?.job_id === jobId) {
+        const resp = await axios.get(`${API_BASE_URL}/api/backtest/jobs/${jobId}`, { headers: getAuthHeader() })
+        setJob(resp.data?.data)
+      }
+    } catch {}
+  }
+
+  const handleRetryJob = async (jobId: string) => {
+    try {
+      const resp = await axios.post(`${API_BASE_URL}/api/backtest/jobs/${jobId}/retry`, {}, { headers: getAuthHeader() })
+      const retried = resp.data?.data
+      setJob(retried)
+      setResult(null)
+      await fetchJobs()
+    } catch {}
+  }
+
   const handleRun = async () => {
     if (!isAuthenticated()) {
       setError('请先登录')
@@ -296,6 +317,22 @@ export default function BacktestPage() {
           <div className="font-medium">当前任务：{job.job_id}</div>
           <div className="text-sm text-gray-600">状态：{job.status}｜阶段：{job.stage}</div>
           <div className="text-sm text-gray-600">进度：{job.processed_symbols}/{job.total_symbols} ({Number(job.progress_pct || 0).toFixed(1)}%)</div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleCancelJob(job.job_id)}
+              disabled={job.status !== 'pending' && job.status !== 'running'}
+              className="px-3 py-1 text-xs rounded bg-red-100 text-red-700 disabled:opacity-50"
+            >
+              取消任务
+            </button>
+            <button
+              onClick={() => handleRetryJob(job.job_id)}
+              disabled={job.status !== 'failed' && job.status !== 'cancelled'}
+              className="px-3 py-1 text-xs rounded bg-amber-100 text-amber-700 disabled:opacity-50"
+            >
+              重试任务
+            </button>
+          </div>
           {job.error && <div className="text-sm text-red-600">错误：{job.error}</div>}
         </div>
       )}
@@ -305,8 +342,22 @@ export default function BacktestPage() {
         <div className="space-y-2 max-h-64 overflow-auto">
           {jobs.map((j) => (
             <div key={j.job_id} className="text-sm border rounded px-3 py-2 flex justify-between items-center">
-              <span>{j.job_id}</span>
-              <span className="text-gray-600">{j.status} · {Number(j.progress_pct || 0).toFixed(1)}%</span>
+              <button
+                className="text-left text-indigo-700 hover:underline"
+                onClick={async () => {
+                  const resp = await axios.get(`${API_BASE_URL}/api/backtest/jobs/${j.job_id}`, { headers: getAuthHeader() })
+                  const detail = resp.data?.data
+                  setJob(detail)
+                  if (detail?.status === 'success') setResult(detail.result)
+                }}
+              >
+                {j.job_id}
+              </button>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-600">{j.status} · {Number(j.progress_pct || 0).toFixed(1)}%</span>
+                <button onClick={() => handleCancelJob(j.job_id)} className="px-2 py-1 text-xs rounded bg-red-50 text-red-600">取消</button>
+                <button onClick={() => handleRetryJob(j.job_id)} className="px-2 py-1 text-xs rounded bg-amber-50 text-amber-700">重试</button>
+              </div>
             </div>
           ))}
           {jobs.length === 0 && <div className="text-sm text-gray-500">暂无任务</div>}

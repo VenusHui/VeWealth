@@ -1,7 +1,7 @@
 """回测服务"""
 
 from collections import defaultdict
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
@@ -20,15 +20,19 @@ class BacktestService:
         return list_strategies()
 
     def run_backtest(
-        self, request: BacktestRunRequest, current_user: User, db: Session
+        self,
+        request: BacktestRunRequest,
+        current_user: User,
+        db: Session,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         if request.start_date > request.end_date:
             raise ValueError("start_date 不能晚于 end_date")
 
         if request.mode == "strategy_select":
-            result = self._run_strategy_select_mode(request)
+            result = self._run_strategy_select_mode(request, progress_callback)
         else:
-            result = self._run_manual_symbols_mode(request)
+            result = self._run_manual_symbols_mode(request, progress_callback)
 
         run = BacktestRun(
             user_id=current_user.id,
@@ -61,7 +65,11 @@ class BacktestService:
             "warnings": result["warnings"],
         }
 
-    def _run_manual_symbols_mode(self, request: BacktestRunRequest) -> dict[str, Any]:
+    def _run_manual_symbols_mode(
+        self,
+        request: BacktestRunRequest,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         symbols = [s.strip() for s in request.symbols if s.strip()]
         if not symbols:
             raise ValueError("manual_symbols 模式下 symbols 不能为空")
@@ -74,7 +82,17 @@ class BacktestService:
         symbol_curves: dict[str, list[dict]] = {}
         final_positions: list[dict] = []
 
-        for symbol in symbols:
+        total = len(symbols)
+        for idx, symbol in enumerate(symbols, start=1):
+            if progress_callback:
+                progress_callback(
+                    {
+                        "stage": "running",
+                        "total_symbols": total,
+                        "processed_symbols": idx - 1,
+                        "progress_pct": round((idx - 1) * 100 / total, 2),
+                    }
+                )
             try:
                 df, _, _ = stock_service.get_daily_data(
                     symbol=symbol,
@@ -109,6 +127,16 @@ class BacktestService:
                 }
             )
 
+        if progress_callback:
+            progress_callback(
+                {
+                    "stage": "summarizing",
+                    "total_symbols": total,
+                    "processed_symbols": total,
+                    "progress_pct": 100.0,
+                }
+            )
+
         portfolio_curve = self._merge_symbol_curves(symbol_curves)
         summary = calc_summary(portfolio_curve, all_trades, request.initial_cash)
 
@@ -121,7 +149,11 @@ class BacktestService:
             "symbols": symbols,
         }
 
-    def _run_strategy_select_mode(self, request: BacktestRunRequest) -> dict[str, Any]:
+    def _run_strategy_select_mode(
+        self,
+        request: BacktestRunRequest,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         if request.strategy_id != "volume_shrink_drop_v1":
             raise ValueError(
                 "strategy_select 模式当前仅支持 volume_shrink_drop_v1 策略"
@@ -148,7 +180,17 @@ class BacktestService:
         warnings: list[str] = []
         events: list[dict[str, Any]] = []
 
-        for symbol in universe:
+        total = len(universe)
+        for idx, symbol in enumerate(universe, start=1):
+            if progress_callback:
+                progress_callback(
+                    {
+                        "stage": "scanning",
+                        "total_symbols": total,
+                        "processed_symbols": idx - 1,
+                        "progress_pct": round((idx - 1) * 100 / total, 2),
+                    }
+                )
             df, _, _ = stock_service.get_daily_data(
                 symbol=symbol,
                 start_date=request.start_date.strftime("%Y-%m-%d"),
@@ -212,6 +254,16 @@ class BacktestService:
                 "positions_snapshot": [],
                 "symbols": universe,
             }
+
+        if progress_callback:
+            progress_callback(
+                {
+                    "stage": "summarizing",
+                    "total_symbols": total,
+                    "processed_symbols": total,
+                    "progress_pct": 100.0,
+                }
+            )
 
         events = sorted(events, key=lambda x: x["sell_datetime"])
         equity = request.initial_cash
