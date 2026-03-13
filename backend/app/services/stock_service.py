@@ -7,6 +7,7 @@ import pandas as pd
 from typing import List, Dict, Any, Tuple
 from datetime import datetime
 import logging
+from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.schemas.stock import StockSearchResult
@@ -35,22 +36,55 @@ class StockService:
                     return codes[:limit]
                 return codes
 
-            # 兜底：若实时接口不可用，回退到本地已采集过的股票代码
+            # 兜底1：若实时接口不可用，回退到本地已采集过的股票代码
             db = SessionLocal()
             try:
                 rows = db.query(StockMinuteData.stock_code).distinct().all()
                 fallback_codes = [str(r[0]).zfill(6) for r in rows if r[0]]
-                if limit and limit > 0:
-                    fallback_codes = fallback_codes[:limit]
                 if fallback_codes:
                     logger.warning(
                         f"实时股票列表获取失败，回退本地股票池，数量: {len(fallback_codes)}"
                     )
-                return fallback_codes
+                    if limit and limit > 0:
+                        return fallback_codes[:limit]
+                    return fallback_codes
             finally:
                 db.close()
+
+            # 兜底2：读取静态A股清单文件
+            static_codes = self._load_static_symbols()
+            if static_codes:
+                logger.warning(f"回退静态A股清单，数量: {len(static_codes)}")
+                if limit and limit > 0:
+                    return static_codes[:limit]
+                return static_codes
+
+            return []
         except Exception as e:
             logger.error(f"获取全市场股票列表失败: {str(e)}")
+            return []
+
+    def _load_static_symbols(self) -> List[str]:
+        """从静态文件加载A股代码清单"""
+        try:
+            base_dir = Path(__file__).resolve().parents[2]  # backend/app
+            static_file = (
+                base_dir.parent / "data" / "a_share_symbols.txt"
+            )  # backend/data
+            if not static_file.exists():
+                return []
+
+            codes: List[str] = []
+            with static_file.open("r", encoding="utf-8") as f:
+                for line in f:
+                    code = line.strip()
+                    if not code or code.startswith("#"):
+                        continue
+                    if code.isdigit() and len(code) <= 6:
+                        codes.append(code.zfill(6))
+            return list(dict.fromkeys(codes))
+        except Exception as e:
+            logger.error(f"读取静态A股清单失败: {str(e)}")
             return []
 
     def search_stocks(self, keyword: str) -> List[StockSearchResult]:
