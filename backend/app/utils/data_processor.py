@@ -125,8 +125,11 @@ class DataProcessor:
 
             # 归一化到总成交量
             total_volume = volumes.sum()
-            # 计算密度的积分（使用梯形法则）
-            density_integral = np.trapz(densities, price_range)
+            # 计算密度的积分（numpy 2.x 推荐 trapezoid）
+            trapz_fn = getattr(np, "trapezoid", np.trapz)
+            density_integral = trapz_fn(densities, price_range)
+            if density_integral <= 0:
+                return None
             normalized_densities = densities * (total_volume / density_integral)
 
             # 5. 生成每个高斯分量的曲线
@@ -143,7 +146,6 @@ class DataProcessor:
                 # 计算该分量的密度
                 component_density = weight * stats.norm.pdf(price_range, mean, std)
                 # 归一化到总成交量
-                component_integral = np.trapz(component_density, price_range)
                 component_volume = component_density * (total_volume / density_integral)
 
                 components.append(

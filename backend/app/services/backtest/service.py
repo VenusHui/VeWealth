@@ -38,11 +38,15 @@ class BacktestService:
         final_positions: list[dict] = []
 
         for symbol in symbols:
-            df, _, _ = stock_service.get_minute_data(
-                symbol=symbol,
-                start_date=request.start_date.strftime("%Y-%m-%d"),
-                end_date=request.end_date.strftime("%Y-%m-%d"),
-            )
+            try:
+                df, _, _ = stock_service.get_minute_data(
+                    symbol=symbol,
+                    start_date=request.start_date.strftime("%Y-%m-%d"),
+                    end_date=request.end_date.strftime("%Y-%m-%d"),
+                )
+            except Exception as e:
+                all_warnings.append(f"{symbol}: 获取行情失败({str(e)})，已跳过")
+                continue
 
             if df.empty:
                 all_warnings.append(f"{symbol}: 无可用行情，已跳过")

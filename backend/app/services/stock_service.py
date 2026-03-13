@@ -187,7 +187,13 @@ class StockService:
             raise
         except Exception as e:
             logger.error(f"获取分钟数据失败: {str(e)}")
-            raise Exception(f"获取分钟数据失败: {str(e)}")
+            return (
+                pd.DataFrame(
+                    columns=["datetime", "open", "high", "low", "close", "volume"]
+                ),
+                start_date,
+                end_date,
+            )
 
     def get_stock_data(
         self, symbol: str, start_date: str, end_date: str
