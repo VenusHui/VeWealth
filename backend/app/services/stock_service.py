@@ -25,6 +25,21 @@ class StockService:
     def __init__(self):
         self.data_processor = DataProcessor()
 
+    def get_all_stock_symbols(self, limit: int | None = None) -> List[str]:
+        """获取全市场股票代码列表"""
+        try:
+            df = stock_data_fetcher.fetch_realtime_data()
+            if df is None or df.empty or "代码" not in df.columns:
+                return []
+
+            codes = [str(c).zfill(6) for c in df["代码"].tolist() if str(c).strip()]
+            if limit and limit > 0:
+                return codes[:limit]
+            return codes
+        except Exception as e:
+            logger.error(f"获取全市场股票列表失败: {str(e)}")
+            return []
+
     def search_stocks(self, keyword: str) -> List[StockSearchResult]:
         """
         搜索股票

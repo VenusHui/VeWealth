@@ -1,7 +1,7 @@
 """回测相关Schema"""
 
 from datetime import datetime, date
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 
 from pydantic import BaseModel, Field
 
@@ -40,7 +40,10 @@ class BacktestRunRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     strategy_id: str = Field(..., min_length=1, max_length=64)
     strategy_params: dict[str, Any] = Field(default_factory=dict)
-    symbols: list[str] = Field(..., min_length=1)
+    mode: Literal["manual_symbols", "strategy_select"] = "manual_symbols"
+    universe_type: Literal["all", "custom"] = "all"
+    symbols: list[str] = Field(default_factory=list)
+    pool_symbols: list[str] = Field(default_factory=list)
     start_date: date
     end_date: date
     initial_cash: float = Field(..., gt=0)

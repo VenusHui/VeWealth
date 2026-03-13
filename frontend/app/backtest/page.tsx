@@ -24,7 +24,10 @@ export default function BacktestPage() {
   const [strategies, setStrategies] = useState<Strategy[]>([])
   const [strategyId, setStrategyId] = useState('')
   const [strategyParams, setStrategyParams] = useState<Record<string, string>>({})
+  const [mode, setMode] = useState<'manual_symbols' | 'strategy_select'>('manual_symbols')
+  const [universeType, setUniverseType] = useState<'all' | 'custom'>('all')
   const [symbols, setSymbols] = useState('000001')
+  const [poolSymbols, setPoolSymbols] = useState('')
   const [startDate, setStartDate] = useState('2025-01-01')
   const [endDate, setEndDate] = useState('2025-12-31')
   const [initialCash, setInitialCash] = useState('100000')
@@ -94,7 +97,12 @@ export default function BacktestPage() {
         name,
         strategy_id: strategyId,
         strategy_params: castParams,
-        symbols: symbols.split(',').map((s) => s.trim()).filter(Boolean),
+        mode,
+        universe_type: universeType,
+        symbols: mode === 'manual_symbols' ? symbols.split(',').map((s) => s.trim()).filter(Boolean) : [],
+        pool_symbols: mode === 'strategy_select' && universeType === 'custom'
+          ? poolSymbols.split(',').map((s) => s.trim()).filter(Boolean)
+          : [],
         start_date: startDate,
         end_date: endDate,
         initial_cash: Number(initialCash),
@@ -136,10 +144,40 @@ export default function BacktestPage() {
           </label>
 
           <label className="text-sm text-gray-700">
-            股票代码（逗号分隔）
-            <span className="ml-2 text-xs text-gray-500">(symbols)</span>
-            <input className="mt-1 w-full border rounded px-3 py-2" value={symbols} onChange={(e) => setSymbols(e.target.value)} placeholder="股票代码，逗号分隔" />
+            回测模式
+            <span className="ml-2 text-xs text-gray-500">(mode)</span>
+            <select className="mt-1 w-full border rounded px-3 py-2" value={mode} onChange={(e) => setMode(e.target.value as 'manual_symbols' | 'strategy_select')}>
+              <option value="manual_symbols">手工股票池 (manual_symbols)</option>
+              <option value="strategy_select">策略自动选股 (strategy_select)</option>
+            </select>
           </label>
+
+          {mode === 'manual_symbols' ? (
+            <label className="text-sm text-gray-700">
+              股票代码（逗号分隔）
+              <span className="ml-2 text-xs text-gray-500">(symbols)</span>
+              <input className="mt-1 w-full border rounded px-3 py-2" value={symbols} onChange={(e) => setSymbols(e.target.value)} placeholder="股票代码，逗号分隔" />
+            </label>
+          ) : (
+            <>
+              <label className="text-sm text-gray-700">
+                选股范围
+                <span className="ml-2 text-xs text-gray-500">(universe_type)</span>
+                <select className="mt-1 w-full border rounded px-3 py-2" value={universeType} onChange={(e) => setUniverseType(e.target.value as 'all' | 'custom')}>
+                  <option value="all">全市场 (all)</option>
+                  <option value="custom">自定义池 (custom)</option>
+                </select>
+              </label>
+
+              {universeType === 'custom' && (
+                <label className="text-sm text-gray-700">
+                  自定义股票池（逗号分隔）
+                  <span className="ml-2 text-xs text-gray-500">(pool_symbols)</span>
+                  <input className="mt-1 w-full border rounded px-3 py-2" value={poolSymbols} onChange={(e) => setPoolSymbols(e.target.value)} placeholder="000001,000002" />
+                </label>
+              )}
+            </>
+          )}
 
           <label className="text-sm text-gray-700">
             初始资金

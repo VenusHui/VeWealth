@@ -1,9 +1,13 @@
 """策略注册表"""
 
 from app.services.backtest.strategies.ma_cross_v1 import MACrossV1Strategy
+from app.services.backtest.strategies.volume_shrink_drop_v1 import (
+    VolumeShrinkDropV1Strategy,
+)
 
 STRATEGY_REGISTRY = {
     MACrossV1Strategy.strategy_id: MACrossV1Strategy,
+    VolumeShrinkDropV1Strategy.strategy_id: VolumeShrinkDropV1Strategy,
 }
 
 
