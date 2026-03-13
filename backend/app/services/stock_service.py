@@ -170,9 +170,14 @@ class StockService:
             elif not api_df.empty:
                 result_df = api_df
             else:
-                result_df = pd.DataFrame()
+                result_df = pd.DataFrame(
+                    columns=["datetime", "open", "high", "low", "close", "volume"]
+                )
 
             # 4. 计算实际的时间范围
+            if result_df.empty or "datetime" not in result_df.columns:
+                return result_df, start_datetime_str, end_datetime_str
+
             actual_start = result_df["datetime"].min()
             actual_end = result_df["datetime"].max()
 
