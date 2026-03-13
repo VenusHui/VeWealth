@@ -69,6 +69,69 @@ class StockService:
         except Exception as e:
             raise Exception(f"搜索股票失败: {str(e)}")
 
+    def get_daily_data(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+    ) -> Tuple[pd.DataFrame, str, str]:
+        """
+        获取日线数据（用于回测）
+
+        Args:
+            symbol: 股票代码
+            start_date: 开始日期 YYYY-MM-DD
+            end_date: 结束日期 YYYY-MM-DD
+
+        Returns:
+            (日线数据DataFrame, 实际开始日期, 实际结束日期)
+        """
+        try:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+
+            api_df = stock_data_fetcher.fetch_daily_data(
+                stock_code=symbol,
+                start_date=start_dt.strftime("%Y%m%d"),
+                end_date=end_dt.strftime("%Y%m%d"),
+                adjust="qfq",
+            )
+
+            if api_df is None or api_df.empty:
+                return (
+                    pd.DataFrame(
+                        columns=["datetime", "open", "high", "low", "close", "volume"]
+                    ),
+                    start_date,
+                    end_date,
+                )
+
+            result_df = stock_data_fetcher.clean_daily_data_for_analysis(api_df)
+            if result_df.empty or "datetime" not in result_df.columns:
+                return (
+                    pd.DataFrame(
+                        columns=["datetime", "open", "high", "low", "close", "volume"]
+                    ),
+                    start_date,
+                    end_date,
+                )
+
+            actual_start = result_df["datetime"].min()
+            actual_end = result_df["datetime"].max()
+            return result_df, actual_start, actual_end
+
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.error(f"获取日线数据失败: {str(e)}")
+            return (
+                pd.DataFrame(
+                    columns=["datetime", "open", "high", "low", "close", "volume"]
+                ),
+                start_date,
+                end_date,
+            )
+
     def get_minute_data(
         self,
         symbol: str,

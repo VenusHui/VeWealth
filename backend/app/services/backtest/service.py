@@ -39,7 +39,7 @@ class BacktestService:
 
         for symbol in symbols:
             try:
-                df, _, _ = stock_service.get_minute_data(
+                df, _, _ = stock_service.get_daily_data(
                     symbol=symbol,
                     start_date=request.start_date.strftime("%Y-%m-%d"),
                     end_date=request.end_date.strftime("%Y-%m-%d"),

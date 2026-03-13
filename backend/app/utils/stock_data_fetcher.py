@@ -17,6 +17,55 @@ class StockDataFetcher:
     """股票数据获取器 - 统一的数据获取接口"""
 
     @staticmethod
+    def fetch_daily_data(
+        stock_code: str,
+        start_date: str,
+        end_date: str,
+        adjust: str = "qfq",
+        max_retries: int = 2,
+    ) -> Optional[pd.DataFrame]:
+        """
+        获取股票日线数据（原始数据，未经处理）
+
+        Args:
+            stock_code: 股票代码
+            start_date: 开始日期，格式为 "YYYYMMDD"
+            end_date: 结束日期，格式为 "YYYYMMDD"
+            adjust: 复权类型，""表示不复权，"qfq"表示前复权，"hfq"表示后复权
+            max_retries: 网络失败时的最大重试次数
+
+        Returns:
+            原始日线数据DataFrame，如果获取失败返回None
+        """
+        for attempt in range(1, max_retries + 2):
+            try:
+                df = ak.stock_zh_a_hist(
+                    symbol=stock_code,
+                    period="daily",
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust=adjust,
+                )
+
+                if df is None or df.empty:
+                    logger.warning(
+                        f"股票 {stock_code} 在 {start_date} 到 {end_date} 期间无日线数据"
+                    )
+                    return None
+
+                return df
+            except Exception as e:
+                if attempt <= max_retries:
+                    logger.warning(
+                        f"获取股票 {stock_code} 日线数据失败(第{attempt}次重试): {str(e)}"
+                    )
+                    time.sleep(0.6 * attempt)
+                    continue
+
+                logger.error(f"获取股票 {stock_code} 日线数据失败: {str(e)}")
+                return None
+
+    @staticmethod
     def fetch_minute_data(
         stock_code: str,
         start_datetime: str,
@@ -126,6 +175,38 @@ class StockDataFetcher:
         df["stock_code"] = stock_code
 
         return df
+
+    @staticmethod
+    def clean_daily_data_for_analysis(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        清洗日线数据，准备用于分析和回测
+
+        Args:
+            df: 原始日线数据DataFrame
+
+        Returns:
+            清洗后的DataFrame，包含分析所需的列
+        """
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        column_mapping = {
+            "日期": "datetime",
+            "开盘": "open",
+            "收盘": "close",
+            "最高": "high",
+            "最低": "low",
+            "成交量": "volume",
+            "成交额": "amount",
+        }
+
+        clean_df = df.rename(columns=column_mapping)
+        if "datetime" in clean_df.columns:
+            clean_df["datetime"] = pd.to_datetime(clean_df["datetime"]).dt.strftime(
+                "%Y-%m-%d 00:00:00"
+            )
+
+        return clean_df
 
     @staticmethod
     def clean_minute_data_for_analysis(df: pd.DataFrame) -> pd.DataFrame:
