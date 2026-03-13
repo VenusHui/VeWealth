@@ -2,7 +2,6 @@
 
 from app.services.backtest.strategies.ma_cross_v1 import MACrossV1Strategy
 
-
 STRATEGY_REGISTRY = {
     MACrossV1Strategy.strategy_id: MACrossV1Strategy,
 }

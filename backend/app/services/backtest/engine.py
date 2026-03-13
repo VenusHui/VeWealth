@@ -41,7 +41,9 @@ def run_for_symbol(
     equity_curve: list[dict[str, Any]] = []
 
     if df.empty or len(df) < 3:
-        return SymbolRunResult(symbol, [], [], [f"{symbol}: 可用数据不足"], init_cash, 0)
+        return SymbolRunResult(
+            symbol, [], [], [f"{symbol}: 可用数据不足"], init_cash, 0
+        )
 
     work_df = df.copy()
     work_df["datetime"] = pd.to_datetime(work_df["datetime"])
@@ -62,7 +64,12 @@ def run_for_symbol(
 
         curr_close = float(curr["close"])
         curr_equity = cash + shares * curr_close
-        equity_curve.append({"datetime": ts.strftime("%Y-%m-%d %H:%M:%S"), "equity": round(curr_equity, 4)})
+        equity_curve.append(
+            {
+                "datetime": ts.strftime("%Y-%m-%d %H:%M:%S"),
+                "equity": round(curr_equity, 4),
+            }
+        )
 
         buy_signal = bool(curr.get("buy_signal", False))
         sell_signal = bool(curr.get("sell_signal", False))

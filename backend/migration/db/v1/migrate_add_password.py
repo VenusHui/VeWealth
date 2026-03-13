@@ -14,15 +14,11 @@ def migrate():
     with engine.connect() as conn:
         try:
             # 检查字段是否已存在
-            result = conn.execute(
-                text(
-                    """
+            result = conn.execute(text("""
                     SELECT column_name 
                     FROM information_schema.columns 
                     WHERE table_name='users' AND column_name='hashed_password';
-                """
-                )
-            )
+                """))
 
             if result.fetchone():
                 print("✅ hashed_password 字段已存在，无需迁移")
@@ -30,14 +26,10 @@ def migrate():
 
             # 添加 hashed_password 字段
             print("开始添加 hashed_password 字段...")
-            conn.execute(
-                text(
-                    """
+            conn.execute(text("""
                     ALTER TABLE users 
                     ADD COLUMN hashed_password VARCHAR(255);
-                """
-                )
-            )
+                """))
             conn.commit()
             print("✅ 成功添加 hashed_password 字段")
 

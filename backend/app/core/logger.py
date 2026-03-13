@@ -9,7 +9,6 @@ from pathlib import Path
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 
-
 # 日志格式
 LOG_FORMAT = (
     "%(asctime)s | %(levelname)-8s | "

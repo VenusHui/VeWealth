@@ -259,10 +259,10 @@ class StockService:
 
             # akshare返回的是按日期的时间序列数据
             # 列名：日期, 获利比例, 平均成本, 90成本-低, 90成本-高, 90集中度, 70成本-低, 70成本-高, 70集中度
-            
+
             # 获取最新的一条数据（最后一行）
             latest_data = df.iloc[-1]
-            
+
             # 提取关键信息
             cyq_info = {
                 "date": str(latest_data.get("日期", "")),

@@ -19,7 +19,9 @@ class BacktestService:
     def list_strategies(self) -> list[dict]:
         return list_strategies()
 
-    def run_backtest(self, request: BacktestRunRequest, current_user: User, db: Session) -> dict[str, Any]:
+    def run_backtest(
+        self, request: BacktestRunRequest, current_user: User, db: Session
+    ) -> dict[str, Any]:
         if request.start_date > request.end_date:
             raise ValueError("start_date 不能晚于 end_date")
 
@@ -100,10 +102,17 @@ class BacktestService:
             "warnings": all_warnings,
         }
 
-    def list_runs(self, current_user: User, db: Session, limit: int = 20, offset: int = 0):
+    def list_runs(
+        self, current_user: User, db: Session, limit: int = 20, offset: int = 0
+    ):
         query = db.query(BacktestRun).filter(BacktestRun.user_id == current_user.id)
         total = query.count()
-        runs = query.order_by(BacktestRun.created_at.desc()).offset(offset).limit(limit).all()
+        runs = (
+            query.order_by(BacktestRun.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
         return runs, total
 
     def get_run(self, run_id: int, current_user: User, db: Session):

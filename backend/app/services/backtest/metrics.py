@@ -3,7 +3,9 @@
 import math
 
 
-def calc_summary(equity_curve: list[dict], trades: list[dict], initial_cash: float) -> dict:
+def calc_summary(
+    equity_curve: list[dict], trades: list[dict], initial_cash: float
+) -> dict:
     if not equity_curve:
         return {
             "total_return": 0.0,
@@ -36,7 +38,9 @@ def calc_summary(equity_curve: list[dict], trades: list[dict], initial_cash: flo
         sharpe = 0.0
 
     n_periods = max(1, len(equity_curve) - 1)
-    annual_return = (1 + total_return) ** (252 / n_periods) - 1 if n_periods > 0 else 0.0
+    annual_return = (
+        (1 + total_return) ** (252 / n_periods) - 1 if n_periods > 0 else 0.0
+    )
 
     peak = equity_curve[0]["equity"]
     max_drawdown = 0.0
@@ -55,7 +59,11 @@ def calc_summary(equity_curve: list[dict], trades: list[dict], initial_cash: flo
     avg_loss = abs(sum(t["pnl"] for t in losses) / len(losses)) if losses else 0.0
     profit_loss_ratio = (avg_win / avg_loss) if avg_loss > 1e-12 else 0.0
 
-    turnover = sum(abs(t.get("amount", 0.0)) for t in trades) / initial_cash if initial_cash > 0 else 0.0
+    turnover = (
+        sum(abs(t.get("amount", 0.0)) for t in trades) / initial_cash
+        if initial_cash > 0
+        else 0.0
+    )
 
     return {
         "total_return": round(total_return, 6),
