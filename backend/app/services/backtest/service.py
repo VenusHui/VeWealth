@@ -141,7 +141,9 @@ class BacktestService:
             universe = stock_service.get_all_stock_symbols(limit=max_universe_size)
 
         if not universe:
-            raise ValueError("选股池为空，无法执行 strategy_select 回测")
+            raise ValueError(
+                "选股池为空，无法执行 strategy_select 回测（可能是行情源连接失败）。请先改用 custom 股票池，或稍后重试。"
+            )
 
         warnings: list[str] = []
         events: list[dict[str, Any]] = []

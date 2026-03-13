@@ -29,13 +29,26 @@ class StockService:
         """获取全市场股票代码列表"""
         try:
             df = stock_data_fetcher.fetch_realtime_data()
-            if df is None or df.empty or "代码" not in df.columns:
-                return []
+            if df is not None and not df.empty and "代码" in df.columns:
+                codes = [str(c).zfill(6) for c in df["代码"].tolist() if str(c).strip()]
+                if limit and limit > 0:
+                    return codes[:limit]
+                return codes
 
-            codes = [str(c).zfill(6) for c in df["代码"].tolist() if str(c).strip()]
-            if limit and limit > 0:
-                return codes[:limit]
-            return codes
+            # 兜底：若实时接口不可用，回退到本地已采集过的股票代码
+            db = SessionLocal()
+            try:
+                rows = db.query(StockMinuteData.stock_code).distinct().all()
+                fallback_codes = [str(r[0]).zfill(6) for r in rows if r[0]]
+                if limit and limit > 0:
+                    fallback_codes = fallback_codes[:limit]
+                if fallback_codes:
+                    logger.warning(
+                        f"实时股票列表获取失败，回退本地股票池，数量: {len(fallback_codes)}"
+                    )
+                return fallback_codes
+            finally:
+                db.close()
         except Exception as e:
             logger.error(f"获取全市场股票列表失败: {str(e)}")
             return []
