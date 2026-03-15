@@ -27,39 +27,17 @@ class StockService:
         self.data_processor = DataProcessor()
 
     def get_all_stock_symbols(self, limit: int | None = None) -> List[str]:
-        """获取全市场股票代码列表"""
+        """获取全市场股票代码列表（固定使用静态全量池）"""
         try:
-            df = stock_data_fetcher.fetch_realtime_data()
-            if df is not None and not df.empty and "代码" in df.columns:
-                codes = [str(c).zfill(6) for c in df["代码"].tolist() if str(c).strip()]
-                if limit and limit > 0:
-                    return codes[:limit]
-                return codes
-
-            # 兜底1：若实时接口不可用，回退到本地已采集过的股票代码
-            db = SessionLocal()
-            try:
-                rows = db.query(StockMinuteData.stock_code).distinct().all()
-                fallback_codes = [str(r[0]).zfill(6) for r in rows if r[0]]
-                if fallback_codes:
-                    logger.warning(
-                        f"实时股票列表获取失败，回退本地股票池，数量: {len(fallback_codes)}"
-                    )
-                    if limit and limit > 0:
-                        return fallback_codes[:limit]
-                    return fallback_codes
-            finally:
-                db.close()
-
-            # 兜底2：读取静态A股清单文件
             static_codes = self._load_static_symbols()
-            if static_codes:
-                logger.warning(f"回退静态A股清单，数量: {len(static_codes)}")
-                if limit and limit > 0:
-                    return static_codes[:limit]
-                return static_codes
+            if not static_codes:
+                logger.error("静态A股清单为空，无法执行全市场扫描")
+                return []
 
-            return []
+            logger.info(f"全市场扫描使用静态A股清单，数量: {len(static_codes)}")
+            if limit and limit > 0:
+                return static_codes[:limit]
+            return static_codes
         except Exception as e:
             logger.error(f"获取全市场股票列表失败: {str(e)}")
             return []
@@ -67,10 +45,8 @@ class StockService:
     def _load_static_symbols(self) -> List[str]:
         """从静态文件加载A股代码清单"""
         try:
-            base_dir = Path(__file__).resolve().parents[2]  # backend/app
-            static_file = (
-                base_dir.parent / "data" / "a_share_symbols.txt"
-            )  # backend/data
+            backend_root = Path(__file__).resolve().parents[2]  # backend/
+            static_file = backend_root / "data" / "a_share_symbols.txt"
             if not static_file.exists():
                 return []
 
