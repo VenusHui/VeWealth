@@ -52,15 +52,6 @@ class VolumeShrinkDropV1Strategy(BaseStrategy):
                 "min": 0.01,
                 "max": 1.0,
             },
-            {
-                "key": "max_universe_size",
-                "label": "全市场最大扫描数量",
-                "type": "int",
-                "required": False,
-                "default": 300,
-                "min": 50,
-                "max": 2000,
-            },
         ]
 
     def generate_signals(self, df, params):

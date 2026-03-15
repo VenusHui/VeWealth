@@ -63,6 +63,7 @@ class BacktestService:
             "trades": result["trades"],
             "positions_snapshot": result.get("positions_snapshot", []),
             "warnings": result["warnings"],
+            "diagnostics": result.get("diagnostics"),
         }
 
     def _run_manual_symbols_mode(
@@ -165,12 +166,11 @@ class BacktestService:
         consecutive_days = int(params.get("consecutive_days", 3))
         hold_days = int(params.get("hold_days", 5))
         position_size_pct = float(params.get("position_size_pct", 0.1))
-        max_universe_size = int(params.get("max_universe_size", 300))
-
         if request.universe_type == "custom":
             universe = [s.strip() for s in request.pool_symbols if s.strip()]
         else:
-            universe = stock_service.get_all_stock_symbols(limit=max_universe_size)
+            # 全市场固定全量扫描，不再支持限量参数
+            universe = stock_service.get_all_stock_symbols()
 
         if not universe:
             raise ValueError(
@@ -179,6 +179,9 @@ class BacktestService:
 
         warnings: list[str] = []
         events: list[dict[str, Any]] = []
+        data_available_count = 0
+        data_empty_count = 0
+        empty_symbols_preview: list[str] = []
 
         total = len(universe)
         for idx, symbol in enumerate(universe, start=1):
@@ -197,7 +200,12 @@ class BacktestService:
                 end_date=request.end_date.strftime("%Y-%m-%d"),
             )
             if df.empty or len(df) < (consecutive_days + hold_days + 2):
+                data_empty_count += 1
+                if len(empty_symbols_preview) < 30:
+                    empty_symbols_preview.append(symbol)
                 continue
+
+            data_available_count += 1
 
             work = df.copy().reset_index(drop=True)
             work["close_prev"] = work["close"].shift(1)
@@ -244,6 +252,20 @@ class BacktestService:
                 else:
                     i += 1
 
+        diagnostics = {
+            "universe_size": len(universe),
+            "data_available_count": data_available_count,
+            "data_empty_count": data_empty_count,
+            "signal_hit_count": len(events),
+        }
+
+        if data_empty_count > 0:
+            preview = ",".join(empty_symbols_preview)
+            suffix = "" if data_empty_count <= len(empty_symbols_preview) else "..."
+            warnings.append(
+                f"无可用日线数据股票数: {data_empty_count}/{len(universe)}，示例: {preview}{suffix}"
+            )
+
         if not events:
             warnings.append("未命中任何交易信号")
             return {
@@ -253,6 +275,7 @@ class BacktestService:
                 "warnings": warnings,
                 "positions_snapshot": [],
                 "symbols": universe,
+                "diagnostics": diagnostics,
             }
 
         if progress_callback:
@@ -311,7 +334,7 @@ class BacktestService:
 
         summary = calc_summary(equity_curve, trades, request.initial_cash)
         warnings.append(
-            f"strategy_select 扫描股票数: {len(universe)}，命中信号数: {len(events)}"
+            f"strategy_select 扫描股票数: {len(universe)}，有效行情股票数: {data_available_count}，命中信号数: {len(events)}"
         )
 
         return {
@@ -321,6 +344,7 @@ class BacktestService:
             "warnings": warnings,
             "positions_snapshot": [],
             "symbols": universe,
+            "diagnostics": diagnostics,
         }
 
     def list_runs(

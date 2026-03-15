@@ -69,6 +69,7 @@ class BacktestRunResult(BaseModel):
     trades: list[dict[str, Any]]
     positions_snapshot: list[dict[str, Any]]
     warnings: list[str]
+    diagnostics: Optional[dict[str, Any]] = None
 
 
 class BacktestRunResponse(BaseModel):

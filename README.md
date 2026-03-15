@@ -383,6 +383,19 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 - 预警设置
 - 状态管理
 
+## 🧾 静态A股股票池维护（回测兜底）
+
+当实时股票列表接口不可用时，系统会回退到 `backend/data/a_share_symbols.txt`。
+
+- 一次性刷新（当前全量）
+```bash
+python backend/scripts/refresh_a_share_symbols.py
+```
+- 建议每周刷新（示例：每周日 08:00）
+```bash
+0 8 * * 0 cd /home/ubuntu/repo/VeWealth && /usr/bin/python3 backend/scripts/refresh_a_share_symbols.py >> backend/logs/symbol_refresh.log 2>&1
+```
+
 ## 📈 定时任务
 
 ### 数据采集任务
