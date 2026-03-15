@@ -18,7 +18,9 @@ def main() -> None:
     if df is None or df.empty or "code" not in df.columns:
         raise RuntimeError("未获取到有效的A股代码列表")
 
-    codes = sorted({str(c).zfill(6) for c in df["code"].astype(str).tolist() if str(c).strip()})
+    codes = sorted(
+        {str(c).zfill(6) for c in df["code"].astype(str).tolist() if str(c).strip()}
+    )
 
     target = Path(__file__).resolve().parents[1] / "data" / "a_share_symbols.txt"
     target.parent.mkdir(parents=True, exist_ok=True)
