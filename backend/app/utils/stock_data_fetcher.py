@@ -10,11 +10,86 @@ from typing import Optional
 import logging
 import time
 
+from app.core.config import settings
+
+try:
+    import tushare as ts
+except Exception:  # pragma: no cover - 运行时可选依赖
+    ts = None
+
 logger = logging.getLogger(__name__)
 
 
 class StockDataFetcher:
     """股票数据获取器 - 统一的数据获取接口"""
+
+    @staticmethod
+    def _to_tushare_code(stock_code: str) -> str:
+        code = str(stock_code).zfill(6)
+        # 常见上交所代码前缀
+        if code.startswith(("5", "6", "9")):
+            return f"{code}.SH"
+        return f"{code}.SZ"
+
+    @staticmethod
+    def _fetch_daily_data_tushare(
+        stock_code: str,
+        start_date: str,
+        end_date: str,
+        adjust: str,
+        max_retries: int,
+    ) -> Optional[pd.DataFrame]:
+        if not settings.TUSHARE_ENABLED:
+            return None
+        if not settings.TUSHARE_TOKEN:
+            logger.warning("Tushare 未配置 token，跳过备源")
+            return None
+        if ts is None:
+            logger.warning("tushare 依赖未安装，跳过备源")
+            return None
+
+        ts_code = StockDataFetcher._to_tushare_code(stock_code)
+        adj = adjust if adjust in {"qfq", "hfq"} else None
+
+        for attempt in range(1, max_retries + 2):
+            try:
+                ts.set_token(settings.TUSHARE_TOKEN)
+                df = ts.pro_bar(
+                    ts_code=ts_code,
+                    adj=adj,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+                if df is None or df.empty:
+                    return None
+
+                # 统一列结构为后续清洗逻辑可识别格式
+                # tushare: trade_date/open/high/low/close/vol/amount
+                normalized = pd.DataFrame(
+                    {
+                        "日期": pd.to_datetime(df["trade_date"], format="%Y%m%d"),
+                        "开盘": df["open"],
+                        "收盘": df["close"],
+                        "最高": df["high"],
+                        "最低": df["low"],
+                        "成交量": df["vol"],
+                        "成交额": df.get("amount"),
+                    }
+                )
+                normalized = normalized.sort_values("日期").reset_index(drop=True)
+                logger.info(f"股票 {stock_code} 日线数据由 Tushare 备源返回")
+                return normalized
+            except Exception as e:
+                if attempt <= max_retries:
+                    logger.warning(
+                        f"Tushare 获取股票 {stock_code} 日线失败(第{attempt}次重试): {str(e)}"
+                    )
+                    time.sleep(0.8 * attempt)
+                    continue
+                logger.error(f"Tushare 获取股票 {stock_code} 日线失败: {str(e)}")
+                return None
+
+        return None
 
     @staticmethod
     def fetch_daily_data(
@@ -63,7 +138,16 @@ class StockDataFetcher:
                     continue
 
                 logger.error(f"获取股票 {stock_code} 日线数据失败: {str(e)}")
-                return None
+                break
+
+        # AKShare 主源失败后，尝试 Tushare 备源
+        return StockDataFetcher._fetch_daily_data_tushare(
+            stock_code=stock_code,
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
+            max_retries=settings.TUSHARE_RETRY_TIMES,
+        )
 
     @staticmethod
     def fetch_minute_data(
