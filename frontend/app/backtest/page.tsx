@@ -84,6 +84,13 @@ export default function BacktestPage() {
   const [runRounds, setRunRounds] = useState<any[]>([])
   const [runSnapshots, setRunSnapshots] = useState<any[]>([])
   const [runStrategyConfig, setRunStrategyConfig] = useState<any>(null)
+  const [detailLoading, setDetailLoading] = useState({
+    overview: false,
+    trades: false,
+    rounds: false,
+    snapshots: false,
+    strategy: false,
+  })
 
   const selectedStrategy = useMemo(
     () => strategies.find((s) => s.strategy_id === strategyId),
@@ -116,21 +123,47 @@ export default function BacktestPage() {
 
   const loadRunDetail = async (runId: number) => {
     const headers = getAuthHeader()
-    const [overviewResp, tradesResp, roundsResp, snapshotsResp, strategyResp] = await Promise.all([
-      axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/overview`, { headers }),
-      axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/trades`, { headers }),
-      axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/rounds`, { headers }),
-      axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/snapshots`, { headers }),
-      axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/strategy-config`, { headers }),
-    ])
 
-    setRunOverview(overviewResp.data?.data || null)
-    setRunTrades(tradesResp.data?.data || [])
-    setRunRounds(roundsResp.data?.data || [])
-    setRunSnapshots(snapshotsResp.data?.data || [])
-    setRunStrategyConfig(strategyResp.data?.data || null)
+    setRunOverview(null)
+    setRunTrades([])
+    setRunRounds([])
+    setRunSnapshots([])
+    setRunStrategyConfig(null)
+    setDetailLoading({
+      overview: true,
+      trades: true,
+      rounds: true,
+      snapshots: true,
+      strategy: true,
+    })
+
     setMainTab('detail')
     setDetailTab('overview')
+
+    axios
+      .get(`${API_BASE_URL}/api/backtest/runs/${runId}/overview`, { headers })
+      .then((resp) => setRunOverview(resp.data?.data || null))
+      .finally(() => setDetailLoading((prev) => ({ ...prev, overview: false })))
+
+    axios
+      .get(`${API_BASE_URL}/api/backtest/runs/${runId}/trades`, { headers })
+      .then((resp) => setRunTrades(resp.data?.data || []))
+      .finally(() => setDetailLoading((prev) => ({ ...prev, trades: false })))
+
+    axios
+      .get(`${API_BASE_URL}/api/backtest/runs/${runId}/rounds`, { headers })
+      .then((resp) => setRunRounds(resp.data?.data || []))
+      .finally(() => setDetailLoading((prev) => ({ ...prev, rounds: false })))
+
+    axios
+      .get(`${API_BASE_URL}/api/backtest/runs/${runId}/snapshots`, { headers })
+      .then((resp) => setRunSnapshots(resp.data?.data || []))
+      .finally(() => setDetailLoading((prev) => ({ ...prev, snapshots: false })))
+
+    axios
+      .get(`${API_BASE_URL}/api/backtest/runs/${runId}/strategy-config`, { headers })
+      .then((resp) => setRunStrategyConfig(resp.data?.data || null))
+      .finally(() => setDetailLoading((prev) => ({ ...prev, strategy: false })))
   }
 
   const downloadCsv = async (url: string, filename: string) => {
@@ -371,7 +404,7 @@ export default function BacktestPage() {
       {mainTab === 'detail' && (
         <div className="bg-white rounded-2xl shadow p-5 space-y-4">
           <div className="font-semibold text-gray-800">回测详情 {selectedRunId ? `(Run #${selectedRunId})` : ''}</div>
-          {!selectedRunId || !runOverview ? (
+          {!selectedRunId ? (
             <div className="text-sm text-gray-500">请先在「回测记录」中选择一条记录</div>
           ) : (
             <>
@@ -385,46 +418,69 @@ export default function BacktestPage() {
 
               {detailTab === 'overview' && (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    {Object.entries(runOverview.summary || {}).filter(([k]) => !['positions_snapshot', 'final_positions'].includes(k)).slice(0, 8).map(([k, v]) => (
-                      <div key={k} className="border rounded-lg p-3 bg-gray-50"><div className="text-xs text-gray-500">{k}</div><div className="font-semibold">{String(v)}</div></div>
-                    ))}
-                  </div>
-                  <div className="h-[360px] border rounded-lg p-2">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={runOverview.equity_curve || []} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="datetime" tick={{ fontSize: 11 }} minTickGap={40} />
-                        <YAxis tick={{ fontSize: 11 }} domain={['dataMin', 'dataMax']} />
-                        <Tooltip />
-                        <Line type="monotone" dataKey="equity" stroke="#4f46e5" strokeWidth={2} dot={false} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
+                  {detailLoading.overview ? (
+                    <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">概览数据加载中...</div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {Object.entries(runOverview?.summary || {})
+                          .filter(([k]) => !['positions_snapshot', 'final_positions'].includes(k))
+                          .slice(0, 8)
+                          .map(([k, v]) => (
+                            <div key={k} className="border rounded-lg p-3 bg-gray-50"><div className="text-xs text-gray-500">{k}</div><div className="font-semibold">{String(v)}</div></div>
+                          ))}
+                      </div>
+                      <div className="h-[360px] border rounded-lg p-2">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={runOverview?.equity_curve || []} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="datetime" tick={{ fontSize: 11 }} minTickGap={40} />
+                            <YAxis tick={{ fontSize: 11 }} domain={['dataMin', 'dataMax']} />
+                            <Tooltip />
+                            <Line type="monotone" dataKey="equity" stroke="#4f46e5" strokeWidth={2} dot={false} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
               {detailTab === 'trades' && (
                 <div className="space-y-2">
-                  <button className="inline-block px-3 py-1 text-xs rounded bg-indigo-50 text-indigo-700" onClick={() => downloadCsv(`${API_BASE_URL}/api/backtest/runs/${selectedRunId}/trades/export`, `backtest_run_${selectedRunId}_trades.csv`)}>导出成交 CSV</button>
-                  <div className="overflow-auto max-h-[480px]">
-                    <table className="w-full text-sm"><thead><tr className="border-b"><th className="py-2">时间</th><th>标的</th><th>方向</th><th>价格</th><th>数量</th><th>金额</th><th>手续费</th><th>原因</th></tr></thead><tbody>{runTrades.map((t, i) => <tr key={i} className="border-b"><td className="py-1">{t.datetime}</td><td>{t.symbol}</td><td>{t.side}</td><td>{t.price}</td><td>{t.qty}</td><td>{t.amount}</td><td>{t.fee}</td><td>{t.reason || '-'}</td></tr>)}{runTrades.length === 0 && <tr><td colSpan={8} className="py-2 text-gray-500">暂无成交数据</td></tr>}</tbody></table>
-                  </div>
+                  {detailLoading.trades ? (
+                    <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">成交明细加载中...</div>
+                  ) : (
+                    <>
+                      <button className="inline-block px-3 py-1 text-xs rounded bg-indigo-50 text-indigo-700" onClick={() => downloadCsv(`${API_BASE_URL}/api/backtest/runs/${selectedRunId}/trades/export`, `backtest_run_${selectedRunId}_trades.csv`)}>导出成交 CSV</button>
+                      <div className="overflow-auto max-h-[480px]">
+                        <table className="w-full text-sm"><thead><tr className="border-b"><th className="py-2">时间</th><th>标的</th><th>方向</th><th>价格</th><th>数量</th><th>金额</th><th>手续费</th><th>原因</th></tr></thead><tbody>{runTrades.map((t, i) => <tr key={i} className="border-b"><td className="py-1">{t.datetime}</td><td>{t.symbol}</td><td>{t.side}</td><td>{t.price}</td><td>{t.qty}</td><td>{t.amount}</td><td>{t.fee}</td><td>{t.reason || '-'}</td></tr>)}{runTrades.length === 0 && <tr><td colSpan={8} className="py-2 text-gray-500">暂无成交数据</td></tr>}</tbody></table>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
               {detailTab === 'rounds' && (
                 <div className="space-y-2">
-                  <button className="inline-block px-3 py-1 text-xs rounded bg-indigo-50 text-indigo-700" onClick={() => downloadCsv(`${API_BASE_URL}/api/backtest/runs/${selectedRunId}/rounds/export`, `backtest_run_${selectedRunId}_rounds.csv`)}>导出回合 CSV</button>
-                  <div className="overflow-auto max-h-[480px]">
-                    <table className="w-full text-sm"><thead><tr className="border-b"><th className="py-2">标的</th><th>开仓</th><th>平仓</th><th>持有天数</th><th>收益率</th><th>盈亏</th><th>退出原因</th></tr></thead><tbody>{runRounds.map((r, i) => <tr key={i} className="border-b"><td className="py-1">{r.symbol}</td><td>{r.open_time} @ {r.open_price}</td><td>{r.close_time} @ {r.close_price}</td><td>{r.holding_days ?? '-'}</td><td>{r.pnl_ratio}</td><td>{r.pnl_amount}</td><td>{r.exit_reason || '-'}</td></tr>)}{runRounds.length === 0 && <tr><td colSpan={7} className="py-2 text-gray-500">暂无回合交易数据</td></tr>}</tbody></table>
-                  </div>
+                  {detailLoading.rounds ? (
+                    <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">回合交易加载中...</div>
+                  ) : (
+                    <>
+                      <button className="inline-block px-3 py-1 text-xs rounded bg-indigo-50 text-indigo-700" onClick={() => downloadCsv(`${API_BASE_URL}/api/backtest/runs/${selectedRunId}/rounds/export`, `backtest_run_${selectedRunId}_rounds.csv`)}>导出回合 CSV</button>
+                      <div className="overflow-auto max-h-[480px]">
+                        <table className="w-full text-sm"><thead><tr className="border-b"><th className="py-2">标的</th><th>开仓</th><th>平仓</th><th>持有天数</th><th>收益率</th><th>盈亏</th><th>退出原因</th></tr></thead><tbody>{runRounds.map((r, i) => <tr key={i} className="border-b"><td className="py-1">{r.symbol}</td><td>{r.open_time} @ {r.open_price}</td><td>{r.close_time} @ {r.close_price}</td><td>{r.holding_days ?? '-'}</td><td>{r.pnl_ratio}</td><td>{r.pnl_amount}</td><td>{r.exit_reason || '-'}</td></tr>)}{runRounds.length === 0 && <tr><td colSpan={7} className="py-2 text-gray-500">暂无回合交易数据</td></tr>}</tbody></table>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
               {detailTab === 'snapshots' && (
                 <div className="space-y-3 text-sm">
-                  {runSnapshots.length === 0 ? (
+                  {detailLoading.snapshots ? (
+                    <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">持仓快照加载中...</div>
+                  ) : runSnapshots.length === 0 ? (
                     <div className="text-gray-500">暂无持仓快照数据</div>
                   ) : (
                     runSnapshots.slice(-20).reverse().map((s, i) => (
@@ -439,7 +495,11 @@ export default function BacktestPage() {
               )}
 
               {detailTab === 'strategy' && (
-                <pre className="bg-gray-50 border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig || {}, null, 2)}</pre>
+                detailLoading.strategy ? (
+                  <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">策略配置加载中...</div>
+                ) : (
+                  <pre className="bg-gray-50 border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig || {}, null, 2)}</pre>
+                )
               )}
             </>
           )}
