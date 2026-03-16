@@ -24,10 +24,21 @@ type Strategy = {
     label: string
     type: string
     default?: number | string
-    min?: number
-    max?: number
   }>
 }
+
+type RunItem = {
+  id: number
+  name: string
+  status: string
+  strategy_id: string
+  start_date: string
+  end_date: string
+  created_at: string
+  summary?: Record<string, any>
+}
+
+type DetailTab = 'overview' | 'trades' | 'rounds' | 'snapshots' | 'strategy'
 
 export default function BacktestPage() {
   const [strategies, setStrategies] = useState<Strategy[]>([])
@@ -47,20 +58,47 @@ export default function BacktestPage() {
   const [job, setJob] = useState<any>(null)
   const [jobs, setJobs] = useState<any[]>([])
 
+  const [runs, setRuns] = useState<RunItem[]>([])
+  const [selectedRunId, setSelectedRunId] = useState<number | null>(null)
+  const [detailTab, setDetailTab] = useState<DetailTab>('overview')
+  const [runOverview, setRunOverview] = useState<any>(null)
+  const [runTrades, setRunTrades] = useState<any[]>([])
+  const [runRounds, setRunRounds] = useState<any[]>([])
+  const [runSnapshots, setRunSnapshots] = useState<any[]>([])
+  const [runStrategyConfig, setRunStrategyConfig] = useState<any>(null)
+
   const selectedStrategy = useMemo(
     () => strategies.find((s) => s.strategy_id === strategyId),
     [strategies, strategyId]
   )
 
-  const metricDescriptions: Record<string, string> = {
-    total_return: '总收益率：期末资金相对初始资金的涨跌幅。',
-    annual_return: '年化收益率：将区间收益折算到全年水平。',
-    max_drawdown: '最大回撤：资金从阶段高点回落的最大幅度。',
-    sharpe: '夏普比率：单位波动风险对应的超额收益能力。',
-    win_rate: '胜率：盈利平仓交易占全部平仓交易的比例。',
-    profit_loss_ratio: '盈亏比：平均盈利金额 / 平均亏损金额。',
-    turnover: '换手率：累计成交金额 / 初始资金。',
-    total_trades: '总交易笔数：回测区间内买卖成交总笔数。',
+  const fetchRuns = async () => {
+    if (!isAuthenticated()) return
+    try {
+      const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs?limit=20&offset=0`, {
+        headers: getAuthHeader(),
+      })
+      setRuns(resp.data?.data || [])
+    } catch {
+      // ignore
+    }
+  }
+
+  const loadRunDetail = async (runId: number) => {
+    const headers = getAuthHeader()
+    const [overviewResp, tradesResp, roundsResp, snapshotsResp, strategyResp] = await Promise.all([
+      axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/overview`, { headers }),
+      axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/trades`, { headers }),
+      axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/rounds`, { headers }),
+      axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/snapshots`, { headers }),
+      axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/strategy-config`, { headers }),
+    ])
+
+    setRunOverview(overviewResp.data?.data || null)
+    setRunTrades(tradesResp.data?.data || [])
+    setRunRounds(roundsResp.data?.data || [])
+    setRunSnapshots(snapshotsResp.data?.data || [])
+    setRunStrategyConfig(strategyResp.data?.data || null)
   }
 
   useEffect(() => {
@@ -87,6 +125,7 @@ export default function BacktestPage() {
     }
 
     fetchStrategies()
+    fetchRuns()
   }, [])
 
   useEffect(() => {
@@ -129,6 +168,7 @@ export default function BacktestPage() {
           setResult(detail.result)
           clearInterval(timer)
           fetchJobs()
+          fetchRuns()
         }
         if (detail?.status === 'failed' || detail?.status === 'cancelled') {
           clearInterval(timer)
@@ -139,27 +179,6 @@ export default function BacktestPage() {
     }, 3000)
     return () => clearInterval(timer)
   }, [job?.job_id])
-
-  const handleCancelJob = async (jobId: string) => {
-    try {
-      await axios.post(`${API_BASE_URL}/api/backtest/jobs/${jobId}/cancel`, {}, { headers: getAuthHeader() })
-      await fetchJobs()
-      if (job?.job_id === jobId) {
-        const resp = await axios.get(`${API_BASE_URL}/api/backtest/jobs/${jobId}`, { headers: getAuthHeader() })
-        setJob(resp.data?.data)
-      }
-    } catch {}
-  }
-
-  const handleRetryJob = async (jobId: string) => {
-    try {
-      const resp = await axios.post(`${API_BASE_URL}/api/backtest/jobs/${jobId}/retry`, {}, { headers: getAuthHeader() })
-      const retried = resp.data?.data
-      setJob(retried)
-      setResult(null)
-      await fetchJobs()
-    } catch {}
-  }
 
   const handleRun = async () => {
     if (!isAuthenticated()) {
@@ -196,9 +215,7 @@ export default function BacktestPage() {
       const resp = await axios.post(`${API_BASE_URL}/api/backtest/jobs`, payload, {
         headers: getAuthHeader(),
       })
-      const createdJob = resp.data?.data
-      setJob(createdJob)
-      setResult(null)
+      setJob(resp.data?.data)
       await fetchJobs()
     } catch (e: any) {
       setError(e.response?.data?.detail || '回测执行失败')
@@ -212,78 +229,41 @@ export default function BacktestPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto py-8 px-4 space-y-6">
+    <div className="max-w-6xl mx-auto py-8 px-4 space-y-6">
       <h1 className="text-3xl font-bold text-gray-800">📈 策略回测</h1>
 
       <div className="bg-white p-6 rounded-lg shadow space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <label className="text-sm text-gray-700">
-            回测名称
-            <span className="ml-2 text-xs text-gray-500">(name)</span>
-            <input className="mt-1 w-full border rounded px-3 py-2" value={name} onChange={(e) => setName(e.target.value)} placeholder="回测名称" />
-          </label>
-
-          <label className="text-sm text-gray-700">
-            策略
-            <span className="ml-2 text-xs text-gray-500">(strategy_id)</span>
+          <label className="text-sm text-gray-700">回测名称<input className="mt-1 w-full border rounded px-3 py-2" value={name} onChange={(e) => setName(e.target.value)} /></label>
+          <label className="text-sm text-gray-700">策略
             <select className="mt-1 w-full border rounded px-3 py-2" value={strategyId} onChange={(e) => setStrategyId(e.target.value)}>
               {strategies.map((s) => <option key={s.strategy_id} value={s.strategy_id}>{s.name}</option>)}
             </select>
           </label>
-
-          <label className="text-sm text-gray-700">
-            回测模式
-            <span className="ml-2 text-xs text-gray-500">(mode)</span>
+          <label className="text-sm text-gray-700">回测模式
             <select className="mt-1 w-full border rounded px-3 py-2" value={mode} onChange={(e) => setMode(e.target.value as 'manual_symbols' | 'strategy_select')}>
-              <option value="manual_symbols">手工股票池 (manual_symbols)</option>
-              <option value="strategy_select">策略自动选股 (strategy_select)</option>
+              <option value="manual_symbols">手工股票池</option>
+              <option value="strategy_select">策略自动选股</option>
             </select>
           </label>
-
           {mode === 'manual_symbols' ? (
-            <label className="text-sm text-gray-700">
-              股票代码（逗号分隔）
-              <span className="ml-2 text-xs text-gray-500">(symbols)</span>
-              <input className="mt-1 w-full border rounded px-3 py-2" value={symbols} onChange={(e) => setSymbols(e.target.value)} placeholder="股票代码，逗号分隔" />
-            </label>
+            <label className="text-sm text-gray-700">股票代码（逗号分隔）<input className="mt-1 w-full border rounded px-3 py-2" value={symbols} onChange={(e) => setSymbols(e.target.value)} /></label>
           ) : (
             <>
-              <label className="text-sm text-gray-700">
-                选股范围
-                <span className="ml-2 text-xs text-gray-500">(universe_type)</span>
+              <label className="text-sm text-gray-700">选股范围
                 <select className="mt-1 w-full border rounded px-3 py-2" value={universeType} onChange={(e) => setUniverseType(e.target.value as 'all' | 'custom')}>
-                  <option value="all">全市场 (all)</option>
-                  <option value="custom">自定义池 (custom)</option>
+                  <option value="all">全市场</option>
+                  <option value="custom">自定义池</option>
                 </select>
               </label>
-
               {universeType === 'custom' && (
-                <label className="text-sm text-gray-700">
-                  自定义股票池（逗号分隔）
-                  <span className="ml-2 text-xs text-gray-500">(pool_symbols)</span>
-                  <input className="mt-1 w-full border rounded px-3 py-2" value={poolSymbols} onChange={(e) => setPoolSymbols(e.target.value)} placeholder="000001,000002" />
-                </label>
+                <label className="text-sm text-gray-700">自定义股票池<input className="mt-1 w-full border rounded px-3 py-2" value={poolSymbols} onChange={(e) => setPoolSymbols(e.target.value)} /></label>
               )}
             </>
           )}
-
-          <label className="text-sm text-gray-700">
-            初始资金
-            <span className="ml-2 text-xs text-gray-500">(initial_cash)</span>
-            <input className="mt-1 w-full border rounded px-3 py-2" value={initialCash} onChange={(e) => setInitialCash(e.target.value)} placeholder="初始资金" />
-          </label>
-
-          <label className="text-sm text-gray-700">
-            开始日期
-            <span className="ml-2 text-xs text-gray-500">(start_date)</span>
-            <input type="date" className="mt-1 w-full border rounded px-3 py-2" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          </label>
-
-          <label className="text-sm text-gray-700">
-            结束日期
-            <span className="ml-2 text-xs text-gray-500">(end_date)</span>
-            <input type="date" className="mt-1 w-full border rounded px-3 py-2" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-          </label>
+          <label className="text-sm text-gray-700">初始资金<input className="mt-1 w-full border rounded px-3 py-2" value={initialCash} onChange={(e) => setInitialCash(e.target.value)} /></label>
+          <label className="text-sm text-gray-700">开始日期<input type="date" className="mt-1 w-full border rounded px-3 py-2" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></label>
+          <label className="text-sm text-gray-700">结束日期<input type="date" className="mt-1 w-full border rounded px-3 py-2" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></label>
         </div>
 
         {selectedStrategy && (
@@ -293,108 +273,122 @@ export default function BacktestPage() {
               {selectedStrategy.param_schema.map((p) => (
                 <label key={p.key} className="text-sm text-gray-700">
                   {p.label}
-                  <span className="ml-2 text-xs text-gray-500">(strategy_params.{p.key})</span>
-                  <input
-                    className="mt-1 w-full border rounded px-3 py-2"
-                    value={strategyParams[p.key] ?? ''}
-                    onChange={(e) => setStrategyParams((prev) => ({ ...prev, [p.key]: e.target.value }))}
-                  />
+                  <input className="mt-1 w-full border rounded px-3 py-2" value={strategyParams[p.key] ?? ''} onChange={(e) => setStrategyParams((prev) => ({ ...prev, [p.key]: e.target.value }))} />
                 </label>
               ))}
             </div>
           </div>
         )}
 
-        <button onClick={handleRun} disabled={loading} className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 disabled:bg-gray-400">
-          {loading ? '执行中...' : '开始回测'}
-        </button>
-
+        <button onClick={handleRun} disabled={loading} className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 disabled:bg-gray-400">{loading ? '执行中...' : '开始回测'}</button>
         {error && <div className="text-red-600">{error}</div>}
       </div>
 
-      {job && (
-        <div className="bg-white p-4 rounded-lg shadow space-y-2">
-          <div className="font-medium">当前任务：{job.job_id}</div>
-          <div className="text-sm text-gray-600">状态：{job.status}｜阶段：{job.stage}</div>
-          <div className="text-sm text-gray-600">进度：{job.processed_symbols}/{job.total_symbols} ({Number(job.progress_pct || 0).toFixed(1)}%)</div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => handleCancelJob(job.job_id)}
-              disabled={job.status !== 'pending' && job.status !== 'running'}
-              className="px-3 py-1 text-xs rounded bg-red-100 text-red-700 disabled:opacity-50"
-            >
-              取消任务
-            </button>
-            <button
-              onClick={() => handleRetryJob(job.job_id)}
-              disabled={job.status !== 'failed' && job.status !== 'cancelled'}
-              className="px-3 py-1 text-xs rounded bg-amber-100 text-amber-700 disabled:opacity-50"
-            >
-              重试任务
-            </button>
-          </div>
-          {job.error && <div className="text-sm text-red-600">错误：{job.error}</div>}
-        </div>
-      )}
-
       <div className="bg-white p-4 rounded-lg shadow">
-        <div className="font-medium mb-2">离线任务列表</div>
-        <div className="space-y-2 max-h-64 overflow-auto">
-          {jobs.map((j) => (
-            <div key={j.job_id} className="text-sm border rounded px-3 py-2 flex justify-between items-center">
-              <button
-                className="text-left text-indigo-700 hover:underline"
-                onClick={async () => {
-                  const resp = await axios.get(`${API_BASE_URL}/api/backtest/jobs/${j.job_id}`, { headers: getAuthHeader() })
-                  const detail = resp.data?.data
-                  setJob(detail)
-                  if (detail?.status === 'success') setResult(detail.result)
-                }}
-              >
-                {j.job_id}
-              </button>
-              <div className="flex items-center gap-2">
-                <span className="text-gray-600">{j.status} · {Number(j.progress_pct || 0).toFixed(1)}%</span>
-                <button onClick={() => handleCancelJob(j.job_id)} className="px-2 py-1 text-xs rounded bg-red-50 text-red-600">取消</button>
-                <button onClick={() => handleRetryJob(j.job_id)} className="px-2 py-1 text-xs rounded bg-amber-50 text-amber-700">重试</button>
-              </div>
-            </div>
-          ))}
-          {jobs.length === 0 && <div className="text-sm text-gray-500">暂无任务</div>}
+        <div className="font-semibold mb-3">回测记录（任务级摘要）</div>
+        <div className="overflow-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left border-b">
+                <th className="py-2">ID</th><th>名称</th><th>策略</th><th>区间</th><th>总收益</th><th>最大回撤</th><th>状态</th><th>创建时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((r) => (
+                <tr key={r.id} className="border-b hover:bg-gray-50 cursor-pointer" onClick={async () => { setSelectedRunId(r.id); setDetailTab('overview'); await loadRunDetail(r.id) }}>
+                  <td className="py-2">#{r.id}</td>
+                  <td>{r.name}</td>
+                  <td>{r.strategy_id}</td>
+                  <td>{r.start_date} ~ {r.end_date}</td>
+                  <td>{r.summary?.total_return ?? '-'}</td>
+                  <td>{r.summary?.max_drawdown ?? '-'}</td>
+                  <td>{r.status}</td>
+                  <td>{new Date(r.created_at).toLocaleString()}</td>
+                </tr>
+              ))}
+              {runs.length === 0 && <tr><td className="py-3 text-gray-500" colSpan={8}>暂无回测记录</td></tr>}
+            </tbody>
+          </table>
         </div>
       </div>
 
+      {selectedRunId && runOverview && (
+        <div className="bg-white p-4 rounded-lg shadow space-y-4">
+          <div className="font-semibold">回测详情 - Run #{selectedRunId}</div>
+          <div className="flex gap-2 flex-wrap">
+            {[
+              ['overview', '概览'],
+              ['trades', '成交明细'],
+              ['rounds', '回合交易'],
+              ['snapshots', '持仓快照'],
+              ['strategy', '策略参数'],
+            ].map(([key, label]) => (
+              <button key={key} onClick={() => setDetailTab(key as DetailTab)} className={`px-3 py-1 rounded text-sm ${detailTab === key ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {detailTab === 'overview' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {Object.entries(runOverview.summary || {}).slice(0, 8).map(([k, v]) => (
+                  <div key={k} className="border rounded p-2 bg-gray-50 text-sm"><div className="text-gray-500">{k}</div><div className="font-semibold">{String(v)}</div></div>
+                ))}
+              </div>
+              <div className="h-[320px] border rounded p-2">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={runOverview.equity_curve || []} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="datetime" tick={{ fontSize: 11 }} minTickGap={40} />
+                    <YAxis tick={{ fontSize: 11 }} domain={['dataMin', 'dataMax']} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="equity" stroke="#4f46e5" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {detailTab === 'trades' && (
+            <div className="overflow-auto max-h-96">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b"><th className="py-2">时间</th><th>标的</th><th>方向</th><th>价格</th><th>数量</th><th>金额</th><th>手续费</th><th>原因</th></tr></thead>
+                <tbody>
+                  {runTrades.map((t, i) => <tr key={i} className="border-b"><td className="py-1">{t.datetime}</td><td>{t.symbol}</td><td>{t.side}</td><td>{t.price}</td><td>{t.qty}</td><td>{t.amount}</td><td>{t.fee}</td><td>{t.reason || '-'}</td></tr>)}
+                  {runTrades.length === 0 && <tr><td colSpan={8} className="py-2 text-gray-500">暂无成交数据</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {detailTab === 'rounds' && (
+            <div className="overflow-auto max-h-96">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b"><th className="py-2">标的</th><th>开仓</th><th>平仓</th><th>持有天数</th><th>收益率</th><th>盈亏</th><th>退出原因</th></tr></thead>
+                <tbody>
+                  {runRounds.map((r, i) => <tr key={i} className="border-b"><td className="py-1">{r.symbol}</td><td>{r.open_time} @ {r.open_price}</td><td>{r.close_time} @ {r.close_price}</td><td>{r.holding_days ?? '-'}</td><td>{r.pnl_ratio}</td><td>{r.pnl_amount}</td><td>{r.exit_reason || '-'}</td></tr>)}
+                  {runRounds.length === 0 && <tr><td colSpan={7} className="py-2 text-gray-500">暂无回合交易数据</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {detailTab === 'snapshots' && (
+            <div className="text-sm text-gray-600">
+              {runSnapshots.length === 0 ? '当前版本暂无持仓快照（后续可在回测入库阶段补齐按日快照）' : JSON.stringify(runSnapshots)}
+            </div>
+          )}
+
+          {detailTab === 'strategy' && (
+            <pre className="bg-gray-50 border rounded p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig || {}, null, 2)}</pre>
+          )}
+        </div>
+      )}
+
       {result && (
-        <div className="bg-white p-6 rounded-lg shadow space-y-6">
-          <h2 className="text-xl font-semibold">回测结果（Run #{result.run_id}）</h2>
-
-          <div>
-            <div className="font-medium mb-3">指标说明</div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {Object.entries(result.summary || {}).map(([key, value]) => (
-                <div key={key} className="border rounded p-3 bg-gray-50">
-                  <div className="text-sm font-semibold text-gray-800">{key}: <span className="text-indigo-600">{String(value)}</span></div>
-                  <div className="text-xs text-gray-600 mt-1">{metricDescriptions[key] || '—'}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <div className="font-medium mb-2">整体资金曲线</div>
-            <div className="h-[320px] border rounded p-2">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={result.equity_curve || []} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="datetime" tick={{ fontSize: 11 }} minTickGap={40} />
-                  <YAxis tick={{ fontSize: 11 }} domain={["dataMin", "dataMax"]} />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="equity" stroke="#4f46e5" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
+        <div className="bg-white p-6 rounded-lg shadow space-y-3">
+          <h2 className="text-xl font-semibold">最新任务结果预览（Run #{result.run_id}）</h2>
           <div className="text-sm text-gray-600">交易笔数：{result.trades?.length || 0}，净值点数：{result.equity_curve?.length || 0}</div>
         </div>
       )}

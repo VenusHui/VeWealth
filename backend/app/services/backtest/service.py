@@ -1,6 +1,7 @@
 """回测服务"""
 
-from collections import defaultdict
+from collections import defaultdict, deque
+from datetime import datetime
 from typing import Any, Callable
 
 from sqlalchemy.orm import Session
@@ -367,6 +368,155 @@ class BacktestService:
             .first()
         )
         return run
+
+    def get_run_overview(self, run_id: int, current_user: User, db: Session):
+        run = self.get_run(run_id=run_id, current_user=current_user, db=db)
+        if not run:
+            return None
+
+        return {
+            "run_id": run.id,
+            "name": run.name,
+            "status": run.status,
+            "strategy_id": run.strategy_id,
+            "start_date": run.start_date,
+            "end_date": run.end_date,
+            "initial_cash": run.initial_cash,
+            "benchmark": run.benchmark,
+            "summary": run.summary or {},
+            "equity_curve": run.equity_curve or [],
+            "warnings": run.warnings or [],
+            "created_at": run.created_at,
+        }
+
+    def get_run_trades(self, run_id: int, current_user: User, db: Session) -> list[dict]:
+        run = self.get_run(run_id=run_id, current_user=current_user, db=db)
+        if not run:
+            return []
+        return run.trades or []
+
+    def get_run_rounds(self, run_id: int, current_user: User, db: Session) -> list[dict]:
+        trades = self.get_run_trades(run_id=run_id, current_user=current_user, db=db)
+        return self._build_round_trips(trades)
+
+    def get_run_snapshots(self, run_id: int, current_user: User, db: Session) -> list[dict]:
+        run = self.get_run(run_id=run_id, current_user=current_user, db=db)
+        if not run:
+            return []
+        summary = run.summary or {}
+        positions = summary.get("positions_snapshot") or []
+        return positions if isinstance(positions, list) else []
+
+    def get_run_strategy_config(
+        self, run_id: int, current_user: User, db: Session
+    ) -> dict[str, Any] | None:
+        run = self.get_run(run_id=run_id, current_user=current_user, db=db)
+        if not run:
+            return None
+        return {
+            "run_id": run.id,
+            "strategy_id": run.strategy_id,
+            "strategy_params": run.strategy_params or {},
+            "cost_config": run.cost_config or {},
+            "benchmark": run.benchmark,
+            "symbols": run.symbols or [],
+            "date_range": {
+                "start_date": run.start_date,
+                "end_date": run.end_date,
+            },
+            "meta": {
+                "name": run.name,
+                "status": run.status,
+                "created_at": run.created_at,
+            },
+        }
+
+    def _parse_trade_datetime(self, value: Any) -> datetime | None:
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(str(value), fmt)
+            except ValueError:
+                continue
+        try:
+            return datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
+
+    def _build_round_trips(self, trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not trades:
+            return []
+
+        sorted_trades = sorted(trades, key=lambda x: str(x.get("datetime", "")))
+        open_lots: dict[str, deque] = defaultdict(deque)
+        rounds: list[dict[str, Any]] = []
+
+        for trade in sorted_trades:
+            symbol = str(trade.get("symbol", "")).strip()
+            side = str(trade.get("side", "")).lower()
+            qty = float(trade.get("qty", 1) or 1)
+            price = float(trade.get("price", 0) or 0)
+            amount = float(trade.get("amount", price * qty) or (price * qty))
+            trade_dt = self._parse_trade_datetime(trade.get("datetime"))
+
+            if not symbol or qty <= 0:
+                continue
+
+            if side == "buy":
+                open_lots[symbol].append(
+                    {
+                        "datetime": trade.get("datetime"),
+                        "trade_dt": trade_dt,
+                        "qty": qty,
+                        "price": price,
+                        "amount": amount,
+                        "reason": trade.get("reason"),
+                    }
+                )
+                continue
+
+            if side != "sell":
+                continue
+
+            remaining = qty
+            while remaining > 0 and open_lots[symbol]:
+                lot = open_lots[symbol][0]
+                matched_qty = min(remaining, lot["qty"])
+                open_amount = lot["price"] * matched_qty
+                close_amount = price * matched_qty
+                pnl_amount = close_amount - open_amount
+                pnl_ratio = (pnl_amount / open_amount) if open_amount > 0 else 0.0
+
+                holding_days = None
+                if lot.get("trade_dt") and trade_dt:
+                    holding_days = max((trade_dt.date() - lot["trade_dt"].date()).days, 0)
+
+                rounds.append(
+                    {
+                        "symbol": symbol,
+                        "open_time": lot.get("datetime"),
+                        "open_price": round(lot["price"], 4),
+                        "close_time": trade.get("datetime"),
+                        "close_price": round(price, 4),
+                        "qty": round(matched_qty, 4),
+                        "holding_days": holding_days,
+                        "pnl_amount": round(pnl_amount, 4),
+                        "pnl_ratio": round(pnl_ratio, 6),
+                        "exit_reason": trade.get("reason") or lot.get("reason"),
+                        "max_favorable_excursion": None,
+                        "max_adverse_excursion": None,
+                    }
+                )
+
+                lot["qty"] -= matched_qty
+                remaining -= matched_qty
+                if lot["qty"] <= 0:
+                    open_lots[symbol].popleft()
+
+        return rounds
 
     def _merge_symbol_curves(self, symbol_curves: dict[str, list[dict]]) -> list[dict]:
         if not symbol_curves:

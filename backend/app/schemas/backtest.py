@@ -158,3 +158,30 @@ class BacktestJobListResponse(BaseModel):
 class BacktestJobDetailResponse(BaseModel):
     success: bool = True
     data: BacktestJobDetail
+
+
+class BacktestRunOverviewResponse(BaseModel):
+    success: bool = True
+    data: dict[str, Any]
+
+
+class BacktestRunTradesResponse(BaseModel):
+    success: bool = True
+    data: list[dict[str, Any]]
+    total: int
+
+
+class BacktestRunRoundsResponse(BaseModel):
+    success: bool = True
+    data: list[dict[str, Any]]
+    total: int
+
+
+class BacktestRunSnapshotsResponse(BaseModel):
+    success: bool = True
+    data: list[dict[str, Any]]
+
+
+class BacktestRunStrategyConfigResponse(BaseModel):
+    success: bool = True
+    data: dict[str, Any]

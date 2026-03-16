@@ -15,6 +15,11 @@ from app.schemas.backtest import (
     BacktestJobCreateResponse,
     BacktestJobListResponse,
     BacktestJobDetailResponse,
+    BacktestRunOverviewResponse,
+    BacktestRunTradesResponse,
+    BacktestRunRoundsResponse,
+    BacktestRunSnapshotsResponse,
+    BacktestRunStrategyConfigResponse,
 )
 from app.services.backtest import backtest_service, backtest_job_manager
 
@@ -72,6 +77,91 @@ async def get_run(
             status_code=status.HTTP_404_NOT_FOUND, detail="回测记录不存在"
         )
     return BacktestRunDetailResponse(data=run)
+
+
+@router.get("/runs/{run_id}/overview", response_model=BacktestRunOverviewResponse)
+async def get_run_overview(
+    run_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    overview = backtest_service.get_run_overview(
+        run_id=run_id, current_user=current_user, db=db
+    )
+    if not overview:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="回测记录不存在"
+        )
+    return BacktestRunOverviewResponse(data=overview)
+
+
+@router.get("/runs/{run_id}/trades", response_model=BacktestRunTradesResponse)
+async def get_run_trades(
+    run_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    run = backtest_service.get_run(run_id=run_id, current_user=current_user, db=db)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="回测记录不存在"
+        )
+    trades = backtest_service.get_run_trades(
+        run_id=run_id, current_user=current_user, db=db
+    )
+    return BacktestRunTradesResponse(data=trades, total=len(trades))
+
+
+@router.get("/runs/{run_id}/rounds", response_model=BacktestRunRoundsResponse)
+async def get_run_rounds(
+    run_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    run = backtest_service.get_run(run_id=run_id, current_user=current_user, db=db)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="回测记录不存在"
+        )
+    rounds = backtest_service.get_run_rounds(
+        run_id=run_id, current_user=current_user, db=db
+    )
+    return BacktestRunRoundsResponse(data=rounds, total=len(rounds))
+
+
+@router.get("/runs/{run_id}/snapshots", response_model=BacktestRunSnapshotsResponse)
+async def get_run_snapshots(
+    run_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    run = backtest_service.get_run(run_id=run_id, current_user=current_user, db=db)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="回测记录不存在"
+        )
+    snapshots = backtest_service.get_run_snapshots(
+        run_id=run_id, current_user=current_user, db=db
+    )
+    return BacktestRunSnapshotsResponse(data=snapshots)
+
+
+@router.get(
+    "/runs/{run_id}/strategy-config", response_model=BacktestRunStrategyConfigResponse
+)
+async def get_run_strategy_config(
+    run_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    config = backtest_service.get_run_strategy_config(
+        run_id=run_id, current_user=current_user, db=db
+    )
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="回测记录不存在"
+        )
+    return BacktestRunStrategyConfigResponse(data=config)
 
 
 @router.post("/jobs", response_model=BacktestJobCreateResponse)
