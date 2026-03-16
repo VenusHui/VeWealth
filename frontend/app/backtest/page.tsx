@@ -391,7 +391,7 @@ export default function BacktestPage() {
                     <td>{r.summary?.max_drawdown ?? '-'}</td>
                     <td>{r.status}</td>
                     <td>{new Date(r.created_at).toLocaleString()}</td>
-                    <td><button className="text-indigo-600 hover:underline" onClick={async () => { setSelectedRunId(r.id); await loadRunDetail(r.id) }}>查看详情</button></td>
+                    <td><button className="text-indigo-600 hover:underline" onClick={async () => { setSelectedRunId(r.id); setMainTab('detail'); await loadRunDetail(r.id) }}>查看详情</button></td>
                   </tr>
                 ))}
                 {runs.length === 0 && <tr><td className="py-3 text-gray-500" colSpan={9}>暂无回测记录</td></tr>}
