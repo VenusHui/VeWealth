@@ -161,11 +161,23 @@ async def export_run_trades_csv(
             status_code=status.HTTP_404_NOT_FOUND, detail="回测记录不存在"
         )
 
-    trades = backtest_service.get_run_trades(run_id=run_id, current_user=current_user, db=db)
+    trades = backtest_service.get_run_trades(
+        run_id=run_id, current_user=current_user, db=db
+    )
     output = io.StringIO()
     writer = csv.DictWriter(
         output,
-        fieldnames=["datetime", "symbol", "side", "price", "qty", "amount", "fee", "pnl", "reason"],
+        fieldnames=[
+            "datetime",
+            "symbol",
+            "side",
+            "price",
+            "qty",
+            "amount",
+            "fee",
+            "pnl",
+            "reason",
+        ],
     )
     writer.writeheader()
     for t in trades:
@@ -203,7 +215,9 @@ async def export_run_rounds_csv(
             status_code=status.HTTP_404_NOT_FOUND, detail="回测记录不存在"
         )
 
-    rounds = backtest_service.get_run_rounds(run_id=run_id, current_user=current_user, db=db)
+    rounds = backtest_service.get_run_rounds(
+        run_id=run_id, current_user=current_user, db=db
+    )
     output = io.StringIO()
     writer = csv.DictWriter(
         output,

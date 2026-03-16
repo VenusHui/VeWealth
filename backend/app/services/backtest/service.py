@@ -399,17 +399,23 @@ class BacktestService:
             "created_at": run.created_at,
         }
 
-    def get_run_trades(self, run_id: int, current_user: User, db: Session) -> list[dict]:
+    def get_run_trades(
+        self, run_id: int, current_user: User, db: Session
+    ) -> list[dict]:
         run = self.get_run(run_id=run_id, current_user=current_user, db=db)
         if not run:
             return []
         return run.trades or []
 
-    def get_run_rounds(self, run_id: int, current_user: User, db: Session) -> list[dict]:
+    def get_run_rounds(
+        self, run_id: int, current_user: User, db: Session
+    ) -> list[dict]:
         rows = (
             db.query(BacktestRound)
             .join(BacktestRun, BacktestRound.run_id == BacktestRun.id)
-            .filter(BacktestRound.run_id == run_id, BacktestRun.user_id == current_user.id)
+            .filter(
+                BacktestRound.run_id == run_id, BacktestRun.user_id == current_user.id
+            )
             .order_by(BacktestRound.id.asc())
             .all()
         )
@@ -438,7 +444,9 @@ class BacktestService:
             self._persist_rounds(db=db, run_id=run_id, rounds=rounds)
         return rounds
 
-    def get_run_snapshots(self, run_id: int, current_user: User, db: Session) -> list[dict]:
+    def get_run_snapshots(
+        self, run_id: int, current_user: User, db: Session
+    ) -> list[dict]:
         run = self.get_run(run_id=run_id, current_user=current_user, db=db)
         if not run:
             return []
@@ -558,7 +566,9 @@ class BacktestService:
 
                 holding_days = None
                 if lot.get("trade_dt") and trade_dt:
-                    holding_days = max((trade_dt.date() - lot["trade_dt"].date()).days, 0)
+                    holding_days = max(
+                        (trade_dt.date() - lot["trade_dt"].date()).days, 0
+                    )
 
                 rounds.append(
                     {
