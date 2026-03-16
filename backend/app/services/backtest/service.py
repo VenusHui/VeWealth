@@ -35,6 +35,9 @@ class BacktestService:
         else:
             result = self._run_manual_symbols_mode(request, progress_callback)
 
+        summary_payload = dict(result["summary"] or {})
+        summary_payload["positions_snapshot"] = result.get("positions_snapshot", [])
+
         run = BacktestRun(
             user_id=current_user.id,
             name=request.name,
@@ -47,7 +50,7 @@ class BacktestService:
             initial_cash=request.initial_cash,
             benchmark=request.benchmark,
             cost_config=request.cost_config.model_dump(),
-            summary=result["summary"],
+            summary=summary_payload,
             equity_curve=result["equity_curve"],
             trades=result["trades"],
             warnings=result["warnings"],
@@ -82,6 +85,7 @@ class BacktestService:
         all_trades: list[dict] = []
         all_warnings: list[str] = []
         symbol_curves: dict[str, list[dict]] = {}
+        symbol_position_curves: dict[str, list[dict]] = {}
         final_positions: list[dict] = []
 
         total = len(symbols)
@@ -119,6 +123,7 @@ class BacktestService:
             )
 
             symbol_curves[symbol] = symbol_result.equity_curve
+            symbol_position_curves[symbol] = symbol_result.position_curve
             all_trades.extend(symbol_result.trades)
             all_warnings.extend(symbol_result.warnings)
             final_positions.append(
@@ -140,14 +145,16 @@ class BacktestService:
             )
 
         portfolio_curve = self._merge_symbol_curves(symbol_curves)
+        position_snapshots = self._merge_position_snapshots(symbol_position_curves)
         summary = calc_summary(portfolio_curve, all_trades, request.initial_cash)
+        summary["final_positions"] = final_positions
 
         return {
             "summary": summary,
             "equity_curve": portfolio_curve,
             "trades": all_trades,
             "warnings": all_warnings,
-            "positions_snapshot": final_positions,
+            "positions_snapshot": position_snapshots,
             "symbols": symbols,
         }
 
@@ -517,6 +524,73 @@ class BacktestService:
                     open_lots[symbol].popleft()
 
         return rounds
+
+    def _merge_position_snapshots(
+        self, symbol_position_curves: dict[str, list[dict]]
+    ) -> list[dict[str, Any]]:
+        if not symbol_position_curves:
+            return []
+
+        time_set = set()
+        for curve in symbol_position_curves.values():
+            for p in curve:
+                time_set.add(p["datetime"])
+
+        times = sorted(time_set)
+        per_symbol_dict = {
+            symbol: {p["datetime"]: p for p in curve}
+            for symbol, curve in symbol_position_curves.items()
+        }
+        latest = {symbol: None for symbol in per_symbol_dict.keys()}
+
+        snapshots: list[dict[str, Any]] = []
+        for ts in times:
+            holdings = []
+            total_mv = 0.0
+            total_cash = 0.0
+            total_equity = 0.0
+
+            for symbol, mapping in per_symbol_dict.items():
+                if ts in mapping:
+                    latest[symbol] = mapping[ts]
+                row = latest[symbol]
+                if not row:
+                    continue
+                shares = int(row.get("shares", 0) or 0)
+                close = float(row.get("close", 0) or 0)
+                mv = float(row.get("market_value", shares * close) or (shares * close))
+                cash = float(row.get("cash", 0) or 0)
+                equity = float(row.get("equity", cash + mv) or (cash + mv))
+
+                total_mv += mv
+                total_cash += cash
+                total_equity += equity
+
+                if shares > 0:
+                    holdings.append(
+                        {
+                            "symbol": symbol,
+                            "qty": shares,
+                            "last_price": round(close, 4),
+                            "market_value": round(mv, 4),
+                        }
+                    )
+
+            denominator = total_mv if total_mv > 0 else 1.0
+            for h in holdings:
+                h["weight"] = round(h["market_value"] / denominator, 6)
+
+            snapshots.append(
+                {
+                    "snapshot_time": ts,
+                    "equity": round(total_equity, 4),
+                    "cash": round(total_cash, 4),
+                    "position_value": round(total_mv, 4),
+                    "holdings": holdings,
+                }
+            )
+
+        return snapshots
 
     def _merge_symbol_curves(self, symbol_curves: dict[str, list[dict]]) -> list[dict]:
         if not symbol_curves:

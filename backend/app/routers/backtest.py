@@ -1,6 +1,9 @@
 """回测API路由"""
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import csv
+import io
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -144,6 +147,102 @@ async def get_run_snapshots(
         run_id=run_id, current_user=current_user, db=db
     )
     return BacktestRunSnapshotsResponse(data=snapshots)
+
+
+@router.get("/runs/{run_id}/trades/export")
+async def export_run_trades_csv(
+    run_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    run = backtest_service.get_run(run_id=run_id, current_user=current_user, db=db)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="回测记录不存在"
+        )
+
+    trades = backtest_service.get_run_trades(run_id=run_id, current_user=current_user, db=db)
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=["datetime", "symbol", "side", "price", "qty", "amount", "fee", "pnl", "reason"],
+    )
+    writer.writeheader()
+    for t in trades:
+        writer.writerow(
+            {
+                "datetime": t.get("datetime"),
+                "symbol": t.get("symbol"),
+                "side": t.get("side"),
+                "price": t.get("price"),
+                "qty": t.get("qty"),
+                "amount": t.get("amount"),
+                "fee": t.get("fee"),
+                "pnl": t.get("pnl"),
+                "reason": t.get("reason"),
+            }
+        )
+
+    filename = f"backtest_run_{run_id}_trades.csv"
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.get("/runs/{run_id}/rounds/export")
+async def export_run_rounds_csv(
+    run_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    run = backtest_service.get_run(run_id=run_id, current_user=current_user, db=db)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="回测记录不存在"
+        )
+
+    rounds = backtest_service.get_run_rounds(run_id=run_id, current_user=current_user, db=db)
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=[
+            "symbol",
+            "open_time",
+            "open_price",
+            "close_time",
+            "close_price",
+            "qty",
+            "holding_days",
+            "pnl_ratio",
+            "pnl_amount",
+            "exit_reason",
+        ],
+    )
+    writer.writeheader()
+    for r in rounds:
+        writer.writerow(
+            {
+                "symbol": r.get("symbol"),
+                "open_time": r.get("open_time"),
+                "open_price": r.get("open_price"),
+                "close_time": r.get("close_time"),
+                "close_price": r.get("close_price"),
+                "qty": r.get("qty"),
+                "holding_days": r.get("holding_days"),
+                "pnl_ratio": r.get("pnl_ratio"),
+                "pnl_amount": r.get("pnl_amount"),
+                "exit_reason": r.get("exit_reason"),
+            }
+        )
+
+    filename = f"backtest_run_{run_id}_rounds.csv"
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.get(

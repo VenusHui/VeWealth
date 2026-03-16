@@ -76,13 +76,26 @@
 
 这样达到“模块内分子页面”的体验，同时减少路由复杂度。
 
-## 6. 风险与后续
+## 6. 实现补充（2026-03-16 二次迭代）
+
+已补齐：
+1. 回测执行结果持仓快照：
+   - 通过 `run_for_symbol` 产出 `position_curve`（每个时点持仓、现金、权益）
+   - 服务层聚合为组合级 `positions_snapshot` 并写入 run.summary
+2. 快照页可视化：
+   - 前端 snapshots 子页按日期展示快照卡片
+   - 每个快照下展示持仓明细（标的/数量/现价/市值/权重）
+3. CSV 导出：
+   - `GET /api/backtest/runs/{run_id}/trades/export`
+   - `GET /api/backtest/runs/{run_id}/rounds/export`
+
+## 7. 风险与后续
 
 风险：
-- 历史 run 没有持仓快照，快照页暂为空。
+- 历史 run（改造前数据）仍可能没有快照。
 - 回合交易为服务层推导值，和未来引擎原生 round 口径可能存在微差。
 
 后续里程碑：
-1. 回测执行阶段落库 positions_snapshot。
-2. 引入 round_trades 持久化表，避免每次在线计算。
-3. 支持明细导出与多维筛选。
+1. 引入 round_trades 持久化表，避免每次在线计算。
+2. 支持导出筛选条件（按 symbol/date 区间）。
+3. 增加快照分页与按日期筛选。

@@ -180,6 +180,21 @@ export default function BacktestPage() {
     return () => clearInterval(timer)
   }, [job?.job_id])
 
+  const downloadCsv = async (url: string, filename: string) => {
+    const resp = await axios.get(url, {
+      headers: getAuthHeader(),
+      responseType: 'blob',
+    })
+    const blobUrl = window.URL.createObjectURL(new Blob([resp.data], { type: 'text/csv;charset=utf-8;' }))
+    const link = document.createElement('a')
+    link.href = blobUrl
+    link.setAttribute('download', filename)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(blobUrl)
+  }
+
   const handleRun = async () => {
     if (!isAuthenticated()) {
       setError('请先登录')
@@ -351,32 +366,74 @@ export default function BacktestPage() {
           )}
 
           {detailTab === 'trades' && (
-            <div className="overflow-auto max-h-96">
-              <table className="w-full text-sm">
-                <thead><tr className="border-b"><th className="py-2">时间</th><th>标的</th><th>方向</th><th>价格</th><th>数量</th><th>金额</th><th>手续费</th><th>原因</th></tr></thead>
-                <tbody>
-                  {runTrades.map((t, i) => <tr key={i} className="border-b"><td className="py-1">{t.datetime}</td><td>{t.symbol}</td><td>{t.side}</td><td>{t.price}</td><td>{t.qty}</td><td>{t.amount}</td><td>{t.fee}</td><td>{t.reason || '-'}</td></tr>)}
-                  {runTrades.length === 0 && <tr><td colSpan={8} className="py-2 text-gray-500">暂无成交数据</td></tr>}
-                </tbody>
-              </table>
+            <div className="space-y-2">
+              <div>
+                <button
+                  className="inline-block px-3 py-1 text-xs rounded bg-indigo-50 text-indigo-700"
+                  onClick={() => downloadCsv(`${API_BASE_URL}/api/backtest/runs/${selectedRunId}/trades/export`, `backtest_run_${selectedRunId}_trades.csv`)}
+                >
+                  导出成交 CSV
+                </button>
+              </div>
+              <div className="overflow-auto max-h-96">
+                <table className="w-full text-sm">
+                  <thead><tr className="border-b"><th className="py-2">时间</th><th>标的</th><th>方向</th><th>价格</th><th>数量</th><th>金额</th><th>手续费</th><th>原因</th></tr></thead>
+                  <tbody>
+                    {runTrades.map((t, i) => <tr key={i} className="border-b"><td className="py-1">{t.datetime}</td><td>{t.symbol}</td><td>{t.side}</td><td>{t.price}</td><td>{t.qty}</td><td>{t.amount}</td><td>{t.fee}</td><td>{t.reason || '-'}</td></tr>)}
+                    {runTrades.length === 0 && <tr><td colSpan={8} className="py-2 text-gray-500">暂无成交数据</td></tr>}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
           {detailTab === 'rounds' && (
-            <div className="overflow-auto max-h-96">
-              <table className="w-full text-sm">
-                <thead><tr className="border-b"><th className="py-2">标的</th><th>开仓</th><th>平仓</th><th>持有天数</th><th>收益率</th><th>盈亏</th><th>退出原因</th></tr></thead>
-                <tbody>
-                  {runRounds.map((r, i) => <tr key={i} className="border-b"><td className="py-1">{r.symbol}</td><td>{r.open_time} @ {r.open_price}</td><td>{r.close_time} @ {r.close_price}</td><td>{r.holding_days ?? '-'}</td><td>{r.pnl_ratio}</td><td>{r.pnl_amount}</td><td>{r.exit_reason || '-'}</td></tr>)}
-                  {runRounds.length === 0 && <tr><td colSpan={7} className="py-2 text-gray-500">暂无回合交易数据</td></tr>}
-                </tbody>
-              </table>
+            <div className="space-y-2">
+              <div>
+                <button
+                  className="inline-block px-3 py-1 text-xs rounded bg-indigo-50 text-indigo-700"
+                  onClick={() => downloadCsv(`${API_BASE_URL}/api/backtest/runs/${selectedRunId}/rounds/export`, `backtest_run_${selectedRunId}_rounds.csv`)}
+                >
+                  导出回合 CSV
+                </button>
+              </div>
+              <div className="overflow-auto max-h-96">
+                <table className="w-full text-sm">
+                  <thead><tr className="border-b"><th className="py-2">标的</th><th>开仓</th><th>平仓</th><th>持有天数</th><th>收益率</th><th>盈亏</th><th>退出原因</th></tr></thead>
+                  <tbody>
+                    {runRounds.map((r, i) => <tr key={i} className="border-b"><td className="py-1">{r.symbol}</td><td>{r.open_time} @ {r.open_price}</td><td>{r.close_time} @ {r.close_price}</td><td>{r.holding_days ?? '-'}</td><td>{r.pnl_ratio}</td><td>{r.pnl_amount}</td><td>{r.exit_reason || '-'}</td></tr>)}
+                    {runRounds.length === 0 && <tr><td colSpan={7} className="py-2 text-gray-500">暂无回合交易数据</td></tr>}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
           {detailTab === 'snapshots' && (
-            <div className="text-sm text-gray-600">
-              {runSnapshots.length === 0 ? '当前版本暂无持仓快照（后续可在回测入库阶段补齐按日快照）' : JSON.stringify(runSnapshots)}
+            <div className="space-y-3 text-sm">
+              {runSnapshots.length === 0 ? (
+                <div className="text-gray-500">暂无持仓快照数据</div>
+              ) : (
+                runSnapshots.slice(-20).reverse().map((s, i) => (
+                  <div key={i} className="border rounded p-3 bg-gray-50">
+                    <div className="font-medium">{s.snapshot_time}</div>
+                    <div className="text-xs text-gray-600 mt-1">权益: {s.equity} | 现金: {s.cash} | 持仓市值: {s.position_value}</div>
+                    <div className="overflow-auto mt-2">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b"><th className="text-left py-1">标的</th><th className="text-left">数量</th><th className="text-left">现价</th><th className="text-left">市值</th><th className="text-left">权重</th></tr>
+                        </thead>
+                        <tbody>
+                          {(s.holdings || []).map((h: any, hi: number) => (
+                            <tr key={hi} className="border-b"><td className="py-1">{h.symbol}</td><td>{h.qty}</td><td>{h.last_price}</td><td>{h.market_value}</td><td>{h.weight}</td></tr>
+                          ))}
+                          {(s.holdings || []).length === 0 && <tr><td colSpan={5} className="py-1 text-gray-500">空仓</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           )}
 

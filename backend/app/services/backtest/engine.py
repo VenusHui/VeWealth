@@ -14,6 +14,7 @@ from app.services.backtest.registry import get_strategy
 class SymbolRunResult:
     symbol: str
     equity_curve: list[dict[str, Any]]
+    position_curve: list[dict[str, Any]]
     trades: list[dict[str, Any]]
     warnings: list[str]
     last_equity: float
@@ -39,10 +40,11 @@ def run_for_symbol(
     warnings: list[str] = []
     trades: list[dict[str, Any]] = []
     equity_curve: list[dict[str, Any]] = []
+    position_curve: list[dict[str, Any]] = []
 
     if df.empty or len(df) < 3:
         return SymbolRunResult(
-            symbol, [], [], [f"{symbol}: 可用数据不足"], init_cash, 0
+            symbol, [], [], [], [f"{symbol}: 可用数据不足"], init_cash, 0
         )
 
     work_df = df.copy()
@@ -64,9 +66,20 @@ def run_for_symbol(
 
         curr_close = float(curr["close"])
         curr_equity = cash + shares * curr_close
+        ts_text = ts.strftime("%Y-%m-%d %H:%M:%S")
         equity_curve.append(
             {
-                "datetime": ts.strftime("%Y-%m-%d %H:%M:%S"),
+                "datetime": ts_text,
+                "equity": round(curr_equity, 4),
+            }
+        )
+        position_curve.append(
+            {
+                "datetime": ts_text,
+                "shares": int(shares),
+                "close": round(curr_close, 4),
+                "market_value": round(shares * curr_close, 4),
+                "cash": round(cash, 4),
                 "equity": round(curr_equity, 4),
             }
         )
@@ -156,10 +169,22 @@ def run_for_symbol(
             )
 
     last = signal_df.iloc[-1]
-    final_equity = cash + shares * float(last["close"])
+    last_close = float(last["close"])
+    final_equity = cash + shares * last_close
+    last_ts = last["datetime"].strftime("%Y-%m-%d %H:%M:%S")
     equity_curve.append(
         {
-            "datetime": last["datetime"].strftime("%Y-%m-%d %H:%M:%S"),
+            "datetime": last_ts,
+            "equity": round(final_equity, 4),
+        }
+    )
+    position_curve.append(
+        {
+            "datetime": last_ts,
+            "shares": int(shares),
+            "close": round(last_close, 4),
+            "market_value": round(shares * last_close, 4),
+            "cash": round(cash, 4),
             "equity": round(final_equity, 4),
         }
     )
@@ -167,6 +192,7 @@ def run_for_symbol(
     return SymbolRunResult(
         symbol=symbol,
         equity_curve=equity_curve,
+        position_curve=position_curve,
         trades=trades,
         warnings=warnings,
         last_equity=final_equity,
