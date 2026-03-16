@@ -75,9 +75,11 @@ export default function BacktestPage() {
 
   const [job, setJob] = useState<any>(null)
   const [jobs, setJobs] = useState<any[]>([])
+  const [jobsLoading, setJobsLoading] = useState(false)
   const [result, setResult] = useState<any>(null)
 
   const [runs, setRuns] = useState<RunItem[]>([])
+  const [runsLoading, setRunsLoading] = useState(false)
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null)
   const [runOverview, setRunOverview] = useState<any>(null)
   const [runTrades, setRunTrades] = useState<any[]>([])
@@ -99,6 +101,7 @@ export default function BacktestPage() {
 
   const fetchRuns = async () => {
     if (!isAuthenticated()) return
+    setRunsLoading(true)
     try {
       const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs?limit=50&offset=0`, {
         headers: getAuthHeader(),
@@ -106,11 +109,14 @@ export default function BacktestPage() {
       setRuns(resp.data?.data || [])
     } catch {
       // ignore
+    } finally {
+      setRunsLoading(false)
     }
   }
 
-  const fetchJobs = async () => {
+  const fetchJobs = async (showLoading = true) => {
     if (!isAuthenticated()) return
+    if (showLoading) setJobsLoading(true)
     try {
       const resp = await axios.get(`${API_BASE_URL}/api/backtest/jobs`, {
         headers: getAuthHeader(),
@@ -118,6 +124,8 @@ export default function BacktestPage() {
       setJobs(resp.data?.data || [])
     } catch {
       // ignore
+    } finally {
+      if (showLoading) setJobsLoading(false)
     }
   }
 
@@ -219,7 +227,7 @@ export default function BacktestPage() {
   }, [selectedStrategy])
 
   useEffect(() => {
-    const timer = setInterval(fetchJobs, 3000)
+    const timer = setInterval(() => fetchJobs(false), 3000)
     return () => clearInterval(timer)
   }, [])
 
@@ -355,13 +363,18 @@ export default function BacktestPage() {
             {job && <div className="text-sm rounded-lg bg-indigo-50 p-3">当前任务：{job.job_id}<br/>状态：{job.status} · 进度：{Number(job.progress_pct || 0).toFixed(1)}%</div>}
             <div className="text-sm text-gray-500">最近任务</div>
             <div className="max-h-96 overflow-auto space-y-2">
-              {jobs.map((j) => (
-                <div key={j.job_id} className="border rounded-lg px-3 py-2 text-sm">
-                  <div className="font-medium text-gray-700">{j.job_id}</div>
-                  <div className="text-gray-500">{j.status} · {Number(j.progress_pct || 0).toFixed(1)}%</div>
-                </div>
-              ))}
-              {jobs.length === 0 && <div className="text-sm text-gray-400">暂无任务</div>}
+              {jobsLoading ? (
+                <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">任务列表加载中...</div>
+              ) : jobs.length > 0 ? (
+                jobs.map((j) => (
+                  <div key={j.job_id} className="border rounded-lg px-3 py-2 text-sm">
+                    <div className="font-medium text-gray-700">{j.job_id}</div>
+                    <div className="text-gray-500">{j.status} · {Number(j.progress_pct || 0).toFixed(1)}%</div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-sm text-gray-400">暂无任务</div>
+              )}
             </div>
           </div>
         </div>
@@ -381,20 +394,25 @@ export default function BacktestPage() {
                 </tr>
               </thead>
               <tbody>
-                {runs.map((r) => (
-                  <tr key={r.id} className="border-b hover:bg-gray-50">
-                    <td className="py-2">#{r.id}</td>
-                    <td>{r.name}</td>
-                    <td>{r.strategy_id}</td>
-                    <td>{r.start_date} ~ {r.end_date}</td>
-                    <td>{r.summary?.total_return ?? '-'}</td>
-                    <td>{r.summary?.max_drawdown ?? '-'}</td>
-                    <td>{r.status}</td>
-                    <td>{new Date(r.created_at).toLocaleString()}</td>
-                    <td><button className="text-indigo-600 hover:underline" onClick={async () => { setSelectedRunId(r.id); setMainTab('detail'); await loadRunDetail(r.id) }}>查看详情</button></td>
-                  </tr>
-                ))}
-                {runs.length === 0 && <tr><td className="py-3 text-gray-500" colSpan={9}>暂无回测记录</td></tr>}
+                {runsLoading ? (
+                  <tr><td className="py-3 text-gray-500" colSpan={9}>回测记录加载中...</td></tr>
+                ) : runs.length > 0 ? (
+                  runs.map((r) => (
+                    <tr key={r.id} className="border-b hover:bg-gray-50">
+                      <td className="py-2">#{r.id}</td>
+                      <td>{r.name}</td>
+                      <td>{r.strategy_id}</td>
+                      <td>{r.start_date} ~ {r.end_date}</td>
+                      <td>{r.summary?.total_return ?? '-'}</td>
+                      <td>{r.summary?.max_drawdown ?? '-'}</td>
+                      <td>{r.status}</td>
+                      <td>{new Date(r.created_at).toLocaleString()}</td>
+                      <td><button className="text-indigo-600 hover:underline" onClick={async () => { setSelectedRunId(r.id); setMainTab('detail'); await loadRunDetail(r.id) }}>查看详情</button></td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr><td className="py-3 text-gray-500" colSpan={9}>暂无回测记录</td></tr>
+                )}
               </tbody>
             </table>
           </div>
