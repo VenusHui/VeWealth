@@ -52,3 +52,37 @@ class BacktestRun(Base):
     )
 
     user = relationship("User", back_populates="backtest_runs")
+    rounds = relationship(
+        "BacktestRound", back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class BacktestRound(Base):
+    __tablename__ = "backtest_rounds"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    run_id = Column(
+        Integer,
+        ForeignKey("backtest_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    symbol = Column(String(20), nullable=False, index=True)
+
+    open_time = Column(String(32), nullable=True)
+    open_price = Column(Float, nullable=True)
+    close_time = Column(String(32), nullable=True)
+    close_price = Column(Float, nullable=True)
+    qty = Column(Float, nullable=False, default=0)
+
+    holding_days = Column(Integer, nullable=True)
+    pnl_amount = Column(Float, nullable=False, default=0)
+    pnl_ratio = Column(Float, nullable=False, default=0)
+    exit_reason = Column(String(128), nullable=True)
+
+    max_favorable_excursion = Column(Float, nullable=True)
+    max_adverse_excursion = Column(Float, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    run = relationship("BacktestRun", back_populates="rounds")

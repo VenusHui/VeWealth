@@ -88,6 +88,10 @@
 3. CSV 导出：
    - `GET /api/backtest/runs/{run_id}/trades/export`
    - `GET /api/backtest/runs/{run_id}/rounds/export`
+4. 回合交易持久化：
+   - 新增 `backtest_rounds` 表
+   - 回测完成后写入 round 数据（避免每次查询在线配对）
+   - `/rounds` 查询优先读表，历史数据无表记录时兜底在线推导并回填
 
 ## 7. 风险与后续
 

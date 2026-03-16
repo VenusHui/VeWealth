@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
-from app.models.backtest import BacktestRun
+from app.models.backtest import BacktestRun, BacktestRound
 from app.models.user import User
 from app.schemas.backtest import BacktestRunRequest
 from app.services.backtest.costs import CostModel
@@ -59,6 +59,9 @@ class BacktestService:
         db.add(run)
         db.commit()
         db.refresh(run)
+
+        rounds = self._build_round_trips(result["trades"])
+        self._persist_rounds(db=db, run_id=run.id, rounds=rounds)
 
         return {
             "run_id": run.id,
@@ -403,8 +406,37 @@ class BacktestService:
         return run.trades or []
 
     def get_run_rounds(self, run_id: int, current_user: User, db: Session) -> list[dict]:
+        rows = (
+            db.query(BacktestRound)
+            .join(BacktestRun, BacktestRound.run_id == BacktestRun.id)
+            .filter(BacktestRound.run_id == run_id, BacktestRun.user_id == current_user.id)
+            .order_by(BacktestRound.id.asc())
+            .all()
+        )
+        if rows:
+            return [
+                {
+                    "symbol": r.symbol,
+                    "open_time": r.open_time,
+                    "open_price": r.open_price,
+                    "close_time": r.close_time,
+                    "close_price": r.close_price,
+                    "qty": r.qty,
+                    "holding_days": r.holding_days,
+                    "pnl_amount": r.pnl_amount,
+                    "pnl_ratio": r.pnl_ratio,
+                    "exit_reason": r.exit_reason,
+                    "max_favorable_excursion": r.max_favorable_excursion,
+                    "max_adverse_excursion": r.max_adverse_excursion,
+                }
+                for r in rows
+            ]
+
         trades = self.get_run_trades(run_id=run_id, current_user=current_user, db=db)
-        return self._build_round_trips(trades)
+        rounds = self._build_round_trips(trades)
+        if rounds:
+            self._persist_rounds(db=db, run_id=run_id, rounds=rounds)
+        return rounds
 
     def get_run_snapshots(self, run_id: int, current_user: User, db: Session) -> list[dict]:
         run = self.get_run(run_id=run_id, current_user=current_user, db=db)
@@ -452,6 +484,33 @@ class BacktestService:
             return datetime.fromisoformat(str(value))
         except ValueError:
             return None
+
+    def _persist_rounds(self, db: Session, run_id: int, rounds: list[dict[str, Any]]):
+        db.query(BacktestRound).filter(BacktestRound.run_id == run_id).delete()
+        if not rounds:
+            db.commit()
+            return
+
+        db_rows = [
+            BacktestRound(
+                run_id=run_id,
+                symbol=str(r.get("symbol", "")),
+                open_time=r.get("open_time"),
+                open_price=float(r.get("open_price", 0) or 0),
+                close_time=r.get("close_time"),
+                close_price=float(r.get("close_price", 0) or 0),
+                qty=float(r.get("qty", 0) or 0),
+                holding_days=r.get("holding_days"),
+                pnl_amount=float(r.get("pnl_amount", 0) or 0),
+                pnl_ratio=float(r.get("pnl_ratio", 0) or 0),
+                exit_reason=r.get("exit_reason"),
+                max_favorable_excursion=r.get("max_favorable_excursion"),
+                max_adverse_excursion=r.get("max_adverse_excursion"),
+            )
+            for r in rounds
+        ]
+        db.bulk_save_objects(db_rows)
+        db.commit()
 
     def _build_round_trips(self, trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not trades:
