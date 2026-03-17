@@ -38,6 +38,25 @@ def _get_run_or_404(run_id: int, current_user: User, db: Session):
     return run
 
 
+def _get_job_or_404(job_id: str, current_user: User):
+    job = backtest_job_manager.get_job(job_id, current_user.id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
+    return job
+
+
+def _build_csv_response(filename: str, fieldnames: list[str], rows: list[dict]):
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
 @router.get("/strategies", response_model=BacktestStrategiesResponse)
 async def get_strategies(
     current_user: User = Depends(get_current_active_user),
@@ -153,43 +172,34 @@ async def export_run_trades_csv(
     trades = backtest_service.get_run_trades(
         run_id=run_id, current_user=current_user, db=db
     )
-    output = io.StringIO()
-    writer = csv.DictWriter(
-        output,
-        fieldnames=[
-            "datetime",
-            "symbol",
-            "side",
-            "price",
-            "qty",
-            "amount",
-            "fee",
-            "pnl",
-            "reason",
-        ],
-    )
-    writer.writeheader()
-    for t in trades:
-        writer.writerow(
-            {
-                "datetime": t.get("datetime"),
-                "symbol": t.get("symbol"),
-                "side": t.get("side"),
-                "price": t.get("price"),
-                "qty": t.get("qty"),
-                "amount": t.get("amount"),
-                "fee": t.get("fee"),
-                "pnl": t.get("pnl"),
-                "reason": t.get("reason"),
-            }
-        )
+    rows = [
+        {
+            "datetime": t.get("datetime"),
+            "symbol": t.get("symbol"),
+            "side": t.get("side"),
+            "price": t.get("price"),
+            "qty": t.get("qty"),
+            "amount": t.get("amount"),
+            "fee": t.get("fee"),
+            "pnl": t.get("pnl"),
+            "reason": t.get("reason"),
+        }
+        for t in trades
+    ]
 
     filename = f"backtest_run_{run_id}_trades.csv"
-    return Response(
-        content=output.getvalue(),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
-    )
+    fieldnames = [
+        "datetime",
+        "symbol",
+        "side",
+        "price",
+        "qty",
+        "amount",
+        "fee",
+        "pnl",
+        "reason",
+    ]
+    return _build_csv_response(filename=filename, fieldnames=fieldnames, rows=rows)
 
 
 @router.get("/runs/{run_id}/rounds/export")
@@ -203,45 +213,36 @@ async def export_run_rounds_csv(
     rounds = backtest_service.get_run_rounds(
         run_id=run_id, current_user=current_user, db=db
     )
-    output = io.StringIO()
-    writer = csv.DictWriter(
-        output,
-        fieldnames=[
-            "symbol",
-            "open_time",
-            "open_price",
-            "close_time",
-            "close_price",
-            "qty",
-            "holding_days",
-            "pnl_ratio",
-            "pnl_amount",
-            "exit_reason",
-        ],
-    )
-    writer.writeheader()
-    for r in rounds:
-        writer.writerow(
-            {
-                "symbol": r.get("symbol"),
-                "open_time": r.get("open_time"),
-                "open_price": r.get("open_price"),
-                "close_time": r.get("close_time"),
-                "close_price": r.get("close_price"),
-                "qty": r.get("qty"),
-                "holding_days": r.get("holding_days"),
-                "pnl_ratio": r.get("pnl_ratio"),
-                "pnl_amount": r.get("pnl_amount"),
-                "exit_reason": r.get("exit_reason"),
-            }
-        )
+    rows = [
+        {
+            "symbol": r.get("symbol"),
+            "open_time": r.get("open_time"),
+            "open_price": r.get("open_price"),
+            "close_time": r.get("close_time"),
+            "close_price": r.get("close_price"),
+            "qty": r.get("qty"),
+            "holding_days": r.get("holding_days"),
+            "pnl_ratio": r.get("pnl_ratio"),
+            "pnl_amount": r.get("pnl_amount"),
+            "exit_reason": r.get("exit_reason"),
+        }
+        for r in rounds
+    ]
 
     filename = f"backtest_run_{run_id}_rounds.csv"
-    return Response(
-        content=output.getvalue(),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
-    )
+    fieldnames = [
+        "symbol",
+        "open_time",
+        "open_price",
+        "close_time",
+        "close_price",
+        "qty",
+        "holding_days",
+        "pnl_ratio",
+        "pnl_amount",
+        "exit_reason",
+    ]
+    return _build_csv_response(filename=filename, fieldnames=fieldnames, rows=rows)
 
 
 @router.get(
@@ -286,9 +287,7 @@ async def get_backtest_job(
     job_id: str,
     current_user: User = Depends(get_current_active_user),
 ):
-    job = backtest_job_manager.get_job(job_id, current_user.id)
-    if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
+    job = _get_job_or_404(job_id=job_id, current_user=current_user)
     return BacktestJobDetailResponse(data=job)
 
 
@@ -297,9 +296,8 @@ async def cancel_backtest_job(
     job_id: str,
     current_user: User = Depends(get_current_active_user),
 ):
+    _get_job_or_404(job_id=job_id, current_user=current_user)
     job = backtest_job_manager.cancel_job(job_id, current_user.id)
-    if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
     return BacktestJobDetailResponse(data=job)
 
 
@@ -308,7 +306,6 @@ async def retry_backtest_job(
     job_id: str,
     current_user: User = Depends(get_current_active_user),
 ):
+    _get_job_or_404(job_id=job_id, current_user=current_user)
     job = backtest_job_manager.retry_job(job_id, current_user.id)
-    if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
     return BacktestJobDetailResponse(data=job)
