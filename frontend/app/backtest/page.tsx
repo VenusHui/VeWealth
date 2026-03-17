@@ -7,7 +7,19 @@ import { MainTabSwitcher } from './components/MainTabSwitcher'
 import { BacktestRecordsPanel } from './components/BacktestRecordsPanel'
 import { BacktestDetailPanel } from './components/BacktestDetailPanel'
 import { BacktestCreatePanel } from './components/BacktestCreatePanel'
-import type { DetailTab, JobItem, MainTab, RunItem, Strategy } from './components/types'
+import type {
+  BacktestOverview,
+  BacktestResult,
+  DetailTab,
+  JobItem,
+  MainTab,
+  RoundRow,
+  RunItem,
+  SnapshotRow,
+  Strategy,
+  StrategyConfig,
+  TradeRow,
+} from './components/types'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
 
@@ -34,16 +46,16 @@ export default function BacktestPage() {
   const [job, setJob] = useState<JobItem | null>(null)
   const [jobs, setJobs] = useState<JobItem[]>([])
   const [jobsLoading, setJobsLoading] = useState(false)
-  const [result, setResult] = useState<any>(null)
+  const [result, setResult] = useState<BacktestResult | null>(null)
 
   const [runs, setRuns] = useState<RunItem[]>([])
   const [runsLoading, setRunsLoading] = useState(false)
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null)
-  const [runOverview, setRunOverview] = useState<any>(null)
-  const [runTrades, setRunTrades] = useState<any[]>([])
-  const [runRounds, setRunRounds] = useState<any[]>([])
-  const [runSnapshots, setRunSnapshots] = useState<any[]>([])
-  const [runStrategyConfig, setRunStrategyConfig] = useState<any>(null)
+  const [runOverview, setRunOverview] = useState<BacktestOverview | null>(null)
+  const [runTrades, setRunTrades] = useState<TradeRow[]>([])
+  const [runRounds, setRunRounds] = useState<RoundRow[]>([])
+  const [runSnapshots, setRunSnapshots] = useState<SnapshotRow[]>([])
+  const [runStrategyConfig, setRunStrategyConfig] = useState<StrategyConfig | null>(null)
   const [detailLoading, setDetailLoading] = useState({
     overview: false,
     trades: false,
@@ -179,13 +191,13 @@ export default function BacktestPage() {
         if (list.length > 0) {
           setStrategyId(list[0].strategy_id)
           const defaults: Record<string, string> = {}
-          list[0].param_schema.forEach((p: any) => {
+          list[0].param_schema.forEach((p) => {
             defaults[p.key] = String(p.default ?? '')
           })
           setStrategyParams(defaults)
         }
-      } catch (e: any) {
-        setError(e.response?.data?.detail || '加载策略列表失败')
+      } catch {
+        setError('加载策略列表失败')
       }
     }
 
@@ -273,7 +285,7 @@ export default function BacktestPage() {
       setError('')
       setResult(null)
 
-      const castParams: Record<string, any> = {}
+      const castParams: Record<string, unknown> = {}
       Object.keys(strategyParams).forEach((k) => {
         const val = strategyParams[k]
         castParams[k] = /^-?\d+(\.\d+)?$/.test(val) ? Number(val) : val
@@ -300,8 +312,8 @@ export default function BacktestPage() {
       setJob(resp.data?.data)
       setMainTab('create')
       fetchJobs()
-    } catch (e: any) {
-      setError(e.response?.data?.detail || '回测执行失败')
+    } catch {
+      setError('回测执行失败')
     } finally {
       setLoading(false)
     }

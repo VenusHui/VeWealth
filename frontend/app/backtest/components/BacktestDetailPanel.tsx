@@ -8,7 +8,14 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { LoadingHint } from './LoadingHint'
-import type { DetailTab } from './types'
+import type {
+  BacktestOverview,
+  DetailTab,
+  RoundRow,
+  SnapshotRow,
+  StrategyConfig,
+  TradeRow,
+} from './types'
 
 const detailTabs: { key: DetailTab; label: string }[] = [
   { key: 'overview', label: '概览' },
@@ -35,11 +42,11 @@ export function BacktestDetailPanel({
   detailTab: DetailTab
   onChangeDetailTab: (tab: DetailTab) => void
   detailLoading: Record<DetailTab, boolean>
-  runOverview: any
-  runTrades: any[]
-  runRounds: any[]
-  runSnapshots: any[]
-  runStrategyConfig: any
+  runOverview: BacktestOverview | null
+  runTrades: TradeRow[]
+  runRounds: RoundRow[]
+  runSnapshots: SnapshotRow[]
+  runStrategyConfig: StrategyConfig | null
   onDownloadCsv: (url: string, filename: string) => void
   apiBaseUrl: string
 }) {
@@ -129,7 +136,7 @@ export function BacktestDetailPanel({
                   <div key={i} className="border rounded-lg p-3 bg-gray-50">
                     <div className="font-medium">{s.snapshot_time}</div>
                     <div className="text-xs text-gray-600 mt-1">权益: {s.equity} | 现金: {s.cash} | 持仓市值: {s.position_value}</div>
-                    <div className="overflow-auto mt-2"><table className="w-full text-xs"><thead><tr className="border-b"><th className="text-left py-1">标的</th><th>数量</th><th>现价</th><th>市值</th><th>权重</th></tr></thead><tbody>{(s.holdings || []).map((h: any, hi: number) => <tr key={hi} className="border-b"><td className="py-1">{h.symbol}</td><td>{h.qty}</td><td>{h.last_price}</td><td>{h.market_value}</td><td>{h.weight}</td></tr>)}{(s.holdings || []).length === 0 && <tr><td colSpan={5} className="py-1 text-gray-500">空仓</td></tr>}</tbody></table></div>
+                    <div className="overflow-auto mt-2"><table className="w-full text-xs"><thead><tr className="border-b"><th className="text-left py-1">标的</th><th>数量</th><th>现价</th><th>市值</th><th>权重</th></tr></thead><tbody>{(s.holdings || []).map((h, hi: number) => <tr key={hi} className="border-b"><td className="py-1">{h.symbol}</td><td>{h.qty}</td><td>{h.last_price}</td><td>{h.market_value}</td><td>{h.weight}</td></tr>)}{(s.holdings || []).length === 0 && <tr><td colSpan={5} className="py-1 text-gray-500">空仓</td></tr>}</tbody></table></div>
                   </div>
                 ))
               )}
