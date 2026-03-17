@@ -499,7 +499,9 @@ class BacktestService:
     ) -> tuple[list[dict], int]:
         row = (
             db.query(BacktestRun)
-            .options(load_only(BacktestRun.id, BacktestRun.user_id, BacktestRun.summary))
+            .options(
+                load_only(BacktestRun.id, BacktestRun.user_id, BacktestRun.summary)
+            )
             .filter(BacktestRun.id == run_id, BacktestRun.user_id == current_user.id)
             .first()
         )
