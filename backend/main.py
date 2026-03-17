@@ -12,6 +12,7 @@ from app.core.logger import get_module_logger
 from app.routers import stock_router, auth_router, watchlist_router, backtest_router
 from app.routers.scheduler import router as scheduler_router
 from app.services.scheduler import app_scheduler
+from app.services.backtest import backtest_job_manager
 
 # 获取logger
 logger = get_module_logger("main")
@@ -25,6 +26,9 @@ async def lifespan(app: FastAPI):
         logger.info("正在初始化数据库...")
         init_db()
         logger.info("数据库初始化完成")
+
+        recovered_count = backtest_job_manager.recover_stale_jobs_on_startup()
+        logger.info(f"回测任务重启恢复完成，处理数量: {recovered_count}")
 
         logger.info("正在启动定时任务调度器...")
         app_scheduler.start()

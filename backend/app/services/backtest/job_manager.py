@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import Thread, Lock
 from uuid import uuid4
 from copy import deepcopy
 from typing import Any
 
 from app.core.database import SessionLocal
+from app.core.logger import get_module_logger
 from app.models.backtest_job import BacktestJob
 from app.models.user import User
 from app.schemas.backtest import BacktestRunRequest
+
+logger = get_module_logger("backtest.job_manager")
+RESTART_RECOVERY_TIMEOUT_MINUTES = 5
+RESTART_RECOVERY_ERROR = "服务重启中断，请手动重试"
 
 
 class BacktestJobManager:
@@ -121,6 +126,55 @@ class BacktestJobManager:
 
         self._spawn_runner(job_id)
         return data
+
+    def recover_stale_jobs_on_startup(
+        self,
+        timeout_minutes: int = RESTART_RECOVERY_TIMEOUT_MINUTES,
+        error_message: str = RESTART_RECOVERY_ERROR,
+    ) -> int:
+        cutoff = datetime.utcnow() - timedelta(minutes=timeout_minutes)
+        db = SessionLocal()
+        try:
+            stale_rows = (
+                db.query(BacktestJob)
+                .filter(
+                    BacktestJob.status.in_(["pending", "running"]),
+                    BacktestJob.updated_at < cutoff,
+                )
+                .all()
+            )
+
+            if not stale_rows:
+                logger.info(
+                    "回测任务重启恢复完成，无需处理（阈值=%s分钟）",
+                    timeout_minutes,
+                )
+                return 0
+
+            recovered_ids: list[str] = []
+            now = datetime.utcnow()
+            for row in stale_rows:
+                row.status = "cancelled"
+                row.stage = "cancelled"
+                row.error = error_message
+                row.cancel_requested = 1
+                row.updated_at = now
+                recovered_ids.append(row.job_id)
+
+            db.commit()
+            logger.warning(
+                "回测任务重启恢复完成，已取消 %s 个卡住任务（阈值=%s分钟）: %s",
+                len(recovered_ids),
+                timeout_minutes,
+                ", ".join(recovered_ids),
+            )
+            return len(recovered_ids)
+        except Exception:
+            db.rollback()
+            logger.error("回测任务重启恢复失败", exc_info=True)
+            raise
+        finally:
+            db.close()
 
     def _spawn_runner(self, job_id: str):
         if job_id not in self._running_locks:
