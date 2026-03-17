@@ -55,6 +55,12 @@ const detailTabs: { key: DetailTab; label: string }[] = [
   { key: 'strategy', label: '策略配置' },
 ]
 
+const ACTIVE_JOB_STATUSES = ['pending', 'running'] as const
+
+const LoadingHint = ({ text }: { text: string }) => (
+  <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">{text}</div>
+)
+
 export default function BacktestPage() {
   const [mainTab, setMainTab] = useState<MainTab>('create')
   const [detailTab, setDetailTab] = useState<DetailTab>('overview')
@@ -136,7 +142,7 @@ export default function BacktestPage() {
     }
   }
 
-  const loadRunDetail = async (runId: number) => {
+  const loadRunDetail = (runId: number) => {
     setRunOverview(null)
     setRunTrades([])
     setRunRounds([])
@@ -246,8 +252,8 @@ export default function BacktestPage() {
   }, [selectedStrategy])
 
   useEffect(() => {
-    const hasActive = (job && ['pending', 'running'].includes(job.status))
-      || jobs.some((j) => ['pending', 'running'].includes(j.status))
+    const hasActive = (job && ACTIVE_JOB_STATUSES.includes(job.status as (typeof ACTIVE_JOB_STATUSES)[number]))
+      || jobs.some((j) => ACTIVE_JOB_STATUSES.includes(j.status as (typeof ACTIVE_JOB_STATUSES)[number]))
 
     if (mainTab !== 'create' || !hasActive) return
 
@@ -412,7 +418,7 @@ export default function BacktestPage() {
             <div className="text-sm text-gray-500">最近任务</div>
             <div className="max-h-96 overflow-auto space-y-2">
               {jobsLoading ? (
-                <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">任务列表加载中...</div>
+                <LoadingHint text="任务列表加载中..." />
               ) : jobs.length > 0 ? (
                 jobs.map((j) => (
                   <div key={j.job_id} className="border rounded-lg px-3 py-2 text-sm">
@@ -455,7 +461,7 @@ export default function BacktestPage() {
                       <td>{r.summary?.max_drawdown ?? '-'}</td>
                       <td>{r.status}</td>
                       <td>{new Date(r.created_at).toLocaleString()}</td>
-                      <td><button className="text-indigo-600 hover:underline" onClick={async () => { await loadRunDetail(r.id) }}>查看详情</button></td>
+                      <td><button className="text-indigo-600 hover:underline" onClick={() => loadRunDetail(r.id)}>查看详情</button></td>
                     </tr>
                   ))
                 ) : (
@@ -485,7 +491,7 @@ export default function BacktestPage() {
               {detailTab === 'overview' && (
                 <div className="space-y-4">
                   {detailLoading.overview ? (
-                    <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">概览数据加载中...</div>
+                    <LoadingHint text="概览数据加载中..." />
                   ) : (
                     <>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -515,7 +521,7 @@ export default function BacktestPage() {
               {detailTab === 'trades' && (
                 <div className="space-y-2">
                   {detailLoading.trades ? (
-                    <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">成交明细加载中...</div>
+                    <LoadingHint text="成交明细加载中..." />
                   ) : (
                     <>
                       <button className="inline-block px-3 py-1 text-xs rounded bg-indigo-50 text-indigo-700" onClick={() => downloadCsv(`${API_BASE_URL}/api/backtest/runs/${selectedRunId}/trades/export`, `backtest_run_${selectedRunId}_trades.csv`)}>导出成交 CSV</button>
@@ -530,7 +536,7 @@ export default function BacktestPage() {
               {detailTab === 'rounds' && (
                 <div className="space-y-2">
                   {detailLoading.rounds ? (
-                    <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">回合交易加载中...</div>
+                    <LoadingHint text="回合交易加载中..." />
                   ) : (
                     <>
                       <button className="inline-block px-3 py-1 text-xs rounded bg-indigo-50 text-indigo-700" onClick={() => downloadCsv(`${API_BASE_URL}/api/backtest/runs/${selectedRunId}/rounds/export`, `backtest_run_${selectedRunId}_rounds.csv`)}>导出回合 CSV</button>
@@ -545,7 +551,7 @@ export default function BacktestPage() {
               {detailTab === 'snapshots' && (
                 <div className="space-y-3 text-sm">
                   {detailLoading.snapshots ? (
-                    <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">持仓快照加载中...</div>
+                    <LoadingHint text="持仓快照加载中..." />
                   ) : runSnapshots.length === 0 ? (
                     <div className="text-gray-500">暂无持仓快照数据</div>
                   ) : (
@@ -562,7 +568,7 @@ export default function BacktestPage() {
 
               {detailTab === 'strategy' && (
                 detailLoading.strategy ? (
-                  <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">策略配置加载中...</div>
+                  <LoadingHint text="策略配置加载中..." />
                 ) : (
                   <pre className="bg-gray-50 border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig || {}, null, 2)}</pre>
                 )
