@@ -12,6 +12,8 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { getAuthHeader, isAuthenticated } from '../lib/auth'
+import { MainTabSwitcher } from './components/MainTabSwitcher'
+import { BacktestRecordsPanel } from './components/BacktestRecordsPanel'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
 
@@ -40,12 +42,6 @@ type RunItem = {
 
 type DetailTab = 'overview' | 'trades' | 'rounds' | 'snapshots' | 'strategy'
 type MainTab = 'create' | 'records' | 'detail'
-
-const mainTabs: { key: MainTab; label: string }[] = [
-  { key: 'create', label: '新建回测' },
-  { key: 'records', label: '回测记录' },
-  { key: 'detail', label: '回测详情' },
-]
 
 const detailTabs: { key: DetailTab; label: string }[] = [
   { key: 'overview', label: '概览' },
@@ -366,17 +362,7 @@ export default function BacktestPage() {
         <p className="text-indigo-100 mt-1">三段式结构：新建任务 → 记录列表 → 详情钻取</p>
       </div>
 
-      <div className="bg-white rounded-2xl shadow p-2 flex gap-2">
-        {mainTabs.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setMainTab(tab.key)}
-            className={`px-4 py-2 rounded-xl text-sm font-medium transition ${mainTab === tab.key ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <MainTabSwitcher activeTab={mainTab} onChange={setMainTab} />
 
       {mainTab === 'create' && (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
@@ -435,42 +421,12 @@ export default function BacktestPage() {
       )}
 
       {mainTab === 'records' && (
-        <div className="bg-white rounded-2xl shadow p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="font-semibold text-gray-800">回测记录</div>
-            <button className="text-sm text-indigo-600 hover:underline" onClick={fetchRuns}>刷新</button>
-          </div>
-          <div className="overflow-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left border-b text-gray-500">
-                  <th className="py-2">ID</th><th>名称</th><th>策略</th><th>区间</th><th>总收益</th><th>最大回撤</th><th>状态</th><th>创建时间</th><th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {runsLoading ? (
-                  <tr><td className="py-3 text-gray-500" colSpan={9}>回测记录加载中...</td></tr>
-                ) : runs.length > 0 ? (
-                  runs.map((r) => (
-                    <tr key={r.id} className="border-b hover:bg-gray-50">
-                      <td className="py-2">#{r.id}</td>
-                      <td>{r.name}</td>
-                      <td>{r.strategy_id}</td>
-                      <td>{r.start_date} ~ {r.end_date}</td>
-                      <td>{r.summary?.total_return ?? '-'}</td>
-                      <td>{r.summary?.max_drawdown ?? '-'}</td>
-                      <td>{r.status}</td>
-                      <td>{new Date(r.created_at).toLocaleString()}</td>
-                      <td><button className="text-indigo-600 hover:underline" onClick={() => loadRunDetail(r.id)}>查看详情</button></td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr><td className="py-3 text-gray-500" colSpan={9}>暂无回测记录</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <BacktestRecordsPanel
+          runs={runs}
+          runsLoading={runsLoading}
+          onRefresh={fetchRuns}
+          onViewDetail={loadRunDetail}
+        />
       )}
 
       {mainTab === 'detail' && (
