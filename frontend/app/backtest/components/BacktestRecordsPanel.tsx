@@ -1,3 +1,4 @@
+import { PaginationControls } from './PaginationControls'
 import type { RunItem } from './types'
 
 export function BacktestRecordsPanel({
@@ -5,11 +6,21 @@ export function BacktestRecordsPanel({
   runsLoading,
   onRefresh,
   onViewDetail,
+  total,
+  page,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
 }: {
   runs: RunItem[]
   runsLoading: boolean
   onRefresh: () => void
   onViewDetail: (runId: number) => void
+  total: number
+  page: number
+  pageSize: number
+  onPageChange: (page: number) => void
+  onPageSizeChange: (size: number) => void
 }) {
   return (
     <div className="bg-white rounded-2xl shadow p-5">
@@ -17,6 +28,13 @@ export function BacktestRecordsPanel({
         <div className="font-semibold text-gray-800">回测记录</div>
         <button className="text-sm text-indigo-600 hover:underline" onClick={onRefresh}>刷新</button>
       </div>
+      <PaginationControls
+        page={page}
+        pageSize={pageSize}
+        total={total}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
+      />
       <div className="overflow-auto">
         <table className="w-full text-sm">
           <thead>

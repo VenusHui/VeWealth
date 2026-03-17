@@ -125,40 +125,58 @@ async def get_run_overview(
 @router.get("/runs/{run_id}/trades", response_model=BacktestRunTradesResponse)
 async def get_run_trades(
     run_id: int,
+    limit: int = Query(20, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     _get_run_or_404(run_id=run_id, current_user=current_user, db=db)
-    trades = backtest_service.get_run_trades(
-        run_id=run_id, current_user=current_user, db=db
+    trades, total = backtest_service.get_run_trades(
+        run_id=run_id,
+        current_user=current_user,
+        db=db,
+        limit=limit,
+        offset=offset,
     )
-    return BacktestRunTradesResponse(data=trades, total=len(trades))
+    return BacktestRunTradesResponse(data=trades, total=total)
 
 
 @router.get("/runs/{run_id}/rounds", response_model=BacktestRunRoundsResponse)
 async def get_run_rounds(
     run_id: int,
+    limit: int = Query(20, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     _get_run_or_404(run_id=run_id, current_user=current_user, db=db)
-    rounds = backtest_service.get_run_rounds(
-        run_id=run_id, current_user=current_user, db=db
+    rounds, total = backtest_service.get_run_rounds(
+        run_id=run_id,
+        current_user=current_user,
+        db=db,
+        limit=limit,
+        offset=offset,
     )
-    return BacktestRunRoundsResponse(data=rounds, total=len(rounds))
+    return BacktestRunRoundsResponse(data=rounds, total=total)
 
 
 @router.get("/runs/{run_id}/snapshots", response_model=BacktestRunSnapshotsResponse)
 async def get_run_snapshots(
     run_id: int,
+    limit: int = Query(20, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     _get_run_or_404(run_id=run_id, current_user=current_user, db=db)
-    snapshots = backtest_service.get_run_snapshots(
-        run_id=run_id, current_user=current_user, db=db
+    snapshots, total = backtest_service.get_run_snapshots(
+        run_id=run_id,
+        current_user=current_user,
+        db=db,
+        limit=limit,
+        offset=offset,
     )
-    return BacktestRunSnapshotsResponse(data=snapshots)
+    return BacktestRunSnapshotsResponse(data=snapshots, total=total)
 
 
 @router.get("/runs/{run_id}/trades/export")
@@ -169,8 +187,8 @@ async def export_run_trades_csv(
 ):
     _get_run_or_404(run_id=run_id, current_user=current_user, db=db)
 
-    trades = backtest_service.get_run_trades(
-        run_id=run_id, current_user=current_user, db=db
+    trades, _ = backtest_service.get_run_trades(
+        run_id=run_id, current_user=current_user, db=db, limit=None
     )
     rows = [
         {
@@ -210,8 +228,8 @@ async def export_run_rounds_csv(
 ):
     _get_run_or_404(run_id=run_id, current_user=current_user, db=db)
 
-    rounds = backtest_service.get_run_rounds(
-        run_id=run_id, current_user=current_user, db=db
+    rounds, _ = backtest_service.get_run_rounds(
+        run_id=run_id, current_user=current_user, db=db, limit=None
     )
     rows = [
         {

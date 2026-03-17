@@ -8,6 +8,7 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { LoadingHint } from './LoadingHint'
+import { PaginationControls } from './PaginationControls'
 import type {
   BacktestOverview,
   DetailTab,
@@ -37,6 +38,21 @@ export function BacktestDetailPanel({
   runStrategyConfig,
   onDownloadCsv,
   apiBaseUrl,
+  tradesTotal,
+  tradesPage,
+  tradesPageSize,
+  onTradesPageChange,
+  onTradesPageSizeChange,
+  roundsTotal,
+  roundsPage,
+  roundsPageSize,
+  onRoundsPageChange,
+  onRoundsPageSizeChange,
+  snapshotsTotal,
+  snapshotsPage,
+  snapshotsPageSize,
+  onSnapshotsPageChange,
+  onSnapshotsPageSizeChange,
 }: {
   selectedRunId: number | null
   detailTab: DetailTab
@@ -49,6 +65,21 @@ export function BacktestDetailPanel({
   runStrategyConfig: StrategyConfig | null
   onDownloadCsv: (url: string, filename: string) => void
   apiBaseUrl: string
+  tradesTotal: number
+  tradesPage: number
+  tradesPageSize: number
+  onTradesPageChange: (page: number) => void
+  onTradesPageSizeChange: (size: number) => void
+  roundsTotal: number
+  roundsPage: number
+  roundsPageSize: number
+  onRoundsPageChange: (page: number) => void
+  onRoundsPageSizeChange: (size: number) => void
+  snapshotsTotal: number
+  snapshotsPage: number
+  snapshotsPageSize: number
+  onSnapshotsPageChange: (page: number) => void
+  onSnapshotsPageSizeChange: (size: number) => void
 }) {
   return (
     <div className="bg-white rounded-2xl shadow p-5 space-y-4">
@@ -101,7 +132,10 @@ export function BacktestDetailPanel({
                 <LoadingHint text="成交明细加载中..." />
               ) : (
                 <>
-                  <button className="inline-block px-3 py-1 text-xs rounded bg-indigo-50 text-indigo-700" onClick={() => onDownloadCsv(`${apiBaseUrl}/api/backtest/runs/${selectedRunId}/trades/export`, `backtest_run_${selectedRunId}_trades.csv`)}>导出成交 CSV</button>
+                  <div className="flex items-center justify-between gap-2">
+                    <button className="inline-block px-3 py-1 text-xs rounded bg-indigo-50 text-indigo-700" onClick={() => onDownloadCsv(`${apiBaseUrl}/api/backtest/runs/${selectedRunId}/trades/export`, `backtest_run_${selectedRunId}_trades.csv`)}>导出成交 CSV</button>
+                    <PaginationControls page={tradesPage} pageSize={tradesPageSize} total={tradesTotal} onPageChange={onTradesPageChange} onPageSizeChange={onTradesPageSizeChange} />
+                  </div>
                   <div className="overflow-auto max-h-[480px]">
                     <table className="w-full text-sm"><thead><tr className="border-b"><th className="py-2">时间</th><th>标的</th><th>方向</th><th>价格</th><th>数量</th><th>金额</th><th>手续费</th><th>原因</th></tr></thead><tbody>{runTrades.map((t, i) => <tr key={i} className="border-b"><td className="py-1">{t.datetime}</td><td>{t.symbol}</td><td>{t.side}</td><td>{t.price}</td><td>{t.qty}</td><td>{t.amount}</td><td>{t.fee}</td><td>{t.reason || '-'}</td></tr>)}{runTrades.length === 0 && <tr><td colSpan={8} className="py-2 text-gray-500">暂无成交数据</td></tr>}</tbody></table>
                   </div>
@@ -116,7 +150,10 @@ export function BacktestDetailPanel({
                 <LoadingHint text="回合交易加载中..." />
               ) : (
                 <>
-                  <button className="inline-block px-3 py-1 text-xs rounded bg-indigo-50 text-indigo-700" onClick={() => onDownloadCsv(`${apiBaseUrl}/api/backtest/runs/${selectedRunId}/rounds/export`, `backtest_run_${selectedRunId}_rounds.csv`)}>导出回合 CSV</button>
+                  <div className="flex items-center justify-between gap-2">
+                    <button className="inline-block px-3 py-1 text-xs rounded bg-indigo-50 text-indigo-700" onClick={() => onDownloadCsv(`${apiBaseUrl}/api/backtest/runs/${selectedRunId}/rounds/export`, `backtest_run_${selectedRunId}_rounds.csv`)}>导出回合 CSV</button>
+                    <PaginationControls page={roundsPage} pageSize={roundsPageSize} total={roundsTotal} onPageChange={onRoundsPageChange} onPageSizeChange={onRoundsPageSizeChange} />
+                  </div>
                   <div className="overflow-auto max-h-[480px]">
                     <table className="w-full text-sm"><thead><tr className="border-b"><th className="py-2">标的</th><th>开仓</th><th>平仓</th><th>持有天数</th><th>收益率</th><th>盈亏</th><th>退出原因</th></tr></thead><tbody>{runRounds.map((r, i) => <tr key={i} className="border-b"><td className="py-1">{r.symbol}</td><td>{r.open_time} @ {r.open_price}</td><td>{r.close_time} @ {r.close_price}</td><td>{r.holding_days ?? '-'}</td><td>{r.pnl_ratio}</td><td>{r.pnl_amount}</td><td>{r.exit_reason || '-'}</td></tr>)}{runRounds.length === 0 && <tr><td colSpan={7} className="py-2 text-gray-500">暂无回合交易数据</td></tr>}</tbody></table>
                   </div>
@@ -127,12 +164,13 @@ export function BacktestDetailPanel({
 
           {detailTab === 'snapshots' && (
             <div className="space-y-3 text-sm">
+              <PaginationControls page={snapshotsPage} pageSize={snapshotsPageSize} total={snapshotsTotal} onPageChange={onSnapshotsPageChange} onPageSizeChange={onSnapshotsPageSizeChange} />
               {detailLoading.snapshots ? (
                 <LoadingHint text="持仓快照加载中..." />
               ) : runSnapshots.length === 0 ? (
                 <div className="text-gray-500">暂无持仓快照数据</div>
               ) : (
-                runSnapshots.slice(-20).reverse().map((s, i) => (
+                runSnapshots.map((s, i) => (
                   <div key={i} className="border rounded-lg p-3 bg-gray-50">
                     <div className="font-medium">{s.snapshot_time}</div>
                     <div className="text-xs text-gray-600 mt-1">权益: {s.equity} | 现金: {s.cash} | 持仓市值: {s.position_value}</div>

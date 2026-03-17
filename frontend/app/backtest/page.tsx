@@ -50,11 +50,23 @@ export default function BacktestPage() {
 
   const [runs, setRuns] = useState<RunItem[]>([])
   const [runsLoading, setRunsLoading] = useState(false)
+  const [runsTotal, setRunsTotal] = useState(0)
+  const [runsPage, setRunsPage] = useState(1)
+  const [runsPageSize, setRunsPageSize] = useState(20)
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null)
   const [runOverview, setRunOverview] = useState<BacktestOverview | null>(null)
   const [runTrades, setRunTrades] = useState<TradeRow[]>([])
+  const [runTradesTotal, setRunTradesTotal] = useState(0)
+  const [runTradesPage, setRunTradesPage] = useState(1)
+  const [runTradesPageSize, setRunTradesPageSize] = useState(20)
   const [runRounds, setRunRounds] = useState<RoundRow[]>([])
+  const [runRoundsTotal, setRunRoundsTotal] = useState(0)
+  const [runRoundsPage, setRunRoundsPage] = useState(1)
+  const [runRoundsPageSize, setRunRoundsPageSize] = useState(20)
   const [runSnapshots, setRunSnapshots] = useState<SnapshotRow[]>([])
+  const [runSnapshotsTotal, setRunSnapshotsTotal] = useState(0)
+  const [runSnapshotsPage, setRunSnapshotsPage] = useState(1)
+  const [runSnapshotsPageSize, setRunSnapshotsPageSize] = useState(20)
   const [runStrategyConfig, setRunStrategyConfig] = useState<StrategyConfig | null>(null)
   const [detailLoading, setDetailLoading] = useState({
     overview: false,
@@ -76,14 +88,16 @@ export default function BacktestPage() {
     [strategies, strategyId]
   )
 
-  const fetchRuns = async () => {
+  const fetchRuns = async (page = runsPage, pageSize = runsPageSize) => {
     if (!isAuthenticated()) return
     setRunsLoading(true)
     try {
-      const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs?limit=50&offset=0`, {
+      const offset = (page - 1) * pageSize
+      const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs?limit=${pageSize}&offset=${offset}`, {
         headers: getAuthHeader(),
       })
       setRuns(resp.data?.data || [])
+      setRunsTotal(resp.data?.total || 0)
     } catch {
       // ignore
     } finally {
@@ -109,8 +123,14 @@ export default function BacktestPage() {
   const loadRunDetail = (runId: number) => {
     setRunOverview(null)
     setRunTrades([])
+    setRunTradesTotal(0)
+    setRunTradesPage(1)
     setRunRounds([])
+    setRunRoundsTotal(0)
+    setRunRoundsPage(1)
     setRunSnapshots([])
+    setRunSnapshotsTotal(0)
+    setRunSnapshotsPage(1)
     setRunStrategyConfig(null)
     setDetailLoading({
       overview: false,
@@ -132,7 +152,12 @@ export default function BacktestPage() {
     setDetailTab('overview')
   }
 
-  const loadDetailTabData = async (runId: number, tab: DetailTab) => {
+  const loadDetailTabData = async (
+    runId: number,
+    tab: DetailTab,
+    page?: number,
+    pageSize?: number,
+  ) => {
     const headers = getAuthHeader()
     setDetailLoading((prev) => ({ ...prev, [tab]: true }))
 
@@ -142,16 +167,28 @@ export default function BacktestPage() {
         setRunOverview(resp.data?.data || null)
       }
       if (tab === 'trades') {
-        const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/trades`, { headers })
+        const p = page ?? runTradesPage
+        const ps = pageSize ?? runTradesPageSize
+        const offset = (p - 1) * ps
+        const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/trades?limit=${ps}&offset=${offset}`, { headers })
         setRunTrades(resp.data?.data || [])
+        setRunTradesTotal(resp.data?.total || 0)
       }
       if (tab === 'rounds') {
-        const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/rounds`, { headers })
+        const p = page ?? runRoundsPage
+        const ps = pageSize ?? runRoundsPageSize
+        const offset = (p - 1) * ps
+        const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/rounds?limit=${ps}&offset=${offset}`, { headers })
         setRunRounds(resp.data?.data || [])
+        setRunRoundsTotal(resp.data?.total || 0)
       }
       if (tab === 'snapshots') {
-        const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/snapshots`, { headers })
+        const p = page ?? runSnapshotsPage
+        const ps = pageSize ?? runSnapshotsPageSize
+        const offset = (p - 1) * ps
+        const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/snapshots?limit=${ps}&offset=${offset}`, { headers })
         setRunSnapshots(resp.data?.data || [])
+        setRunSnapshotsTotal(resp.data?.total || 0)
       }
       if (tab === 'strategy') {
         const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/strategy-config`, { headers })
@@ -202,9 +239,12 @@ export default function BacktestPage() {
     }
 
     fetchStrategies()
-    fetchRuns()
     fetchJobs()
   }, [])
+
+  useEffect(() => {
+    fetchRuns(runsPage, runsPageSize)
+  }, [runsPage, runsPageSize])
 
   useEffect(() => {
     if (!selectedStrategy) return
@@ -319,6 +359,45 @@ export default function BacktestPage() {
     }
   }
 
+  const changeTradesPage = (page: number) => {
+    if (!selectedRunId) return
+    setRunTradesPage(page)
+    loadDetailTabData(selectedRunId, 'trades', page, runTradesPageSize)
+  }
+
+  const changeTradesPageSize = (size: number) => {
+    if (!selectedRunId) return
+    setRunTradesPageSize(size)
+    setRunTradesPage(1)
+    loadDetailTabData(selectedRunId, 'trades', 1, size)
+  }
+
+  const changeRoundsPage = (page: number) => {
+    if (!selectedRunId) return
+    setRunRoundsPage(page)
+    loadDetailTabData(selectedRunId, 'rounds', page, runRoundsPageSize)
+  }
+
+  const changeRoundsPageSize = (size: number) => {
+    if (!selectedRunId) return
+    setRunRoundsPageSize(size)
+    setRunRoundsPage(1)
+    loadDetailTabData(selectedRunId, 'rounds', 1, size)
+  }
+
+  const changeSnapshotsPage = (page: number) => {
+    if (!selectedRunId) return
+    setRunSnapshotsPage(page)
+    loadDetailTabData(selectedRunId, 'snapshots', page, runSnapshotsPageSize)
+  }
+
+  const changeSnapshotsPageSize = (size: number) => {
+    if (!selectedRunId) return
+    setRunSnapshotsPageSize(size)
+    setRunSnapshotsPage(1)
+    loadDetailTabData(selectedRunId, 'snapshots', 1, size)
+  }
+
   if (!isAuthenticated()) {
     return <div className="max-w-3xl mx-auto py-10 px-4">请先登录后使用回测功能。</div>
   }
@@ -369,8 +448,16 @@ export default function BacktestPage() {
         <BacktestRecordsPanel
           runs={runs}
           runsLoading={runsLoading}
-          onRefresh={fetchRuns}
+          onRefresh={() => fetchRuns(runsPage, runsPageSize)}
           onViewDetail={loadRunDetail}
+          total={runsTotal}
+          page={runsPage}
+          pageSize={runsPageSize}
+          onPageChange={setRunsPage}
+          onPageSizeChange={(size) => {
+            setRunsPageSize(size)
+            setRunsPage(1)
+          }}
         />
       )}
 
@@ -387,6 +474,21 @@ export default function BacktestPage() {
           runStrategyConfig={runStrategyConfig}
           onDownloadCsv={downloadCsv}
           apiBaseUrl={API_BASE_URL}
+          tradesTotal={runTradesTotal}
+          tradesPage={runTradesPage}
+          tradesPageSize={runTradesPageSize}
+          onTradesPageChange={changeTradesPage}
+          onTradesPageSizeChange={changeTradesPageSize}
+          roundsTotal={runRoundsTotal}
+          roundsPage={runRoundsPage}
+          roundsPageSize={runRoundsPageSize}
+          onRoundsPageChange={changeRoundsPage}
+          onRoundsPageSizeChange={changeRoundsPageSize}
+          snapshotsTotal={runSnapshotsTotal}
+          snapshotsPage={runSnapshotsPage}
+          snapshotsPageSize={runSnapshotsPageSize}
+          onSnapshotsPageChange={changeSnapshotsPage}
+          onSnapshotsPageSizeChange={changeSnapshotsPageSize}
         />
       )}
 

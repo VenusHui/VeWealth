@@ -417,26 +417,50 @@ class BacktestService:
         }
 
     def get_run_trades(
-        self, run_id: int, current_user: User, db: Session
-    ) -> list[dict]:
-        run = self.get_run(run_id=run_id, current_user=current_user, db=db)
-        if not run:
-            return []
-        return run.trades or []
+        self,
+        run_id: int,
+        current_user: User,
+        db: Session,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        row = (
+            db.query(BacktestRun)
+            .options(load_only(BacktestRun.id, BacktestRun.user_id, BacktestRun.trades))
+            .filter(BacktestRun.id == run_id, BacktestRun.user_id == current_user.id)
+            .first()
+        )
+        if not row:
+            return [], 0
+
+        trades = row.trades or []
+        total = len(trades)
+        if limit is None:
+            return trades, total
+        return trades[offset : offset + limit], total
 
     def get_run_rounds(
-        self, run_id: int, current_user: User, db: Session
-    ) -> list[dict]:
-        rows = (
+        self,
+        run_id: int,
+        current_user: User,
+        db: Session,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        base_query = (
             db.query(BacktestRound)
             .join(BacktestRun, BacktestRound.run_id == BacktestRun.id)
             .filter(
                 BacktestRound.run_id == run_id, BacktestRun.user_id == current_user.id
             )
-            .order_by(BacktestRound.id.asc())
-            .all()
         )
-        if rows:
+        total = base_query.count()
+
+        if total > 0:
+            query = base_query.order_by(BacktestRound.id.asc())
+            if limit is not None:
+                query = query.offset(offset).limit(limit)
+            rows = query.all()
             return [
                 {
                     "symbol": r.symbol,
@@ -453,23 +477,41 @@ class BacktestService:
                     "max_adverse_excursion": r.max_adverse_excursion,
                 }
                 for r in rows
-            ]
+            ], total
 
-        trades = self.get_run_trades(run_id=run_id, current_user=current_user, db=db)
+        trades, _ = self.get_run_trades(run_id=run_id, current_user=current_user, db=db)
         rounds = self._build_round_trips(trades)
         if rounds:
             self._persist_rounds(db=db, run_id=run_id, rounds=rounds)
-        return rounds
+            total = len(rounds)
+            if limit is None:
+                return rounds, total
+            return rounds[offset : offset + limit], total
+        return [], 0
 
     def get_run_snapshots(
-        self, run_id: int, current_user: User, db: Session
-    ) -> list[dict]:
-        run = self.get_run(run_id=run_id, current_user=current_user, db=db)
-        if not run:
-            return []
-        summary = run.summary or {}
+        self,
+        run_id: int,
+        current_user: User,
+        db: Session,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        row = (
+            db.query(BacktestRun)
+            .options(load_only(BacktestRun.id, BacktestRun.user_id, BacktestRun.summary))
+            .filter(BacktestRun.id == run_id, BacktestRun.user_id == current_user.id)
+            .first()
+        )
+        if not row:
+            return [], 0
+        summary = row.summary or {}
         positions = summary.get("positions_snapshot") or []
-        return positions if isinstance(positions, list) else []
+        snapshots = positions if isinstance(positions, list) else []
+        total = len(snapshots)
+        if limit is None:
+            return snapshots, total
+        return snapshots[offset : offset + limit], total
 
     def get_run_strategy_config(
         self, run_id: int, current_user: User, db: Session

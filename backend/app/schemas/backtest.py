@@ -180,6 +180,7 @@ class BacktestRunRoundsResponse(BaseModel):
 class BacktestRunSnapshotsResponse(BaseModel):
     success: bool = True
     data: list[dict[str, Any]]
+    total: int
 
 
 class BacktestRunStrategyConfigResponse(BaseModel):
