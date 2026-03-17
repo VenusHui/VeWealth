@@ -6,6 +6,7 @@ import { getAuthHeader, isAuthenticated } from '../lib/auth'
 import { MainTabSwitcher } from './components/MainTabSwitcher'
 import { BacktestRecordsPanel } from './components/BacktestRecordsPanel'
 import { BacktestDetailPanel } from './components/BacktestDetailPanel'
+import { BacktestCreatePanel } from './components/BacktestCreatePanel'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
 
@@ -36,10 +37,6 @@ type DetailTab = 'overview' | 'trades' | 'rounds' | 'snapshots' | 'strategy'
 type MainTab = 'create' | 'records' | 'detail'
 
 const ACTIVE_JOB_STATUSES = ['pending', 'running'] as const
-
-const LoadingHint = ({ text }: { text: string }) => (
-  <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">{text}</div>
-)
 
 export default function BacktestPage() {
   const [mainTab, setMainTab] = useState<MainTab>('create')
@@ -349,59 +346,36 @@ export default function BacktestPage() {
       <MainTabSwitcher activeTab={mainTab} onChange={setMainTab} />
 
       {mainTab === 'create' && (
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-          <div className="xl:col-span-2 bg-white rounded-2xl shadow p-5 space-y-4">
-            <div className="font-semibold text-gray-800">新建回测任务</div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <label className="text-sm">任务名称<input className="mt-1 w-full border rounded-lg px-3 py-2" value={name} onChange={(e) => setName(e.target.value)} /></label>
-              <label className="text-sm">策略<select className="mt-1 w-full border rounded-lg px-3 py-2" value={strategyId} onChange={(e) => setStrategyId(e.target.value)}>{strategies.map((s) => <option key={s.strategy_id} value={s.strategy_id}>{s.name}</option>)}</select></label>
-              <label className="text-sm">回测模式<select className="mt-1 w-full border rounded-lg px-3 py-2" value={mode} onChange={(e) => setMode(e.target.value as 'manual_symbols' | 'strategy_select')}><option value="manual_symbols">手工股票池</option><option value="strategy_select">策略自动选股</option></select></label>
-              {mode === 'manual_symbols' ? (
-                <label className="text-sm">股票代码（逗号分隔）<input className="mt-1 w-full border rounded-lg px-3 py-2" value={symbols} onChange={(e) => setSymbols(e.target.value)} /></label>
-              ) : (
-                <label className="text-sm">选股范围<select className="mt-1 w-full border rounded-lg px-3 py-2" value={universeType} onChange={(e) => setUniverseType(e.target.value as 'all' | 'custom')}><option value="all">全市场</option><option value="custom">自定义池</option></select></label>
-              )}
-              {mode === 'strategy_select' && universeType === 'custom' && <label className="text-sm">自定义池<input className="mt-1 w-full border rounded-lg px-3 py-2" value={poolSymbols} onChange={(e) => setPoolSymbols(e.target.value)} /></label>}
-              <label className="text-sm">初始资金<input className="mt-1 w-full border rounded-lg px-3 py-2" value={initialCash} onChange={(e) => setInitialCash(e.target.value)} /></label>
-              <label className="text-sm">开始日期<input type="date" className="mt-1 w-full border rounded-lg px-3 py-2" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></label>
-              <label className="text-sm">结束日期<input type="date" className="mt-1 w-full border rounded-lg px-3 py-2" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></label>
-            </div>
-
-            {selectedStrategy && (
-              <div className="rounded-xl border bg-gray-50 p-4">
-                <div className="font-medium mb-3">策略参数</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {selectedStrategy.param_schema.map((p) => (
-                    <label key={p.key} className="text-sm">{p.label}<input className="mt-1 w-full border rounded-lg px-3 py-2" value={strategyParams[p.key] ?? ''} onChange={(e) => setStrategyParams((prev) => ({ ...prev, [p.key]: e.target.value }))} /></label>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <button onClick={handleRun} disabled={loading} className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:bg-gray-400">{loading ? '提交中...' : '提交回测任务'}</button>
-            {error && <div className="text-red-600 text-sm">{error}</div>}
-          </div>
-
-          <div className="bg-white rounded-2xl shadow p-5 space-y-3">
-            <div className="font-semibold text-gray-800">任务状态</div>
-            {job && <div className="text-sm rounded-lg bg-indigo-50 p-3">当前任务：{job.job_id}<br/>状态：{job.status} · 进度：{Number(job.progress_pct || 0).toFixed(1)}%</div>}
-            <div className="text-sm text-gray-500">最近任务</div>
-            <div className="max-h-96 overflow-auto space-y-2">
-              {jobsLoading ? (
-                <LoadingHint text="任务列表加载中..." />
-              ) : jobs.length > 0 ? (
-                jobs.map((j) => (
-                  <div key={j.job_id} className="border rounded-lg px-3 py-2 text-sm">
-                    <div className="font-medium text-gray-700">{j.job_id}</div>
-                    <div className="text-gray-500">{j.status} · {Number(j.progress_pct || 0).toFixed(1)}%</div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-sm text-gray-400">暂无任务</div>
-              )}
-            </div>
-          </div>
-        </div>
+        <BacktestCreatePanel
+          name={name}
+          strategyId={strategyId}
+          strategies={strategies}
+          mode={mode}
+          universeType={universeType}
+          symbols={symbols}
+          poolSymbols={poolSymbols}
+          initialCash={initialCash}
+          startDate={startDate}
+          endDate={endDate}
+          selectedStrategy={selectedStrategy}
+          strategyParams={strategyParams}
+          loading={loading}
+          error={error}
+          job={job}
+          jobs={jobs}
+          jobsLoading={jobsLoading}
+          onNameChange={setName}
+          onStrategyChange={setStrategyId}
+          onModeChange={setMode}
+          onUniverseTypeChange={setUniverseType}
+          onSymbolsChange={setSymbols}
+          onPoolSymbolsChange={setPoolSymbols}
+          onInitialCashChange={setInitialCash}
+          onStartDateChange={setStartDate}
+          onEndDateChange={setEndDate}
+          onStrategyParamChange={(k, v) => setStrategyParams((prev) => ({ ...prev, [k]: v }))}
+          onSubmit={handleRun}
+        />
       )}
 
       {mainTab === 'records' && (
