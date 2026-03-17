@@ -18,7 +18,11 @@ export type RunItem = {
   start_date: string
   end_date: string
   created_at: string
-  summary?: Record<string, unknown>
+  summary?: {
+    total_return?: number | string
+    max_drawdown?: number | string
+    [key: string]: unknown
+  }
 }
 
 export type DetailTab = 'overview' | 'trades' | 'rounds' | 'snapshots' | 'strategy'

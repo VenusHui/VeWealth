@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
 import { getAuthHeader, isAuthenticated } from '../lib/auth'
 import { MainTabSwitcher } from './components/MainTabSwitcher'
@@ -88,7 +88,7 @@ export default function BacktestPage() {
     [strategies, strategyId]
   )
 
-  const fetchRuns = async (page = runsPage, pageSize = runsPageSize) => {
+  const fetchRuns = useCallback(async (page = runsPage, pageSize = runsPageSize) => {
     if (!isAuthenticated()) return
     setRunsLoading(true)
     try {
@@ -103,9 +103,9 @@ export default function BacktestPage() {
     } finally {
       setRunsLoading(false)
     }
-  }
+  }, [runsPage, runsPageSize])
 
-  const fetchJobs = async (showLoading = true) => {
+  const fetchJobs = useCallback(async (showLoading = true) => {
     if (!isAuthenticated()) return
     if (showLoading) setJobsLoading(true)
     try {
@@ -118,7 +118,7 @@ export default function BacktestPage() {
     } finally {
       if (showLoading) setJobsLoading(false)
     }
-  }
+  }, [])
 
   const loadRunDetail = (runId: number) => {
     setRunOverview(null)
@@ -152,7 +152,7 @@ export default function BacktestPage() {
     setDetailTab('overview')
   }
 
-  const loadDetailTabData = async (
+  const loadDetailTabData = useCallback(async (
     runId: number,
     tab: DetailTab,
     page?: number,
@@ -198,7 +198,7 @@ export default function BacktestPage() {
       setDetailLoading((prev) => ({ ...prev, [tab]: false }))
       setDetailLoaded((prev) => ({ ...prev, [tab]: true }))
     }
-  }
+  }, [runRoundsPage, runRoundsPageSize, runSnapshotsPage, runSnapshotsPageSize, runTradesPage, runTradesPageSize])
 
   const downloadCsv = async (url: string, filename: string) => {
     const resp = await axios.get(url, {
@@ -240,11 +240,11 @@ export default function BacktestPage() {
 
     fetchStrategies()
     fetchJobs()
-  }, [])
+  }, [fetchJobs])
 
   useEffect(() => {
     fetchRuns(runsPage, runsPageSize)
-  }, [runsPage, runsPageSize])
+  }, [fetchRuns, runsPage, runsPageSize])
 
   useEffect(() => {
     if (!selectedStrategy) return
@@ -263,7 +263,7 @@ export default function BacktestPage() {
 
     const timer = setInterval(() => fetchJobs(false), 10000)
     return () => clearInterval(timer)
-  }, [mainTab, jobs, job])
+  }, [fetchJobs, mainTab, jobs, job])
 
   useEffect(() => {
     if (!job?.job_id) return
@@ -288,7 +288,7 @@ export default function BacktestPage() {
       }
     }, 10000)
     return () => clearInterval(timer)
-  }, [job?.job_id])
+  }, [fetchJobs, fetchRuns, job?.job_id])
 
   useEffect(() => {
     if (mainTab !== 'detail' || !selectedRunId) return
@@ -312,7 +312,7 @@ export default function BacktestPage() {
     if (detailTab === 'strategy' && !detailLoaded.strategy && !detailLoading.strategy) {
       loadDetailTabData(selectedRunId, 'strategy')
     }
-  }, [mainTab, selectedRunId, detailTab, detailLoaded, detailLoading])
+  }, [mainTab, selectedRunId, detailTab, detailLoaded, detailLoading, loadDetailTabData])
 
   const handleRun = async () => {
     if (!isAuthenticated()) {
