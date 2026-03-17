@@ -93,6 +93,13 @@ export default function BacktestPage() {
     snapshots: false,
     strategy: false,
   })
+  const [detailLoaded, setDetailLoaded] = useState({
+    overview: false,
+    trades: false,
+    rounds: false,
+    snapshots: false,
+    strategy: false,
+  })
 
   const selectedStrategy = useMemo(
     () => strategies.find((s) => s.strategy_id === strategyId),
@@ -118,7 +125,7 @@ export default function BacktestPage() {
     if (!isAuthenticated()) return
     if (showLoading) setJobsLoading(true)
     try {
-      const resp = await axios.get(`${API_BASE_URL}/api/backtest/jobs`, {
+      const resp = await axios.get(`${API_BASE_URL}/api/backtest/jobs?limit=50&offset=0`, {
         headers: getAuthHeader(),
       })
       setJobs(resp.data?.data || [])
@@ -130,48 +137,60 @@ export default function BacktestPage() {
   }
 
   const loadRunDetail = async (runId: number) => {
-    const headers = getAuthHeader()
-
     setRunOverview(null)
     setRunTrades([])
     setRunRounds([])
     setRunSnapshots([])
     setRunStrategyConfig(null)
     setDetailLoading({
-      overview: true,
-      trades: true,
-      rounds: true,
-      snapshots: true,
-      strategy: true,
+      overview: false,
+      trades: false,
+      rounds: false,
+      snapshots: false,
+      strategy: false,
+    })
+    setDetailLoaded({
+      overview: false,
+      trades: false,
+      rounds: false,
+      snapshots: false,
+      strategy: false,
     })
 
+    setSelectedRunId(runId)
     setMainTab('detail')
     setDetailTab('overview')
+  }
 
-    axios
-      .get(`${API_BASE_URL}/api/backtest/runs/${runId}/overview`, { headers })
-      .then((resp) => setRunOverview(resp.data?.data || null))
-      .finally(() => setDetailLoading((prev) => ({ ...prev, overview: false })))
+  const loadDetailTabData = async (runId: number, tab: DetailTab) => {
+    const headers = getAuthHeader()
+    setDetailLoading((prev) => ({ ...prev, [tab]: true }))
 
-    axios
-      .get(`${API_BASE_URL}/api/backtest/runs/${runId}/trades`, { headers })
-      .then((resp) => setRunTrades(resp.data?.data || []))
-      .finally(() => setDetailLoading((prev) => ({ ...prev, trades: false })))
-
-    axios
-      .get(`${API_BASE_URL}/api/backtest/runs/${runId}/rounds`, { headers })
-      .then((resp) => setRunRounds(resp.data?.data || []))
-      .finally(() => setDetailLoading((prev) => ({ ...prev, rounds: false })))
-
-    axios
-      .get(`${API_BASE_URL}/api/backtest/runs/${runId}/snapshots`, { headers })
-      .then((resp) => setRunSnapshots(resp.data?.data || []))
-      .finally(() => setDetailLoading((prev) => ({ ...prev, snapshots: false })))
-
-    axios
-      .get(`${API_BASE_URL}/api/backtest/runs/${runId}/strategy-config`, { headers })
-      .then((resp) => setRunStrategyConfig(resp.data?.data || null))
-      .finally(() => setDetailLoading((prev) => ({ ...prev, strategy: false })))
+    try {
+      if (tab === 'overview') {
+        const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/overview`, { headers })
+        setRunOverview(resp.data?.data || null)
+      }
+      if (tab === 'trades') {
+        const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/trades`, { headers })
+        setRunTrades(resp.data?.data || [])
+      }
+      if (tab === 'rounds') {
+        const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/rounds`, { headers })
+        setRunRounds(resp.data?.data || [])
+      }
+      if (tab === 'snapshots') {
+        const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/snapshots`, { headers })
+        setRunSnapshots(resp.data?.data || [])
+      }
+      if (tab === 'strategy') {
+        const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/strategy-config`, { headers })
+        setRunStrategyConfig(resp.data?.data || null)
+      }
+    } finally {
+      setDetailLoading((prev) => ({ ...prev, [tab]: false }))
+      setDetailLoaded((prev) => ({ ...prev, [tab]: true }))
+    }
   }
 
   const downloadCsv = async (url: string, filename: string) => {
@@ -227,9 +246,14 @@ export default function BacktestPage() {
   }, [selectedStrategy])
 
   useEffect(() => {
-    const timer = setInterval(() => fetchJobs(false), 3000)
+    const hasActive = (job && ['pending', 'running'].includes(job.status))
+      || jobs.some((j) => ['pending', 'running'].includes(j.status))
+
+    if (mainTab !== 'create' || !hasActive) return
+
+    const timer = setInterval(() => fetchJobs(false), 10000)
     return () => clearInterval(timer)
-  }, [])
+  }, [mainTab, jobs, job])
 
   useEffect(() => {
     if (!job?.job_id) return
@@ -252,9 +276,33 @@ export default function BacktestPage() {
       } catch {
         clearInterval(timer)
       }
-    }, 3000)
+    }, 10000)
     return () => clearInterval(timer)
   }, [job?.job_id])
+
+  useEffect(() => {
+    if (mainTab !== 'detail' || !selectedRunId) return
+
+    if (detailTab === 'overview' && !detailLoaded.overview && !detailLoading.overview) {
+      loadDetailTabData(selectedRunId, 'overview')
+      return
+    }
+    if (detailTab === 'trades' && !detailLoaded.trades && !detailLoading.trades) {
+      loadDetailTabData(selectedRunId, 'trades')
+      return
+    }
+    if (detailTab === 'rounds' && !detailLoaded.rounds && !detailLoading.rounds) {
+      loadDetailTabData(selectedRunId, 'rounds')
+      return
+    }
+    if (detailTab === 'snapshots' && !detailLoaded.snapshots && !detailLoading.snapshots) {
+      loadDetailTabData(selectedRunId, 'snapshots')
+      return
+    }
+    if (detailTab === 'strategy' && !detailLoaded.strategy && !detailLoading.strategy) {
+      loadDetailTabData(selectedRunId, 'strategy')
+    }
+  }, [mainTab, selectedRunId, detailTab, detailLoaded, detailLoading])
 
   const handleRun = async () => {
     if (!isAuthenticated()) {
@@ -407,7 +455,7 @@ export default function BacktestPage() {
                       <td>{r.summary?.max_drawdown ?? '-'}</td>
                       <td>{r.status}</td>
                       <td>{new Date(r.created_at).toLocaleString()}</td>
-                      <td><button className="text-indigo-600 hover:underline" onClick={async () => { setSelectedRunId(r.id); setMainTab('detail'); await loadRunDetail(r.id) }}>查看详情</button></td>
+                      <td><button className="text-indigo-600 hover:underline" onClick={async () => { await loadRunDetail(r.id) }}>查看详情</button></td>
                     </tr>
                   ))
                 ) : (

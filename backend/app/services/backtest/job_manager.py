@@ -8,6 +8,8 @@ from uuid import uuid4
 from copy import deepcopy
 from typing import Any
 
+from sqlalchemy.orm import load_only
+
 from app.core.database import SessionLocal
 from app.core.logger import get_module_logger
 from app.models.backtest_job import BacktestJob
@@ -51,16 +53,32 @@ class BacktestJobManager:
         self._spawn_runner(job_id)
         return data
 
-    def list_jobs(self, user_id: int) -> list[dict]:
+    def list_jobs(self, user_id: int, limit: int = 50, offset: int = 0) -> list[dict]:
         db = SessionLocal()
         try:
             rows = (
                 db.query(BacktestJob)
+                .options(
+                    load_only(
+                        BacktestJob.job_id,
+                        BacktestJob.status,
+                        BacktestJob.progress_pct,
+                        BacktestJob.total_symbols,
+                        BacktestJob.processed_symbols,
+                        BacktestJob.eta_seconds,
+                        BacktestJob.stage,
+                        BacktestJob.error,
+                        BacktestJob.created_at,
+                        BacktestJob.updated_at,
+                    )
+                )
                 .filter(BacktestJob.user_id == user_id)
                 .order_by(BacktestJob.created_at.desc())
+                .offset(offset)
+                .limit(limit)
                 .all()
             )
-            return [self._to_dict(r) for r in rows]
+            return [self._to_list_item(r) for r in rows]
         finally:
             db.close()
 
@@ -247,6 +265,23 @@ class BacktestJobManager:
                     db.commit()
         finally:
             db.close()
+
+    @staticmethod
+    def _to_list_item(row: BacktestJob | None) -> dict | None:
+        if not row:
+            return None
+        return {
+            "job_id": row.job_id,
+            "status": row.status,
+            "progress_pct": row.progress_pct,
+            "total_symbols": row.total_symbols,
+            "processed_symbols": row.processed_symbols,
+            "eta_seconds": row.eta_seconds,
+            "stage": row.stage,
+            "error": row.error,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
 
     @staticmethod
     def _to_dict(row: BacktestJob | None) -> dict | None:

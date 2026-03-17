@@ -4,7 +4,7 @@ from collections import defaultdict, deque
 from datetime import datetime
 from typing import Any, Callable
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from app.models.backtest import BacktestRun, BacktestRound
 from app.models.user import User
@@ -361,7 +361,24 @@ class BacktestService:
     def list_runs(
         self, current_user: User, db: Session, limit: int = 20, offset: int = 0
     ):
-        query = db.query(BacktestRun).filter(BacktestRun.user_id == current_user.id)
+        query = (
+            db.query(BacktestRun)
+            .options(
+                load_only(
+                    BacktestRun.id,
+                    BacktestRun.name,
+                    BacktestRun.status,
+                    BacktestRun.strategy_id,
+                    BacktestRun.symbols,
+                    BacktestRun.start_date,
+                    BacktestRun.end_date,
+                    BacktestRun.initial_cash,
+                    BacktestRun.summary,
+                    BacktestRun.created_at,
+                )
+            )
+            .filter(BacktestRun.user_id == current_user.id)
+        )
         total = query.count()
         runs = (
             query.order_by(BacktestRun.created_at.desc())

@@ -287,8 +287,12 @@ async def create_backtest_job(
 
 
 @router.get("/jobs", response_model=BacktestJobListResponse)
-async def list_backtest_jobs(current_user: User = Depends(get_current_active_user)):
-    jobs = backtest_job_manager.list_jobs(current_user.id)
+async def list_backtest_jobs(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_active_user),
+):
+    jobs = backtest_job_manager.list_jobs(current_user.id, limit=limit, offset=offset)
     return BacktestJobListResponse(data=jobs)
 
 
