@@ -1,4 +1,4 @@
-type MainTab = 'create' | 'records' | 'detail'
+import type { MainTab } from './types'
 
 const mainTabs: { key: MainTab; label: string }[] = [
   { key: 'create', label: '新建回测' },

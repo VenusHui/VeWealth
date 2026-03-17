@@ -7,8 +7,8 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-
-type DetailTab = 'overview' | 'trades' | 'rounds' | 'snapshots' | 'strategy'
+import { LoadingHint } from './LoadingHint'
+import type { DetailTab } from './types'
 
 const detailTabs: { key: DetailTab; label: string }[] = [
   { key: 'overview', label: '概览' },
@@ -17,10 +17,6 @@ const detailTabs: { key: DetailTab; label: string }[] = [
   { key: 'snapshots', label: '持仓快照' },
   { key: 'strategy', label: '策略配置' },
 ]
-
-const LoadingHint = ({ text }: { text: string }) => (
-  <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">{text}</div>
-)
 
 export function BacktestDetailPanel({
   selectedRunId,

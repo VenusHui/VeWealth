@@ -7,34 +7,9 @@ import { MainTabSwitcher } from './components/MainTabSwitcher'
 import { BacktestRecordsPanel } from './components/BacktestRecordsPanel'
 import { BacktestDetailPanel } from './components/BacktestDetailPanel'
 import { BacktestCreatePanel } from './components/BacktestCreatePanel'
+import type { DetailTab, JobItem, MainTab, RunItem, Strategy } from './components/types'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
-
-type Strategy = {
-  strategy_id: string
-  name: string
-  description: string
-  param_schema: Array<{
-    key: string
-    label: string
-    type: string
-    default?: number | string
-  }>
-}
-
-type RunItem = {
-  id: number
-  name: string
-  status: string
-  strategy_id: string
-  start_date: string
-  end_date: string
-  created_at: string
-  summary?: Record<string, any>
-}
-
-type DetailTab = 'overview' | 'trades' | 'rounds' | 'snapshots' | 'strategy'
-type MainTab = 'create' | 'records' | 'detail'
 
 const ACTIVE_JOB_STATUSES = ['pending', 'running'] as const
 
@@ -56,8 +31,8 @@ export default function BacktestPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const [job, setJob] = useState<any>(null)
-  const [jobs, setJobs] = useState<any[]>([])
+  const [job, setJob] = useState<JobItem | null>(null)
+  const [jobs, setJobs] = useState<JobItem[]>([])
   const [jobsLoading, setJobsLoading] = useState(false)
   const [result, setResult] = useState<any>(null)
 

@@ -1,18 +1,5 @@
-type Strategy = {
-  strategy_id: string
-  name: string
-  description: string
-  param_schema: Array<{
-    key: string
-    label: string
-    type: string
-    default?: number | string
-  }>
-}
-
-const LoadingHint = ({ text }: { text: string }) => (
-  <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">{text}</div>
-)
+import { LoadingHint } from './LoadingHint'
+import type { JobItem, Strategy } from './types'
 
 export function BacktestCreatePanel({
   name,
@@ -58,8 +45,8 @@ export function BacktestCreatePanel({
   strategyParams: Record<string, string>
   loading: boolean
   error: string
-  job: any
-  jobs: any[]
+  job: JobItem | null
+  jobs: JobItem[]
   jobsLoading: boolean
   onNameChange: (v: string) => void
   onStrategyChange: (v: string) => void

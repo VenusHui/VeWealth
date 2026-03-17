@@ -1,13 +1,4 @@
-type RunItem = {
-  id: number
-  name: string
-  status: string
-  strategy_id: string
-  start_date: string
-  end_date: string
-  created_at: string
-  summary?: Record<string, any>
-}
+import type { RunItem } from './types'
 
 export function BacktestRecordsPanel({
   runs,
