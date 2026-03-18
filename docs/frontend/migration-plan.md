@@ -18,7 +18,7 @@ Move from mixed custom UI to a unified AntD v6 system with minimal regressions.
 - [x] Migrate Analysis page data controls and list/table sections.
 
 ### Phase 4
-- [ ] Migrate Login page form/feedback components.
+- [x] Migrate Login page form/feedback components.
 
 ### Phase 5
 - [ ] Remove obsolete custom pagination/table helpers.
