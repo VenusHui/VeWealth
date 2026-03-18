@@ -15,7 +15,7 @@ Move from mixed custom UI to a unified AntD v6 system with minimal regressions.
 - [x] Migrate Watchlist page to AntD Form/Table/Card/Alert.
 
 ### Phase 3
-- [ ] Migrate Analysis page data controls and list/table sections.
+- [x] Migrate Analysis page data controls and list/table sections.
 
 ### Phase 4
 - [ ] Migrate Login page form/feedback components.
