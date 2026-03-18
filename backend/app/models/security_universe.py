@@ -18,7 +18,9 @@ class SecurityUniverse(Base):
     is_active = Column(Boolean, nullable=False, default=True, index=True)
     list_date = Column(Date, nullable=True)
     delist_date = Column(Date, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),

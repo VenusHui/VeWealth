@@ -40,6 +40,13 @@ def init_db():
     初始化数据库
     创建所有表
     """
-    from app.models import user, watchlist, stock_data, backtest, backtest_job, security_universe  # noqa
+    from app.models import (
+        user,
+        watchlist,
+        stock_data,
+        backtest,
+        backtest_job,
+        security_universe,
+    )  # noqa
 
     Base.metadata.create_all(bind=engine)

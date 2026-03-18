@@ -23,7 +23,9 @@ class BacktestService:
         return list_strategies()
 
     def get_universe_stats(self, db: Session) -> dict[str, Any]:
-        base_query = db.query(SecurityUniverse).filter(SecurityUniverse.is_active.is_(True))
+        base_query = db.query(SecurityUniverse).filter(
+            SecurityUniverse.is_active.is_(True)
+        )
 
         total = base_query.count()
         st_total = base_query.filter(SecurityUniverse.is_st.is_(True)).count()
@@ -248,7 +250,12 @@ class BacktestService:
 
         raw_exclude_st = params.get("exclude_st", True)
         if isinstance(raw_exclude_st, str):
-            exclude_st = raw_exclude_st.strip().lower() not in {"false", "0", "no", "off"}
+            exclude_st = raw_exclude_st.strip().lower() not in {
+                "false",
+                "0",
+                "no",
+                "off",
+            }
         else:
             exclude_st = bool(raw_exclude_st)
 

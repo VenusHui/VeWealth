@@ -50,7 +50,9 @@ def main() -> None:
     if df is None or df.empty or "code" not in df.columns:
         raise RuntimeError("未获取到有效的A股代码列表")
 
-    name_col = "name" if "name" in df.columns else ("名称" if "名称" in df.columns else None)
+    name_col = (
+        "name" if "name" in df.columns else ("名称" if "名称" in df.columns else None)
+    )
     records = []
     for _, row in df.iterrows():
         code = str(row["code"]).strip()
@@ -76,10 +78,7 @@ def main() -> None:
     # 2) 同步 security_universe 维表
     db = SessionLocal()
     try:
-        existing = {
-            item.stock_code: item
-            for item in db.query(SecurityUniverse).all()
-        }
+        existing = {item.stock_code: item for item in db.query(SecurityUniverse).all()}
 
         seen_codes = set()
         for code, name in records:
