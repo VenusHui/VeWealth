@@ -609,13 +609,36 @@ class BacktestService:
         run = self.get_run(run_id=run_id, current_user=current_user, db=db)
         if not run:
             return None
+
+        strategy_params = run.strategy_params or {}
+        boards = strategy_params.get("boards", ["main"])
+        if isinstance(boards, str):
+            boards = [x.strip() for x in boards.split(",") if x.strip()]
+        boards = [str(x).lower() for x in boards if str(x).strip()]
+        exclude_st = bool(strategy_params.get("exclude_st", True))
+
+        symbol_list = run.symbols or []
+        symbol_count = len(symbol_list)
+
+        sql_preview = (
+            "SELECT stock_code FROM security_universe "
+            "WHERE is_active = true "
+            f"AND board IN ({', '.join([repr(b) for b in boards or ['main']])}) "
+            f"AND is_st = {'false' if exclude_st else 'ANY'} "
+            "ORDER BY stock_code;"
+        )
+
         return {
             "run_id": run.id,
             "strategy_id": run.strategy_id,
-            "strategy_params": run.strategy_params or {},
+            "strategy_params": strategy_params,
             "cost_config": run.cost_config or {},
             "benchmark": run.benchmark,
-            "symbols": run.symbols or [],
+            "symbols": {
+                "count": symbol_count,
+                "preview": symbol_list[:50],
+                "truncated": symbol_count > 50,
+            },
             "date_range": {
                 "start_date": run.start_date,
                 "end_date": run.end_date,
@@ -625,6 +648,21 @@ class BacktestService:
                 "status": run.status,
                 "created_at": run.created_at,
             },
+            "filter_summary": {
+                "boards": boards or ["main"],
+                "exclude_st": exclude_st,
+                "active_only": True,
+                "candidate_count": symbol_count,
+            },
+            "filter_dsl": {
+                "table": "security_universe",
+                "where": {
+                    "is_active": True,
+                    "boards": boards or ["main"],
+                    "exclude_st": exclude_st,
+                },
+            },
+            "sql_preview": sql_preview,
         }
 
     def _parse_trade_datetime(self, value: Any) -> datetime | None:

@@ -1,4 +1,17 @@
 import {
+  Alert,
+  Button,
+  Card,
+  Collapse,
+  Descriptions,
+  Empty,
+  Pagination,
+  Space,
+  Tag,
+  Typography,
+} from 'antd'
+import type { ColumnsType } from 'antd/es/table'
+import {
   LineChart,
   Line,
   XAxis,
@@ -8,11 +21,12 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { LoadingHint } from './LoadingHint'
-import { PaginationControls } from './PaginationControls'
+import { BacktestTable } from './BacktestTable'
 import type {
   BacktestOverview,
   DetailTab,
   RoundRow,
+  SnapshotHolding,
   SnapshotRow,
   StrategyConfig,
   TradeRow,
@@ -24,6 +38,47 @@ const detailTabs: { key: DetailTab; label: string }[] = [
   { key: 'rounds', label: '回合交易' },
   { key: 'snapshots', label: '持仓快照' },
   { key: 'strategy', label: '策略配置' },
+]
+
+const tradeColumns: ColumnsType<TradeRow> = [
+  { title: '时间', dataIndex: 'datetime', key: 'datetime', width: 180, ellipsis: true },
+  { title: '标的', dataIndex: 'symbol', key: 'symbol', width: 90 },
+  { title: '方向', dataIndex: 'side', key: 'side', width: 80 },
+  { title: '价格', dataIndex: 'price', key: 'price', width: 100, align: 'right' },
+  { title: '数量', dataIndex: 'qty', key: 'qty', width: 90, align: 'right' },
+  { title: '金额', dataIndex: 'amount', key: 'amount', width: 120, align: 'right' },
+  { title: '手续费', dataIndex: 'fee', key: 'fee', width: 100, align: 'right' },
+  { title: '原因', dataIndex: 'reason', key: 'reason', ellipsis: true, render: (v) => v || '-' },
+]
+
+const roundColumns: ColumnsType<RoundRow> = [
+  { title: '标的', dataIndex: 'symbol', key: 'symbol', width: 90 },
+  {
+    title: '开仓',
+    key: 'open',
+    width: 220,
+    ellipsis: true,
+    render: (_, r) => `${r.open_time || '-'} @ ${r.open_price ?? '-'}`,
+  },
+  {
+    title: '平仓',
+    key: 'close',
+    width: 220,
+    ellipsis: true,
+    render: (_, r) => `${r.close_time || '-'} @ ${r.close_price ?? '-'}`,
+  },
+  { title: '持有天数', dataIndex: 'holding_days', key: 'holding_days', width: 100, align: 'right' },
+  { title: '收益率', dataIndex: 'pnl_ratio', key: 'pnl_ratio', width: 100, align: 'right' },
+  { title: '盈亏', dataIndex: 'pnl_amount', key: 'pnl_amount', width: 120, align: 'right' },
+  { title: '退出原因', dataIndex: 'exit_reason', key: 'exit_reason', ellipsis: true, render: (v) => v || '-' },
+]
+
+const holdingColumns: ColumnsType<SnapshotHolding> = [
+  { title: '标的', dataIndex: 'symbol', key: 'symbol', width: 90 },
+  { title: '数量', dataIndex: 'qty', key: 'qty', align: 'right', width: 90 },
+  { title: '现价', dataIndex: 'last_price', key: 'last_price', align: 'right', width: 90 },
+  { title: '市值', dataIndex: 'market_value', key: 'market_value', align: 'right', width: 120 },
+  { title: '权重', dataIndex: 'weight', key: 'weight', align: 'right', width: 90 },
 ]
 
 export function BacktestDetailPanel({
@@ -81,115 +136,193 @@ export function BacktestDetailPanel({
   onSnapshotsPageChange: (page: number) => void
   onSnapshotsPageSizeChange: (size: number) => void
 }) {
+  const filterSummary = (runStrategyConfig?.filter_summary as Record<string, unknown>) || {}
+  const symbols = (runStrategyConfig?.symbols as Record<string, unknown>) || {}
+
   return (
-    <div className="bg-white rounded-2xl shadow p-5 space-y-4">
-      <div className="font-semibold text-gray-800">回测详情 {selectedRunId ? `(Run #${selectedRunId})` : ''}</div>
+    <Card title={`回测详情 ${selectedRunId ? `(Run #${selectedRunId})` : ''}`}>
       {!selectedRunId ? (
-        <div className="text-sm text-gray-500">请先在「回测记录」中选择一条记录</div>
+        <Alert type="info" message="请先在「回测记录」中选择一条记录" />
       ) : (
-        <>
-          <div className="flex gap-2 flex-wrap">
+        <Space direction="vertical" size={16} className="w-full">
+          <Space wrap>
             {detailTabs.map((tab) => (
-              <button key={tab.key} onClick={() => onChangeDetailTab(tab.key)} className={`px-3 py-1 rounded-lg text-sm ${detailTab === tab.key ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+              <Button key={tab.key} type={detailTab === tab.key ? 'primary' : 'default'} onClick={() => onChangeDetailTab(tab.key)}>
                 {tab.label}
-              </button>
+              </Button>
             ))}
-          </div>
+          </Space>
 
           {detailTab === 'overview' && (
-            <div className="space-y-4">
-              {detailLoading.overview ? (
-                <LoadingHint text="概览数据加载中..." />
-              ) : (
-                <>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    {Object.entries(runOverview?.summary || {})
-                      .filter(([k]) => !['positions_snapshot', 'final_positions'].includes(k))
-                      .slice(0, 8)
-                      .map(([k, v]) => (
-                        <div key={k} className="border rounded-lg p-3 bg-gray-50"><div className="text-xs text-gray-500">{k}</div><div className="font-semibold">{String(v)}</div></div>
-                      ))}
-                  </div>
-                  <div className="h-[360px] border rounded-lg p-2">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={runOverview?.equity_curve || []} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="datetime" tick={{ fontSize: 11 }} minTickGap={40} />
-                        <YAxis tick={{ fontSize: 11 }} domain={['dataMin', 'dataMax']} />
-                        <Tooltip />
-                        <Line type="monotone" dataKey="equity" stroke="#4f46e5" strokeWidth={2} dot={false} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </>
-              )}
-            </div>
+            detailLoading.overview ? (
+              <LoadingHint text="概览数据加载中..." />
+            ) : (
+              <Space direction="vertical" size={16} className="w-full">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {Object.entries(runOverview?.summary || {})
+                    .filter(([k]) => !['positions_snapshot', 'final_positions'].includes(k))
+                    .slice(0, 8)
+                    .map(([k, v]) => (
+                      <Card key={k} size="small">
+                        <div className="text-xs text-gray-500">{k}</div>
+                        <div className="font-semibold">{String(v)}</div>
+                      </Card>
+                    ))}
+                </div>
+                <div className="h-[360px] border rounded-lg p-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={runOverview?.equity_curve || []} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="datetime" tick={{ fontSize: 11 }} minTickGap={40} />
+                      <YAxis tick={{ fontSize: 11 }} domain={['dataMin', 'dataMax']} />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="equity" stroke="#4f46e5" strokeWidth={2} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </Space>
+            )
           )}
 
           {detailTab === 'trades' && (
-            <div className="space-y-2">
-              {detailLoading.trades ? (
-                <LoadingHint text="成交明细加载中..." />
-              ) : (
-                <>
-                  <div className="flex items-center justify-between gap-2">
-                    <button className="inline-block px-3 py-1 text-xs rounded bg-indigo-50 text-indigo-700" onClick={() => onDownloadCsv(`${apiBaseUrl}/api/backtest/runs/${selectedRunId}/trades/export`, `backtest_run_${selectedRunId}_trades.csv`)}>导出成交 CSV</button>
-                    <PaginationControls page={tradesPage} pageSize={tradesPageSize} total={tradesTotal} onPageChange={onTradesPageChange} onPageSizeChange={onTradesPageSizeChange} />
-                  </div>
-                  <div className="overflow-auto max-h-[480px]">
-                    <table className="w-full text-sm"><thead><tr className="border-b"><th className="py-2">时间</th><th>标的</th><th>方向</th><th>价格</th><th>数量</th><th>金额</th><th>手续费</th><th>原因</th></tr></thead><tbody>{runTrades.map((t, i) => <tr key={i} className="border-b"><td className="py-1">{t.datetime}</td><td>{t.symbol}</td><td>{t.side}</td><td>{t.price}</td><td>{t.qty}</td><td>{t.amount}</td><td>{t.fee}</td><td>{t.reason || '-'}</td></tr>)}{runTrades.length === 0 && <tr><td colSpan={8} className="py-2 text-gray-500">暂无成交数据</td></tr>}</tbody></table>
-                  </div>
-                </>
-              )}
-            </div>
+            detailLoading.trades ? (
+              <LoadingHint text="成交明细加载中..." />
+            ) : (
+              <Space direction="vertical" size={12} className="w-full">
+                <Button onClick={() => onDownloadCsv(`${apiBaseUrl}/api/backtest/runs/${selectedRunId}/trades/export`, `backtest_run_${selectedRunId}_trades.csv`)}>导出成交 CSV</Button>
+                <BacktestTable<TradeRow>
+                  rowKey={(record, index) => `${record.datetime || ''}-${record.symbol || ''}-${index}`}
+                  columns={tradeColumns}
+                  dataSource={runTrades}
+                  locale={{ emptyText: '暂无成交数据' }}
+                  scroll={{ x: 1080, y: 460 }}
+                  pagination={{
+                    current: tradesPage,
+                    pageSize: tradesPageSize,
+                    total: tradesTotal,
+                    showSizeChanger: true,
+                    pageSizeOptions: [20, 50, 100],
+                    onChange: (page, pageSize) => {
+                      if (pageSize !== tradesPageSize) onTradesPageSizeChange(pageSize)
+                      onTradesPageChange(page)
+                    },
+                    showTotal: (total) => `共 ${total} 条`,
+                  }}
+                />
+              </Space>
+            )
           )}
 
           {detailTab === 'rounds' && (
-            <div className="space-y-2">
-              {detailLoading.rounds ? (
-                <LoadingHint text="回合交易加载中..." />
-              ) : (
-                <>
-                  <div className="flex items-center justify-between gap-2">
-                    <button className="inline-block px-3 py-1 text-xs rounded bg-indigo-50 text-indigo-700" onClick={() => onDownloadCsv(`${apiBaseUrl}/api/backtest/runs/${selectedRunId}/rounds/export`, `backtest_run_${selectedRunId}_rounds.csv`)}>导出回合 CSV</button>
-                    <PaginationControls page={roundsPage} pageSize={roundsPageSize} total={roundsTotal} onPageChange={onRoundsPageChange} onPageSizeChange={onRoundsPageSizeChange} />
-                  </div>
-                  <div className="overflow-auto max-h-[480px]">
-                    <table className="w-full text-sm"><thead><tr className="border-b"><th className="py-2">标的</th><th>开仓</th><th>平仓</th><th>持有天数</th><th>收益率</th><th>盈亏</th><th>退出原因</th></tr></thead><tbody>{runRounds.map((r, i) => <tr key={i} className="border-b"><td className="py-1">{r.symbol}</td><td>{r.open_time} @ {r.open_price}</td><td>{r.close_time} @ {r.close_price}</td><td>{r.holding_days ?? '-'}</td><td>{r.pnl_ratio}</td><td>{r.pnl_amount}</td><td>{r.exit_reason || '-'}</td></tr>)}{runRounds.length === 0 && <tr><td colSpan={7} className="py-2 text-gray-500">暂无回合交易数据</td></tr>}</tbody></table>
-                  </div>
-                </>
-              )}
-            </div>
+            detailLoading.rounds ? (
+              <LoadingHint text="回合交易加载中..." />
+            ) : (
+              <Space direction="vertical" size={12} className="w-full">
+                <Button onClick={() => onDownloadCsv(`${apiBaseUrl}/api/backtest/runs/${selectedRunId}/rounds/export`, `backtest_run_${selectedRunId}_rounds.csv`)}>导出回合 CSV</Button>
+                <BacktestTable<RoundRow>
+                  rowKey={(record, index) => `${record.symbol || ''}-${record.open_time || ''}-${index}`}
+                  columns={roundColumns}
+                  dataSource={runRounds}
+                  locale={{ emptyText: '暂无回合交易数据' }}
+                  scroll={{ x: 1080, y: 460 }}
+                  pagination={{
+                    current: roundsPage,
+                    pageSize: roundsPageSize,
+                    total: roundsTotal,
+                    showSizeChanger: true,
+                    pageSizeOptions: [20, 50, 100],
+                    onChange: (page, pageSize) => {
+                      if (pageSize !== roundsPageSize) onRoundsPageSizeChange(pageSize)
+                      onRoundsPageChange(page)
+                    },
+                    showTotal: (total) => `共 ${total} 条`,
+                  }}
+                />
+              </Space>
+            )
           )}
 
           {detailTab === 'snapshots' && (
-            <div className="space-y-3 text-sm">
-              <PaginationControls page={snapshotsPage} pageSize={snapshotsPageSize} total={snapshotsTotal} onPageChange={onSnapshotsPageChange} onPageSizeChange={onSnapshotsPageSizeChange} />
+            <Space direction="vertical" size={12} className="w-full">
+              <Pagination
+                current={snapshotsPage}
+                pageSize={snapshotsPageSize}
+                total={snapshotsTotal}
+                showSizeChanger
+                pageSizeOptions={[20, 50, 100]}
+                onChange={(page, size) => {
+                  if (size !== snapshotsPageSize) onSnapshotsPageSizeChange(size)
+                  onSnapshotsPageChange(page)
+                }}
+                showTotal={(total) => `共 ${total} 条`}
+              />
               {detailLoading.snapshots ? (
                 <LoadingHint text="持仓快照加载中..." />
               ) : runSnapshots.length === 0 ? (
-                <div className="text-gray-500">暂无持仓快照数据</div>
+                <Empty description="暂无持仓快照数据" />
               ) : (
                 runSnapshots.map((s, i) => (
-                  <div key={i} className="border rounded-lg p-3 bg-gray-50">
-                    <div className="font-medium">{s.snapshot_time}</div>
-                    <div className="text-xs text-gray-600 mt-1">权益: {s.equity} | 现金: {s.cash} | 持仓市值: {s.position_value}</div>
-                    <div className="overflow-auto mt-2"><table className="w-full text-xs"><thead><tr className="border-b"><th className="text-left py-1">标的</th><th>数量</th><th>现价</th><th>市值</th><th>权重</th></tr></thead><tbody>{(s.holdings || []).map((h, hi: number) => <tr key={hi} className="border-b"><td className="py-1">{h.symbol}</td><td>{h.qty}</td><td>{h.last_price}</td><td>{h.market_value}</td><td>{h.weight}</td></tr>)}{(s.holdings || []).length === 0 && <tr><td colSpan={5} className="py-1 text-gray-500">空仓</td></tr>}</tbody></table></div>
-                  </div>
+                  <Card key={i} size="small" title={s.snapshot_time || '-'}>
+                    <Typography.Text type="secondary">
+                      权益: {s.equity} | 现金: {s.cash} | 持仓市值: {s.position_value}
+                    </Typography.Text>
+                    <div className="mt-2">
+                      <BacktestTable<SnapshotHolding>
+                        rowKey={(record, index) => `${record.symbol || ''}-${index}`}
+                        columns={holdingColumns}
+                        dataSource={s.holdings || []}
+                        pagination={false}
+                        scroll={{ x: 600 }}
+                        locale={{ emptyText: '空仓' }}
+                      />
+                    </div>
+                  </Card>
                 ))
               )}
-            </div>
+            </Space>
           )}
 
           {detailTab === 'strategy' && (
             detailLoading.strategy ? (
               <LoadingHint text="策略配置加载中..." />
             ) : (
-              <pre className="bg-gray-50 border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig || {}, null, 2)}</pre>
+              <Space direction="vertical" size={12} className="w-full">
+                <Descriptions title="业务摘要" bordered size="small" column={2}>
+                  <Descriptions.Item label="策略ID">{String(runStrategyConfig?.strategy_id || '-')}</Descriptions.Item>
+                  <Descriptions.Item label="基准">{String(runStrategyConfig?.benchmark || '-')}</Descriptions.Item>
+                  <Descriptions.Item label="过滤板块">
+                    {Array.isArray(filterSummary.boards) ? filterSummary.boards.map((b) => <Tag key={String(b)}>{String(b)}</Tag>) : '-'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="排除ST">{String(filterSummary.exclude_st ?? '-')}</Descriptions.Item>
+                  <Descriptions.Item label="候选股票数">{String(filterSummary.candidate_count ?? symbols.count ?? '-')}</Descriptions.Item>
+                  <Descriptions.Item label="股票预览">
+                    {Array.isArray(symbols.preview) ? `${symbols.preview.slice(0, 8).join(', ')}${symbols.truncated ? ' ...' : ''}` : '-'}
+                  </Descriptions.Item>
+                </Descriptions>
+
+                <Collapse
+                  items={[
+                    {
+                      key: 'dsl',
+                      label: '技术细节（DSL / SQL Preview）',
+                      children: (
+                        <Space direction="vertical" size={8} className="w-full">
+                          <Typography.Text strong>DSL</Typography.Text>
+                          <pre className="bg-gray-50 border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig?.filter_dsl || {}, null, 2)}</pre>
+                          <Typography.Text strong>SQL Preview</Typography.Text>
+                          <pre className="bg-gray-50 border rounded-lg p-3 text-xs overflow-auto">{String(runStrategyConfig?.sql_preview || '-')}</pre>
+                          <Typography.Text strong>完整配置（raw）</Typography.Text>
+                          <pre className="bg-gray-50 border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig || {}, null, 2)}</pre>
+                        </Space>
+                      ),
+                    },
+                  ]}
+                />
+              </Space>
             )
           )}
-        </>
+        </Space>
       )}
-    </div>
+    </Card>
   )
 }
