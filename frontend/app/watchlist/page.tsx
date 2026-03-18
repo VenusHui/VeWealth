@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import axios from 'axios'
 import { getAuthHeader, isAuthenticated, getUser } from '../lib/auth'
@@ -35,23 +35,7 @@ export default function WatchListPage() {
   // 用户默认阈值
   const [userThreshold, setUserThreshold] = useState(0.7)
 
-  useEffect(() => {
-    // 检查登录状态
-    if (!isAuthenticated()) {
-      router.push('/login')
-      return
-    }
-    
-    // 获取用户信息
-    const user = getUser()
-    if (user) {
-      setUserThreshold(user.alert_threshold)
-    }
-    
-    fetchWatchList()
-  }, [])
-
-  const fetchWatchList = async () => {
+  const fetchWatchList = useCallback(async () => {
     try {
       setLoading(true)
       setError('')
@@ -73,7 +57,23 @@ export default function WatchListPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [router])
+
+  useEffect(() => {
+    // 检查登录状态
+    if (!isAuthenticated()) {
+      router.push('/login')
+      return
+    }
+    
+    // 获取用户信息
+    const user = getUser()
+    if (user) {
+      setUserThreshold(user.alert_threshold)
+    }
+    
+    fetchWatchList()
+  }, [fetchWatchList, router])
 
   const handleAddStock = async (e: React.FormEvent) => {
     e.preventDefault()
