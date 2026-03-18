@@ -4,9 +4,11 @@ from collections import defaultdict, deque
 from datetime import datetime
 from typing import Any, Callable
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session, load_only
 
 from app.models.backtest import BacktestRun, BacktestRound
+from app.models.security_universe import SecurityUniverse
 from app.models.user import User
 from app.schemas.backtest import BacktestRunRequest
 from app.services.backtest.costs import CostModel
@@ -19,6 +21,59 @@ from app.services.stock_service import stock_service
 class BacktestService:
     def list_strategies(self) -> list[dict]:
         return list_strategies()
+
+    def get_universe_stats(self, db: Session) -> dict[str, Any]:
+        base_query = db.query(SecurityUniverse).filter(SecurityUniverse.is_active.is_(True))
+
+        total = base_query.count()
+        st_total = base_query.filter(SecurityUniverse.is_st.is_(True)).count()
+
+        board_rows = (
+            db.query(
+                SecurityUniverse.board,
+                func.count(SecurityUniverse.id).label("count"),
+            )
+            .filter(SecurityUniverse.is_active.is_(True))
+            .group_by(SecurityUniverse.board)
+            .all()
+        )
+        by_board = {str(board): int(count) for board, count in board_rows}
+
+        board_rows_ex_st = (
+            db.query(
+                SecurityUniverse.board,
+                func.count(SecurityUniverse.id).label("count"),
+            )
+            .filter(
+                SecurityUniverse.is_active.is_(True),
+                SecurityUniverse.is_st.is_(False),
+            )
+            .group_by(SecurityUniverse.board)
+            .all()
+        )
+        by_board_ex_st = {str(board): int(count) for board, count in board_rows_ex_st}
+
+        return {
+            "total_active": total,
+            "st_active": st_total,
+            "non_st_active": max(total - st_total, 0),
+            "by_board": {
+                "main": by_board.get("main", 0),
+                "gem": by_board.get("gem", 0),
+                "star": by_board.get("star", 0),
+                "bse": by_board.get("bse", 0),
+            },
+            "by_board_exclude_st": {
+                "main": by_board_ex_st.get("main", 0),
+                "gem": by_board_ex_st.get("gem", 0),
+                "star": by_board_ex_st.get("star", 0),
+                "bse": by_board_ex_st.get("bse", 0),
+            },
+            "defaults": {
+                "boards": ["main"],
+                "exclude_st": True,
+            },
+        }
 
     def run_backtest(
         self,

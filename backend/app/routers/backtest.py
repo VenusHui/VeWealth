@@ -23,6 +23,7 @@ from app.schemas.backtest import (
     BacktestRunRoundsResponse,
     BacktestRunSnapshotsResponse,
     BacktestRunStrategyConfigResponse,
+    BacktestUniverseStatsResponse,
 )
 from app.services.backtest import backtest_service, backtest_job_manager
 
@@ -62,6 +63,15 @@ async def get_strategies(
     current_user: User = Depends(get_current_active_user),
 ):
     return BacktestStrategiesResponse(data=backtest_service.list_strategies())
+
+
+@router.get("/universe/stats", response_model=BacktestUniverseStatsResponse)
+async def get_universe_stats(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    data = backtest_service.get_universe_stats(db=db)
+    return BacktestUniverseStatsResponse(data=data)
 
 
 @router.post("/run", response_model=BacktestRunResponse)
