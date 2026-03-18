@@ -45,9 +45,10 @@ export default function HomePage() {
   ]
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+    <div className="app-page-shell">
+      <div className="app-page-container-md app-section-stack bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 rounded-xl px-4">
       {/* Hero Section */}
-      <div className="pt-16 pb-20 px-4">
+      <div className="pt-8 pb-10 px-4">
         <div className="max-w-6xl mx-auto text-center">
           <h1 className="text-6xl font-bold text-gray-800 mb-6">
             💰 VeWealth
@@ -79,7 +80,7 @@ export default function HomePage() {
       </div>
 
       {/* Features Grid */}
-      <div className="pb-20 px-4">
+      <div className="pb-10 px-4">
         <div className="max-w-6xl mx-auto">
           <h2 className="text-3xl font-bold text-center text-gray-800 mb-12">
             核心功能
@@ -121,6 +122,7 @@ export default function HomePage() {
             })}
           </div>
         </div>
+      </div>
       </div>
     </div>
   )

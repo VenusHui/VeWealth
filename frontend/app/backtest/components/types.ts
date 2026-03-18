@@ -30,8 +30,10 @@ export type MainTab = 'create' | 'records' | 'detail'
 
 export type JobItem = {
   job_id: string
+  name?: string
   status: string
   progress_pct?: number
+  created_at?: string
 }
 
 export type BacktestOverview = {
@@ -42,6 +44,7 @@ export type BacktestOverview = {
 export type TradeRow = {
   datetime?: string
   symbol?: string
+  stock_name?: string
   side?: string
   price?: number
   qty?: number
@@ -52,6 +55,7 @@ export type TradeRow = {
 
 export type RoundRow = {
   symbol?: string
+  stock_name?: string
   open_time?: string
   open_price?: number
   close_time?: string
@@ -64,6 +68,7 @@ export type RoundRow = {
 
 export type SnapshotHolding = {
   symbol?: string
+  stock_name?: string
   qty?: number
   last_price?: number
   market_value?: number

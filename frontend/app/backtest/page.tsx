@@ -66,9 +66,6 @@ export default function BacktestPage() {
   const [runRoundsPage, setRunRoundsPage] = useState(1)
   const [runRoundsPageSize, setRunRoundsPageSize] = useState(20)
   const [runSnapshots, setRunSnapshots] = useState<SnapshotRow[]>([])
-  const [runSnapshotsTotal, setRunSnapshotsTotal] = useState(0)
-  const [runSnapshotsPage, setRunSnapshotsPage] = useState(1)
-  const [runSnapshotsPageSize, setRunSnapshotsPageSize] = useState(20)
   const [runStrategyConfig, setRunStrategyConfig] = useState<StrategyConfig | null>(null)
   const [detailLoading, setDetailLoading] = useState({
     overview: false,
@@ -131,8 +128,6 @@ export default function BacktestPage() {
     setRunRoundsTotal(0)
     setRunRoundsPage(1)
     setRunSnapshots([])
-    setRunSnapshotsTotal(0)
-    setRunSnapshotsPage(1)
     setRunStrategyConfig(null)
     setDetailLoading({
       overview: false,
@@ -185,12 +180,8 @@ export default function BacktestPage() {
         setRunRoundsTotal(resp.data?.total || 0)
       }
       if (tab === 'snapshots') {
-        const p = page ?? runSnapshotsPage
-        const ps = pageSize ?? runSnapshotsPageSize
-        const offset = (p - 1) * ps
-        const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/snapshots?limit=${ps}&offset=${offset}`, { headers })
+        const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/snapshots?limit=10000&offset=0`, { headers })
         setRunSnapshots(resp.data?.data || [])
-        setRunSnapshotsTotal(resp.data?.total || 0)
       }
       if (tab === 'strategy') {
         const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/strategy-config`, { headers })
@@ -200,7 +191,7 @@ export default function BacktestPage() {
       setDetailLoading((prev) => ({ ...prev, [tab]: false }))
       setDetailLoaded((prev) => ({ ...prev, [tab]: true }))
     }
-  }, [runRoundsPage, runRoundsPageSize, runSnapshotsPage, runSnapshotsPageSize, runTradesPage, runTradesPageSize])
+  }, [runRoundsPage, runRoundsPageSize, runTradesPage, runTradesPageSize])
 
   const downloadCsv = async (url: string, filename: string) => {
     const resp = await axios.get(url, {
@@ -399,19 +390,6 @@ export default function BacktestPage() {
     loadDetailTabData(selectedRunId, 'rounds', 1, size)
   }
 
-  const changeSnapshotsPage = (page: number) => {
-    if (!selectedRunId) return
-    setRunSnapshotsPage(page)
-    loadDetailTabData(selectedRunId, 'snapshots', page, runSnapshotsPageSize)
-  }
-
-  const changeSnapshotsPageSize = (size: number) => {
-    if (!selectedRunId) return
-    setRunSnapshotsPageSize(size)
-    setRunSnapshotsPage(1)
-    loadDetailTabData(selectedRunId, 'snapshots', 1, size)
-  }
-
   if (!isAuthenticated()) {
     return <div className="max-w-3xl mx-auto py-10 px-4">请先登录后使用回测功能。</div>
   }
@@ -511,11 +489,6 @@ export default function BacktestPage() {
           roundsPageSize={runRoundsPageSize}
           onRoundsPageChange={changeRoundsPage}
           onRoundsPageSizeChange={changeRoundsPageSize}
-          snapshotsTotal={runSnapshotsTotal}
-          snapshotsPage={runSnapshotsPage}
-          snapshotsPageSize={runSnapshotsPageSize}
-          onSnapshotsPageChange={changeSnapshotsPage}
-          onSnapshotsPageSizeChange={changeSnapshotsPageSize}
         />
       )}
 

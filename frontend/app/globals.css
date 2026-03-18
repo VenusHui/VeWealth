@@ -8,6 +8,11 @@
   --background-end-rgb: 255, 255, 255;
 }
 
+html,
+body {
+  overflow: hidden;
+}
+
 body {
   color: rgb(var(--foreground-rgb));
   min-height: 100vh;
@@ -20,15 +25,15 @@ body {
 
 @layer components {
   .app-page-shell {
-    @apply min-h-screen py-8 px-4;
+    @apply h-[calc(100vh-4rem)] px-4 py-4 overflow-hidden;
   }
 
   .app-page-container {
-    @apply max-w-7xl mx-auto;
+    @apply max-w-7xl mx-auto h-full;
   }
 
   .app-page-container-md {
-    @apply max-w-6xl mx-auto;
+    @apply max-w-6xl mx-auto h-full;
   }
 
   .app-page-title {
@@ -36,7 +41,7 @@ body {
   }
 
   .app-section-stack {
-    @apply space-y-4;
+    @apply space-y-4 h-full overflow-y-auto pr-1;
   }
 }
 

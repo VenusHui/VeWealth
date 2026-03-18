@@ -22,6 +22,18 @@ class BacktestService:
     def list_strategies(self) -> list[dict]:
         return list_strategies()
 
+    def _get_symbol_name_map(self, db: Session, symbols: list[str]) -> dict[str, str]:
+        normalized = [str(s).zfill(6) for s in symbols if str(s).strip()]
+        if not normalized:
+            return {}
+
+        rows = (
+            db.query(SecurityUniverse.stock_code, SecurityUniverse.stock_name)
+            .filter(SecurityUniverse.stock_code.in_(list(set(normalized))))
+            .all()
+        )
+        return {str(code).zfill(6): str(name) for code, name in rows if code and name}
+
     def get_universe_stats(self, db: Session) -> dict[str, Any]:
         base_query = db.query(SecurityUniverse).filter(
             SecurityUniverse.is_active.is_(True)
@@ -522,10 +534,24 @@ class BacktestService:
             return [], 0
 
         trades = row.trades or []
-        total = len(trades)
+        symbol_map = self._get_symbol_name_map(
+            db,
+            [t.get("symbol") for t in trades if isinstance(t, dict)],
+        )
+        enriched = []
+        for t in trades:
+            if isinstance(t, dict):
+                code = str(t.get("symbol") or "").zfill(6)
+                item = dict(t)
+                item["stock_name"] = symbol_map.get(code)
+                enriched.append(item)
+            else:
+                enriched.append(t)
+
+        total = len(enriched)
         if limit is None:
-            return trades, total
-        return trades[offset : offset + limit], total
+            return enriched, total
+        return enriched[offset : offset + limit], total
 
     def get_run_rounds(
         self,
@@ -549,9 +575,11 @@ class BacktestService:
             if limit is not None:
                 query = query.offset(offset).limit(limit)
             rows = query.all()
+            symbol_map = self._get_symbol_name_map(db, [r.symbol for r in rows])
             return [
                 {
                     "symbol": r.symbol,
+                    "stock_name": symbol_map.get(str(r.symbol).zfill(6)),
                     "open_time": r.open_time,
                     "open_price": r.open_price,
                     "close_time": r.close_time,
@@ -570,6 +598,17 @@ class BacktestService:
         trades, _ = self.get_run_trades(run_id=run_id, current_user=current_user, db=db)
         rounds = self._build_round_trips(trades)
         if rounds:
+            symbol_map = self._get_symbol_name_map(
+                db,
+                [r.get("symbol") for r in rounds if isinstance(r, dict)],
+            )
+            rounds = [
+                {
+                    **r,
+                    "stock_name": symbol_map.get(str(r.get("symbol") or "").zfill(6)),
+                }
+                for r in rounds
+            ]
             self._persist_rounds(db=db, run_id=run_id, rounds=rounds)
             total = len(rounds)
             if limit is None:
@@ -598,10 +637,32 @@ class BacktestService:
         summary = row.summary or {}
         positions = summary.get("positions_snapshot") or []
         snapshots = positions if isinstance(positions, list) else []
-        total = len(snapshots)
+
+        all_symbols: list[str] = []
+        for s in snapshots:
+            for h in (s.get("holdings") or []) if isinstance(s, dict) else []:
+                if isinstance(h, dict) and h.get("symbol"):
+                    all_symbols.append(str(h.get("symbol")))
+        symbol_map = self._get_symbol_name_map(db, all_symbols)
+
+        enriched_snapshots = []
+        for s in snapshots:
+            if not isinstance(s, dict):
+                enriched_snapshots.append(s)
+                continue
+            holdings = []
+            for h in s.get("holdings") or []:
+                if isinstance(h, dict):
+                    code = str(h.get("symbol") or "").zfill(6)
+                    holdings.append({**h, "stock_name": symbol_map.get(code)})
+                else:
+                    holdings.append(h)
+            enriched_snapshots.append({**s, "holdings": holdings})
+
+        total = len(enriched_snapshots)
         if limit is None:
-            return snapshots, total
-        return snapshots[offset : offset + limit], total
+            return enriched_snapshots, total
+        return enriched_snapshots[offset : offset + limit], total
 
     def get_run_strategy_config(
         self, run_id: int, current_user: User, db: Session

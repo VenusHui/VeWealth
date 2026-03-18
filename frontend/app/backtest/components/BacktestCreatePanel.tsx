@@ -133,7 +133,7 @@ export function BacktestCreatePanel({
 
       <div className="bg-white rounded-2xl shadow p-5 space-y-3">
         <div className="font-semibold text-gray-800">任务状态</div>
-        {job && <div className="text-sm rounded-lg bg-indigo-50 p-3">当前任务：{job.job_id}<br/>状态：{job.status} · 进度：{Number(job.progress_pct || 0).toFixed(1)}%</div>}
+        {job && <div className="text-sm rounded-lg bg-indigo-50 p-3">当前任务：{job.name || job.job_id}<br/>状态：{job.status} · 进度：{Number(job.progress_pct || 0).toFixed(1)}%</div>}
         <div className="text-sm text-gray-500">最近任务</div>
         <div className="max-h-96 overflow-auto space-y-2">
           {jobsLoading ? (
@@ -141,8 +141,8 @@ export function BacktestCreatePanel({
           ) : jobs.length > 0 ? (
             jobs.map((j) => (
               <div key={j.job_id} className="border rounded-lg px-3 py-2 text-sm">
-                <div className="font-medium text-gray-700">{j.job_id}</div>
-                <div className="text-gray-500">{j.status} · {Number(j.progress_pct || 0).toFixed(1)}%</div>
+                <div className="font-medium text-gray-700">{j.name || j.job_id}</div>
+                <div className="text-gray-500">{j.status} · {Number(j.progress_pct || 0).toFixed(1)}%{j.created_at ? ` · ${new Date(j.created_at).toLocaleString()}` : ''}</div>
               </div>
             ))
           ) : (

@@ -70,6 +70,7 @@ class BacktestJobManager:
                         BacktestJob.error,
                         BacktestJob.created_at,
                         BacktestJob.updated_at,
+                        BacktestJob.request_payload,
                     )
                 )
                 .filter(BacktestJob.user_id == user_id)
@@ -270,8 +271,10 @@ class BacktestJobManager:
     def _to_list_item(row: BacktestJob | None) -> dict | None:
         if not row:
             return None
+        payload = row.request_payload or {}
         return {
             "job_id": row.job_id,
+            "name": payload.get("name") or row.job_id,
             "status": row.status,
             "progress_pct": row.progress_pct,
             "total_symbols": row.total_symbols,
@@ -290,6 +293,7 @@ class BacktestJobManager:
         return deepcopy(
             {
                 "job_id": row.job_id,
+                "name": (row.request_payload or {}).get("name") or row.job_id,
                 "status": row.status,
                 "progress_pct": row.progress_pct,
                 "total_symbols": row.total_symbols,

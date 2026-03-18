@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
   Button,
@@ -5,7 +6,7 @@ import {
   Collapse,
   Descriptions,
   Empty,
-  Pagination,
+  Slider,
   Space,
   Tag,
   Typography,
@@ -40,9 +41,21 @@ const detailTabs: { key: DetailTab; label: string }[] = [
   { key: 'strategy', label: '策略配置' },
 ]
 
+function fmtPct(value: unknown): string {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return '-'
+  return `${(num * 100).toFixed(2)}%`
+}
+
 const tradeColumns: ColumnsType<TradeRow> = [
   { title: '时间', dataIndex: 'datetime', key: 'datetime', width: 180, ellipsis: true },
-  { title: '标的', dataIndex: 'symbol', key: 'symbol', width: 90 },
+  {
+    title: '标的',
+    dataIndex: 'symbol',
+    key: 'symbol',
+    width: 170,
+    render: (_, r) => `${r.symbol || '-'}${r.stock_name ? ` / ${r.stock_name}` : ''}`,
+  },
   { title: '方向', dataIndex: 'side', key: 'side', width: 80 },
   { title: '价格', dataIndex: 'price', key: 'price', width: 100, align: 'right' },
   { title: '数量', dataIndex: 'qty', key: 'qty', width: 90, align: 'right' },
@@ -52,7 +65,13 @@ const tradeColumns: ColumnsType<TradeRow> = [
 ]
 
 const roundColumns: ColumnsType<RoundRow> = [
-  { title: '标的', dataIndex: 'symbol', key: 'symbol', width: 90 },
+  {
+    title: '标的',
+    dataIndex: 'symbol',
+    key: 'symbol',
+    width: 170,
+    render: (_, r) => `${r.symbol || '-'}${r.stock_name ? ` / ${r.stock_name}` : ''}`,
+  },
   {
     title: '开仓',
     key: 'open',
@@ -68,13 +87,26 @@ const roundColumns: ColumnsType<RoundRow> = [
     render: (_, r) => `${r.close_time || '-'} @ ${r.close_price ?? '-'}`,
   },
   { title: '持有天数', dataIndex: 'holding_days', key: 'holding_days', width: 100, align: 'right' },
-  { title: '收益率', dataIndex: 'pnl_ratio', key: 'pnl_ratio', width: 100, align: 'right' },
+  {
+    title: '收益率',
+    dataIndex: 'pnl_ratio',
+    key: 'pnl_ratio',
+    width: 100,
+    align: 'right',
+    render: (v) => fmtPct(v),
+  },
   { title: '盈亏', dataIndex: 'pnl_amount', key: 'pnl_amount', width: 120, align: 'right' },
   { title: '退出原因', dataIndex: 'exit_reason', key: 'exit_reason', ellipsis: true, render: (v) => v || '-' },
 ]
 
 const holdingColumns: ColumnsType<SnapshotHolding> = [
-  { title: '标的', dataIndex: 'symbol', key: 'symbol', width: 90 },
+  {
+    title: '标的',
+    dataIndex: 'symbol',
+    key: 'symbol',
+    width: 170,
+    render: (_, r) => `${r.symbol || '-'}${r.stock_name ? ` / ${r.stock_name}` : ''}`,
+  },
   { title: '数量', dataIndex: 'qty', key: 'qty', align: 'right', width: 90 },
   { title: '现价', dataIndex: 'last_price', key: 'last_price', align: 'right', width: 90 },
   { title: '市值', dataIndex: 'market_value', key: 'market_value', align: 'right', width: 120 },
@@ -103,11 +135,6 @@ export function BacktestDetailPanel({
   roundsPageSize,
   onRoundsPageChange,
   onRoundsPageSizeChange,
-  snapshotsTotal,
-  snapshotsPage,
-  snapshotsPageSize,
-  onSnapshotsPageChange,
-  onSnapshotsPageSizeChange,
 }: {
   selectedRunId: number | null
   detailTab: DetailTab
@@ -130,14 +157,22 @@ export function BacktestDetailPanel({
   roundsPageSize: number
   onRoundsPageChange: (page: number) => void
   onRoundsPageSizeChange: (size: number) => void
-  snapshotsTotal: number
-  snapshotsPage: number
-  snapshotsPageSize: number
-  onSnapshotsPageChange: (page: number) => void
-  onSnapshotsPageSizeChange: (size: number) => void
 }) {
   const filterSummary = (runStrategyConfig?.filter_summary as Record<string, unknown>) || {}
   const symbols = (runStrategyConfig?.symbols as Record<string, unknown>) || {}
+
+  const snapshotItems = useMemo(() => runSnapshots || [], [runSnapshots])
+  const [snapshotIndex, setSnapshotIndex] = useState(0)
+
+  useEffect(() => {
+    if (snapshotItems.length === 0) {
+      setSnapshotIndex(0)
+      return
+    }
+    setSnapshotIndex(snapshotItems.length - 1)
+  }, [snapshotItems.length])
+
+  const currentSnapshot = snapshotItems[snapshotIndex]
 
   return (
     <Card title={`回测详情 ${selectedRunId ? `(Run #${selectedRunId})` : ''}`}>
@@ -162,12 +197,15 @@ export function BacktestDetailPanel({
                   {Object.entries(runOverview?.summary || {})
                     .filter(([k]) => !['positions_snapshot', 'final_positions'].includes(k))
                     .slice(0, 8)
-                    .map(([k, v]) => (
-                      <Card key={k} size="small">
-                        <div className="text-xs text-gray-500">{k}</div>
-                        <div className="font-semibold">{String(v)}</div>
-                      </Card>
-                    ))}
+                    .map(([k, v]) => {
+                      const isPct = /return|drawdown|rate|ratio/i.test(k)
+                      return (
+                        <Card key={k} size="small">
+                          <div className="text-xs text-gray-500">{k}</div>
+                          <div className="font-semibold">{isPct ? fmtPct(v) : String(v)}</div>
+                        </Card>
+                      )
+                    })}
                 </div>
                 <div className="h-[360px] border rounded-lg p-2">
                   <ResponsiveContainer width="100%" height="100%">
@@ -244,40 +282,33 @@ export function BacktestDetailPanel({
 
           {detailTab === 'snapshots' && (
             <Space direction="vertical" size={12} className="w-full">
-              <Pagination
-                current={snapshotsPage}
-                pageSize={snapshotsPageSize}
-                total={snapshotsTotal}
-                showSizeChanger
-                pageSizeOptions={[20, 50, 100]}
-                onChange={(page, size) => {
-                  if (size !== snapshotsPageSize) onSnapshotsPageSizeChange(size)
-                  onSnapshotsPageChange(page)
-                }}
-                showTotal={(total) => `共 ${total} 条`}
-              />
               {detailLoading.snapshots ? (
                 <LoadingHint text="持仓快照加载中..." />
-              ) : runSnapshots.length === 0 ? (
+              ) : snapshotItems.length === 0 ? (
                 <Empty description="暂无持仓快照数据" />
               ) : (
-                runSnapshots.map((s, i) => (
-                  <Card key={i} size="small" title={s.snapshot_time || '-'}>
+                <Card size="small" title={`快照时间：${currentSnapshot?.snapshot_time || '-'}`}>
+                  <Space direction="vertical" size={12} className="w-full">
+                    <Slider
+                      min={0}
+                      max={Math.max(snapshotItems.length - 1, 0)}
+                      value={snapshotIndex}
+                      onChange={(value) => setSnapshotIndex(Number(value))}
+                      tooltip={{ formatter: (value) => snapshotItems[Number(value || 0)]?.snapshot_time || '' }}
+                    />
                     <Typography.Text type="secondary">
-                      权益: {s.equity} | 现金: {s.cash} | 持仓市值: {s.position_value}
+                      权益: {currentSnapshot?.equity} | 现金: {currentSnapshot?.cash} | 持仓市值: {currentSnapshot?.position_value}
                     </Typography.Text>
-                    <div className="mt-2">
-                      <BacktestTable<SnapshotHolding>
-                        rowKey={(record, index) => `${record.symbol || ''}-${index}`}
-                        columns={holdingColumns}
-                        dataSource={s.holdings || []}
-                        pagination={false}
-                        scroll={{ x: 600 }}
-                        locale={{ emptyText: '空仓' }}
-                      />
-                    </div>
-                  </Card>
-                ))
+                    <BacktestTable<SnapshotHolding>
+                      rowKey={(record, index) => `${record.symbol || ''}-${index}`}
+                      columns={holdingColumns}
+                      dataSource={currentSnapshot?.holdings || []}
+                      pagination={false}
+                      scroll={{ x: 680, y: 420 }}
+                      locale={{ emptyText: '空仓' }}
+                    />
+                  </Space>
+                </Card>
               )}
             </Space>
           )}

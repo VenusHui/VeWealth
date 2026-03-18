@@ -129,6 +129,7 @@ class BacktestRunDetailResponse(BaseModel):
 
 class BacktestJobItem(BaseModel):
     job_id: str
+    name: Optional[str] = None
     status: Literal["pending", "running", "success", "failed", "cancelled"]
     progress_pct: float = 0
     total_symbols: int = 0

@@ -2,6 +2,12 @@ import { Button, Card, Table, Tag } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { RunItem } from './types'
 
+function fmtPct(value: unknown): string {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return '-'
+  return `${(num * 100).toFixed(2)}%`
+}
+
 function getRecordColumns(onViewDetail: (runId: number) => void): ColumnsType<RunItem> {
   return [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 80, render: (v) => `#${v}` },
@@ -13,8 +19,22 @@ function getRecordColumns(onViewDetail: (runId: number) => void): ColumnsType<Ru
       width: 220,
       render: (_, r) => `${r.start_date} ~ ${r.end_date}`,
     },
-    { title: '总收益', dataIndex: ['summary', 'total_return'], key: 'total_return', width: 100, align: 'right', render: (v) => v ?? '-' },
-    { title: '最大回撤', dataIndex: ['summary', 'max_drawdown'], key: 'max_drawdown', width: 100, align: 'right', render: (v) => v ?? '-' },
+    {
+      title: '总收益',
+      dataIndex: ['summary', 'total_return'],
+      key: 'total_return',
+      width: 100,
+      align: 'right',
+      render: (v) => fmtPct(v),
+    },
+    {
+      title: '最大回撤',
+      dataIndex: ['summary', 'max_drawdown'],
+      key: 'max_drawdown',
+      width: 100,
+      align: 'right',
+      render: (v) => fmtPct(v),
+    },
     { title: '状态', dataIndex: 'status', key: 'status', width: 90, render: (v) => <Tag>{v}</Tag> },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 180, render: (v) => new Date(v).toLocaleString() },
     {
