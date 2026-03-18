@@ -223,12 +223,14 @@ export default function BacktestPage() {
         const resp = await axios.get(`${API_BASE_URL}/api/backtest/strategies`, {
           headers: getAuthHeader(),
         })
-        const list = resp.data?.data || []
+        const list: Strategy[] = Array.isArray(resp.data?.data)
+          ? (resp.data.data as Strategy[])
+          : []
         setStrategies(list)
         if (list.length > 0) {
           setStrategyId(list[0].strategy_id)
           const defaults: Record<string, string> = {}
-          list[0].param_schema.forEach((p) => {
+          list[0].param_schema.forEach((p: Strategy['param_schema'][number]) => {
             defaults[p.key] = String(p.default ?? '')
           })
           setStrategyParams(defaults)
