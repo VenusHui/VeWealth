@@ -36,6 +36,8 @@ export default function BacktestPage() {
   const [universeType, setUniverseType] = useState<'all' | 'custom'>('all')
   const [symbols, setSymbols] = useState('000001')
   const [poolSymbols, setPoolSymbols] = useState('')
+  const [boardFilters, setBoardFilters] = useState<Array<'main' | 'gem' | 'star' | 'bse'>>(['main'])
+  const [excludeSt, setExcludeSt] = useState(true)
   const [startDate, setStartDate] = useState('2025-01-01')
   const [endDate, setEndDate] = useState('2025-12-31')
   const [initialCash, setInitialCash] = useState('100000')
@@ -333,6 +335,16 @@ export default function BacktestPage() {
         castParams[k] = /^-?\d+(\.\d+)?$/.test(val) ? Number(val) : val
       })
 
+      if (mode === 'strategy_select' && boardFilters.length === 0) {
+        setError('请至少选择一个板块')
+        return
+      }
+
+      if (mode === 'strategy_select') {
+        castParams.boards = boardFilters
+        castParams.exclude_st = excludeSt
+      }
+
       const payload = {
         name,
         strategy_id: strategyId,
@@ -427,6 +439,8 @@ export default function BacktestPage() {
           endDate={endDate}
           selectedStrategy={selectedStrategy}
           strategyParams={strategyParams}
+          boardFilters={boardFilters}
+          excludeSt={excludeSt}
           loading={loading}
           error={error}
           job={job}
@@ -441,6 +455,16 @@ export default function BacktestPage() {
           onInitialCashChange={setInitialCash}
           onStartDateChange={setStartDate}
           onEndDateChange={setEndDate}
+          onBoardFilterChange={(board, checked) => {
+            setBoardFilters((prev) => {
+              if (checked) {
+                if (prev.includes(board)) return prev
+                return [...prev, board]
+              }
+              return prev.filter((b) => b !== board)
+            })
+          }}
+          onExcludeStChange={setExcludeSt}
           onStrategyParamChange={(k, v) => setStrategyParams((prev) => ({ ...prev, [k]: v }))}
           onSubmit={handleRun}
         />

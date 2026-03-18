@@ -7,6 +7,7 @@ from .watchlist import WatchList
 from .stock_data import StockMinuteData
 from .backtest import BacktestRun, BacktestRound
 from .backtest_job import BacktestJob
+from .security_universe import SecurityUniverse
 
 __all__ = [
     "User",
@@ -15,4 +16,5 @@ __all__ = [
     "BacktestRun",
     "BacktestRound",
     "BacktestJob",
+    "SecurityUniverse",
 ]

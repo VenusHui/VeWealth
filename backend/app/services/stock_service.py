@@ -16,6 +16,7 @@ from app.utils.stock_data_fetcher import stock_data_fetcher
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.stock_data import StockMinuteData
+from app.models.security_universe import SecurityUniverse
 
 logger = logging.getLogger(__name__)
 
@@ -26,21 +27,76 @@ class StockService:
     def __init__(self):
         self.data_processor = DataProcessor()
 
-    def get_all_stock_symbols(self, limit: int | None = None) -> List[str]:
-        """获取全市场股票代码列表（固定使用静态全量池）"""
+    def get_all_stock_symbols(
+        self,
+        limit: int | None = None,
+        boards: List[str] | None = None,
+        exclude_st: bool = True,
+    ) -> List[str]:
+        """获取股票代码列表，优先使用 security_universe 维表，失败时回退静态清单。"""
+        allowed_boards = {"main", "gem", "star", "bse"}
+        normalized_boards = [b for b in (boards or ["main"]) if b in allowed_boards]
+
         try:
+            db: Session = SessionLocal()
+            try:
+                query = db.query(SecurityUniverse.stock_code).filter(
+                    SecurityUniverse.is_active.is_(True)
+                )
+                if normalized_boards:
+                    query = query.filter(SecurityUniverse.board.in_(normalized_boards))
+                if exclude_st:
+                    query = query.filter(SecurityUniverse.is_st.is_(False))
+
+                rows = query.order_by(SecurityUniverse.stock_code.asc()).all()
+                symbols = [str(row[0]).zfill(6) for row in rows if row[0]]
+                if symbols:
+                    logger.info(
+                        "从 security_universe 获取股票池成功，数量: %s, boards=%s, exclude_st=%s",
+                        len(symbols),
+                        normalized_boards,
+                        exclude_st,
+                    )
+                    if limit and limit > 0:
+                        return symbols[:limit]
+                    return symbols
+            finally:
+                db.close()
+
             static_codes = self._load_static_symbols()
             if not static_codes:
-                logger.error("静态A股清单为空，无法执行全市场扫描")
+                logger.error("security_universe 与静态A股清单均为空，无法执行全市场扫描")
                 return []
 
-            logger.info(f"全市场扫描使用静态A股清单，数量: {len(static_codes)}")
+            # 静态池回退时，只做板块过滤（ST 信息无法可靠识别）
+            filtered = [
+                code
+                for code in static_codes
+                if self._detect_board(code) in set(normalized_boards or ["main"])
+            ]
+            logger.warning(
+                "security_universe 为空，已回退静态清单。boards=%s, exclude_st=%s(回退模式可能不生效), count=%s",
+                normalized_boards,
+                exclude_st,
+                len(filtered),
+            )
             if limit and limit > 0:
-                return static_codes[:limit]
-            return static_codes
+                return filtered[:limit]
+            return filtered
         except Exception as e:
             logger.error(f"获取全市场股票列表失败: {str(e)}")
             return []
+
+    @staticmethod
+    def _detect_board(code: str) -> str:
+        code = str(code).zfill(6)
+        if code.startswith(("300", "301")):
+            return "gem"
+        if code.startswith("688"):
+            return "star"
+        if code.startswith(("430", "831", "832", "833", "834", "835", "836", "837", "838", "839", "870", "871", "872", "873", "874", "875", "876", "877", "878", "879", "880", "881", "882", "883", "884", "885", "886", "887", "888", "889")):
+            return "bse"
+        return "main"
 
     def _load_static_symbols(self) -> List[str]:
         """从静态文件加载A股代码清单"""

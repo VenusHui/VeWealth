@@ -29,6 +29,10 @@ export function BacktestCreatePanel({
   onStartDateChange,
   onEndDateChange,
   onStrategyParamChange,
+  boardFilters,
+  excludeSt,
+  onBoardFilterChange,
+  onExcludeStChange,
   onSubmit,
 }: {
   name: string
@@ -57,6 +61,10 @@ export function BacktestCreatePanel({
   onInitialCashChange: (v: string) => void
   onStartDateChange: (v: string) => void
   onEndDateChange: (v: string) => void
+  boardFilters: Array<'main' | 'gem' | 'star' | 'bse'>
+  excludeSt: boolean
+  onBoardFilterChange: (board: 'main' | 'gem' | 'star' | 'bse', checked: boolean) => void
+  onExcludeStChange: (v: boolean) => void
   onStrategyParamChange: (k: string, v: string) => void
   onSubmit: () => void
 }) {
@@ -80,13 +88,42 @@ export function BacktestCreatePanel({
         </div>
 
         {selectedStrategy && (
-          <div className="rounded-xl border bg-gray-50 p-4">
-            <div className="font-medium mb-3">策略参数</div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {selectedStrategy.param_schema.map((p) => (
-                <label key={p.key} className="text-sm">{p.label}<input className="mt-1 w-full border rounded-lg px-3 py-2" value={strategyParams[p.key] ?? ''} onChange={(e) => onStrategyParamChange(p.key, e.target.value)} /></label>
-              ))}
+          <div className="rounded-xl border bg-gray-50 p-4 space-y-4">
+            <div>
+              <div className="font-medium mb-3">策略参数</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {selectedStrategy.param_schema.map((p) => (
+                  <label key={p.key} className="text-sm">{p.label}<input className="mt-1 w-full border rounded-lg px-3 py-2" value={strategyParams[p.key] ?? ''} onChange={(e) => onStrategyParamChange(p.key, e.target.value)} /></label>
+                ))}
+              </div>
             </div>
+
+            {mode === 'strategy_select' && (
+              <div className="rounded-lg border bg-white p-3">
+                <div className="font-medium text-sm mb-2">股票范围过滤</div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                  {([
+                    ['main', '主板'],
+                    ['gem', '创业板'],
+                    ['star', '科创板'],
+                    ['bse', '北交所'],
+                  ] as const).map(([key, label]) => (
+                    <label key={key} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={boardFilters.includes(key)}
+                        onChange={(e) => onBoardFilterChange(key, e.target.checked)}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+                <label className="mt-3 flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={excludeSt} onChange={(e) => onExcludeStChange(e.target.checked)} />
+                  <span>排除 ST/*ST</span>
+                </label>
+              </div>
+            )}
           </div>
         )}
 

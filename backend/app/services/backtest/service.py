@@ -177,11 +177,33 @@ class BacktestService:
         consecutive_days = int(params.get("consecutive_days", 3))
         hold_days = int(params.get("hold_days", 5))
         position_size_pct = float(params.get("position_size_pct", 0.1))
+
+        raw_boards = params.get("boards", ["main"])
+        if isinstance(raw_boards, str):
+            raw_boards = [x.strip() for x in raw_boards.split(",") if x.strip()]
+        if not isinstance(raw_boards, list):
+            raise ValueError("boards 参数格式错误，应为字符串数组")
+        boards = [str(x).strip().lower() for x in raw_boards if str(x).strip()]
+        allowed_boards = {"main", "gem", "star", "bse"}
+        invalid = [b for b in boards if b not in allowed_boards]
+        if invalid:
+            raise ValueError(f"boards 包含非法值: {', '.join(invalid)}")
+        if not boards:
+            raise ValueError("boards 至少选择一个板块")
+
+        raw_exclude_st = params.get("exclude_st", True)
+        if isinstance(raw_exclude_st, str):
+            exclude_st = raw_exclude_st.strip().lower() not in {"false", "0", "no", "off"}
+        else:
+            exclude_st = bool(raw_exclude_st)
+
         if request.universe_type == "custom":
             universe = [s.strip() for s in request.pool_symbols if s.strip()]
         else:
-            # 全市场固定全量扫描，不再支持限量参数
-            universe = stock_service.get_all_stock_symbols()
+            universe = stock_service.get_all_stock_symbols(
+                boards=boards,
+                exclude_st=exclude_st,
+            )
 
         if not universe:
             raise ValueError(
@@ -268,6 +290,10 @@ class BacktestService:
             "data_available_count": data_available_count,
             "data_empty_count": data_empty_count,
             "signal_hit_count": len(events),
+            "effective_universe_filter": {
+                "boards": boards,
+                "exclude_st": exclude_st,
+            },
         }
 
         if data_empty_count > 0:
