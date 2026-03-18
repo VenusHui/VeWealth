@@ -12,7 +12,7 @@ Move from mixed custom UI to a unified AntD v6 system with minimal regressions.
 - [x] Improve strategy-config readability structure.
 
 ### Phase 2
-- [ ] Migrate Watchlist page to AntD Form/Table/Card/Alert.
+- [x] Migrate Watchlist page to AntD Form/Table/Card/Alert.
 
 ### Phase 3
 - [ ] Migrate Analysis page data controls and list/table sections.
