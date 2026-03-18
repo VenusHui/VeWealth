@@ -11,9 +11,32 @@
 body {
   color: rgb(var(--foreground-rgb));
   min-height: 100vh;
+  line-height: 1.6;
   background:
     radial-gradient(circle at top right, rgba(99, 102, 241, 0.08), transparent 40%),
     radial-gradient(circle at top left, rgba(168, 85, 247, 0.06), transparent 35%),
     linear-gradient(to bottom, rgb(var(--background-start-rgb)), rgb(var(--background-end-rgb)));
+}
+
+@layer components {
+  .app-page-shell {
+    @apply min-h-screen py-8 px-4;
+  }
+
+  .app-page-container {
+    @apply max-w-7xl mx-auto;
+  }
+
+  .app-page-container-md {
+    @apply max-w-6xl mx-auto;
+  }
+
+  .app-page-title {
+    @apply text-3xl md:text-4xl font-bold text-gray-800;
+  }
+
+  .app-section-stack {
+    @apply space-y-4;
+  }
 }
 

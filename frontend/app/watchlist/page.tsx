@@ -215,8 +215,8 @@ export default function WatchListPage() {
   ]
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8 px-4">
-      <div className="max-w-6xl mx-auto space-y-4">
+    <div className="app-page-shell">
+      <div className="app-page-container-md app-section-stack">
         <Card>
           <div className="flex justify-between items-center">
             <Typography.Title level={3} style={{ margin: 0 }}>👁️ 监控列表</Typography.Title>

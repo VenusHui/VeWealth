@@ -22,7 +22,11 @@ Move from mixed custom UI to a unified AntD v6 system with minimal regressions.
 
 ### Phase 5
 - [x] Remove obsolete custom pagination/table helpers.
-- [ ] Normalize spacing/typography conventions.
+- [x] Normalize spacing/typography conventions.
+
+### Spacing/Typography Baseline
+- Global page shell/container/title/stack utility classes added in `app/globals.css`.
+- Migrated pages now share consistent spacing rhythm and typography baseline.
 
 ## Validation Checklist
 - `npm run lint`

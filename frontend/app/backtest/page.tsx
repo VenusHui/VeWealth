@@ -417,7 +417,8 @@ export default function BacktestPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto py-8 px-4 space-y-5">
+    <div className="app-page-shell">
+      <div className="app-page-container app-section-stack">
       <div className="rounded-2xl bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 p-6 text-white shadow-lg">
         <h1 className="text-3xl font-bold">策略回测中心</h1>
         <p className="text-indigo-100 mt-1">三段式结构：新建任务 → 记录列表 → 详情钻取</p>
@@ -524,6 +525,7 @@ export default function BacktestPage() {
           <button className="ml-3 text-emerald-800 underline" onClick={() => mainTab !== 'records' && setMainTab('records')}>去记录页查看</button>
         </div>
       )}
+      </div>
     </div>
   )
 }
