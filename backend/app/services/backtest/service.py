@@ -2,6 +2,7 @@
 
 from collections import defaultdict, deque
 from datetime import datetime
+import re
 from typing import Any, Callable
 
 from sqlalchemy import func
@@ -22,8 +23,16 @@ class BacktestService:
     def list_strategies(self) -> list[dict]:
         return list_strategies()
 
+    def _normalize_symbol_code(self, symbol: Any) -> str:
+        raw = str(symbol or "").strip()
+        if not raw:
+            return ""
+        match = re.search(r"(\d{6})", raw)
+        return match.group(1) if match else ""
+
     def _get_symbol_name_map(self, db: Session, symbols: list[str]) -> dict[str, str]:
-        normalized = [str(s).zfill(6) for s in symbols if str(s).strip()]
+        normalized = [self._normalize_symbol_code(s) for s in symbols if str(s).strip()]
+        normalized = [s for s in normalized if s]
         if not normalized:
             return {}
 
@@ -32,7 +41,11 @@ class BacktestService:
             .filter(SecurityUniverse.stock_code.in_(list(set(normalized))))
             .all()
         )
-        return {str(code).zfill(6): str(name) for code, name in rows if code and name}
+        return {
+            self._normalize_symbol_code(code): str(name)
+            for code, name in rows
+            if code and name and self._normalize_symbol_code(code)
+        }
 
     def get_universe_stats(self, db: Session) -> dict[str, Any]:
         base_query = db.query(SecurityUniverse).filter(
@@ -541,7 +554,7 @@ class BacktestService:
         enriched = []
         for t in trades:
             if isinstance(t, dict):
-                code = str(t.get("symbol") or "").zfill(6)
+                code = self._normalize_symbol_code(t.get("symbol"))
                 item = dict(t)
                 item["stock_name"] = symbol_map.get(code)
                 enriched.append(item)
@@ -579,7 +592,7 @@ class BacktestService:
             return [
                 {
                     "symbol": r.symbol,
-                    "stock_name": symbol_map.get(str(r.symbol).zfill(6)),
+                    "stock_name": symbol_map.get(self._normalize_symbol_code(r.symbol)),
                     "open_time": r.open_time,
                     "open_price": r.open_price,
                     "close_time": r.close_time,
@@ -605,7 +618,9 @@ class BacktestService:
             rounds = [
                 {
                     **r,
-                    "stock_name": symbol_map.get(str(r.get("symbol") or "").zfill(6)),
+                    "stock_name": symbol_map.get(
+                        self._normalize_symbol_code(r.get("symbol"))
+                    ),
                 }
                 for r in rounds
             ]
@@ -653,7 +668,7 @@ class BacktestService:
             holdings = []
             for h in s.get("holdings") or []:
                 if isinstance(h, dict):
-                    code = str(h.get("symbol") or "").zfill(6)
+                    code = self._normalize_symbol_code(h.get("symbol"))
                     holdings.append({**h, "stock_name": symbol_map.get(code)})
                 else:
                     holdings.append(h)
