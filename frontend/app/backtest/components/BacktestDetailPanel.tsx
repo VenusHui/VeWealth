@@ -47,6 +47,12 @@ function fmtPct(value: unknown): string {
   return `${(num * 100).toFixed(2)}%`
 }
 
+function fmtSymbolLabel(symbol?: string, stockName?: string): string {
+  const code = symbol || '-'
+  if (stockName) return `${stockName} (${code})`
+  return code
+}
+
 const tradeColumns: ColumnsType<TradeRow> = [
   { title: '时间', dataIndex: 'datetime', key: 'datetime', width: 180, ellipsis: true },
   {
@@ -54,7 +60,7 @@ const tradeColumns: ColumnsType<TradeRow> = [
     dataIndex: 'symbol',
     key: 'symbol',
     width: 170,
-    render: (_, r) => `${r.symbol || '-'}${r.stock_name ? ` / ${r.stock_name}` : ''}`,
+    render: (_, r) => fmtSymbolLabel(r.symbol, r.stock_name),
   },
   { title: '方向', dataIndex: 'side', key: 'side', width: 80 },
   { title: '价格', dataIndex: 'price', key: 'price', width: 100, align: 'right' },
@@ -70,7 +76,7 @@ const roundColumns: ColumnsType<RoundRow> = [
     dataIndex: 'symbol',
     key: 'symbol',
     width: 170,
-    render: (_, r) => `${r.symbol || '-'}${r.stock_name ? ` / ${r.stock_name}` : ''}`,
+    render: (_, r) => fmtSymbolLabel(r.symbol, r.stock_name),
   },
   {
     title: '开仓',
@@ -105,7 +111,7 @@ const holdingColumns: ColumnsType<SnapshotHolding> = [
     dataIndex: 'symbol',
     key: 'symbol',
     width: 170,
-    render: (_, r) => `${r.symbol || '-'}${r.stock_name ? ` / ${r.stock_name}` : ''}`,
+    render: (_, r) => fmtSymbolLabel(r.symbol, r.stock_name),
   },
   { title: '数量', dataIndex: 'qty', key: 'qty', align: 'right', width: 90 },
   { title: '现价', dataIndex: 'last_price', key: 'last_price', align: 'right', width: 90 },
