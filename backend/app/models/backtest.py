@@ -68,6 +68,7 @@ class BacktestRound(Base):
         index=True,
     )
     symbol = Column(String(20), nullable=False, index=True)
+    stock_name = Column(String(100), nullable=True)
 
     open_time = Column(String(32), nullable=True)
     open_price = Column(Float, nullable=True)

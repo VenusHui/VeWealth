@@ -47,6 +47,70 @@ class BacktestService:
             if code and name and self._normalize_symbol_code(code)
         }
 
+    def _enrich_trades_with_stock_name(
+        self, db: Session, trades: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        symbol_map = self._get_symbol_name_map(
+            db,
+            [t.get("symbol") for t in trades if isinstance(t, dict)],
+        )
+        enriched: list[dict[str, Any]] = []
+        for trade in trades:
+            if not isinstance(trade, dict):
+                continue
+            item = dict(trade)
+            code = self._normalize_symbol_code(item.get("symbol"))
+            if code and symbol_map.get(code):
+                item["stock_name"] = symbol_map.get(code)
+            enriched.append(item)
+        return enriched
+
+    def _enrich_rounds_with_stock_name(
+        self, db: Session, rounds: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        symbol_map = self._get_symbol_name_map(
+            db,
+            [r.get("symbol") for r in rounds if isinstance(r, dict)],
+        )
+        enriched: list[dict[str, Any]] = []
+        for row in rounds:
+            if not isinstance(row, dict):
+                continue
+            item = dict(row)
+            code = self._normalize_symbol_code(item.get("symbol"))
+            if code and symbol_map.get(code):
+                item["stock_name"] = symbol_map.get(code)
+            enriched.append(item)
+        return enriched
+
+    def _enrich_snapshots_with_stock_name(
+        self, db: Session, snapshots: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        all_symbols: list[str] = []
+        for snapshot in snapshots:
+            for h in (
+                (snapshot.get("holdings") or []) if isinstance(snapshot, dict) else []
+            ):
+                if isinstance(h, dict) and h.get("symbol"):
+                    all_symbols.append(str(h.get("symbol")))
+
+        symbol_map = self._get_symbol_name_map(db, all_symbols)
+        enriched_snapshots: list[dict[str, Any]] = []
+        for snapshot in snapshots:
+            if not isinstance(snapshot, dict):
+                continue
+            holdings = []
+            for h in snapshot.get("holdings") or []:
+                if not isinstance(h, dict):
+                    continue
+                item = dict(h)
+                code = self._normalize_symbol_code(item.get("symbol"))
+                if code and symbol_map.get(code):
+                    item["stock_name"] = symbol_map.get(code)
+                holdings.append(item)
+            enriched_snapshots.append({**snapshot, "holdings": holdings})
+        return enriched_snapshots
+
     def get_universe_stats(self, db: Session) -> dict[str, Any]:
         base_query = db.query(SecurityUniverse).filter(
             SecurityUniverse.is_active.is_(True)
@@ -117,8 +181,15 @@ class BacktestService:
         else:
             result = self._run_manual_symbols_mode(request, progress_callback)
 
+        enriched_trades = self._enrich_trades_with_stock_name(db, result["trades"])
+        enriched_snapshots = self._enrich_snapshots_with_stock_name(
+            db, result.get("positions_snapshot", [])
+        )
+        rounds = self._build_round_trips(enriched_trades)
+        enriched_rounds = self._enrich_rounds_with_stock_name(db, rounds)
+
         summary_payload = dict(result["summary"] or {})
-        summary_payload["positions_snapshot"] = result.get("positions_snapshot", [])
+        summary_payload["positions_snapshot"] = enriched_snapshots
 
         run = BacktestRun(
             user_id=current_user.id,
@@ -134,7 +205,7 @@ class BacktestService:
             cost_config=request.cost_config.model_dump(),
             summary=summary_payload,
             equity_curve=result["equity_curve"],
-            trades=result["trades"],
+            trades=enriched_trades,
             warnings=result["warnings"],
         )
 
@@ -142,15 +213,16 @@ class BacktestService:
         db.commit()
         db.refresh(run)
 
-        rounds = self._build_round_trips(result["trades"])
-        self._persist_rounds(db=db, run_id=run.id, rounds=rounds)
+        self._persist_rounds(db=db, run_id=run.id, rounds=enriched_rounds)
 
+        response_summary = dict(result["summary"] or {})
+        response_summary["positions_snapshot"] = enriched_snapshots
         return {
             "run_id": run.id,
-            "summary": result["summary"],
+            "summary": response_summary,
             "equity_curve": result["equity_curve"],
-            "trades": result["trades"],
-            "positions_snapshot": result.get("positions_snapshot", []),
+            "trades": enriched_trades,
+            "positions_snapshot": enriched_snapshots,
             "warnings": result["warnings"],
             "diagnostics": result.get("diagnostics"),
         }
@@ -547,19 +619,11 @@ class BacktestService:
             return [], 0
 
         trades = row.trades or []
-        symbol_map = self._get_symbol_name_map(
-            db,
-            [t.get("symbol") for t in trades if isinstance(t, dict)],
-        )
-        enriched = []
-        for t in trades:
-            if isinstance(t, dict):
-                code = self._normalize_symbol_code(t.get("symbol"))
-                item = dict(t)
-                item["stock_name"] = symbol_map.get(code)
-                enriched.append(item)
-            else:
-                enriched.append(t)
+        enriched = self._enrich_trades_with_stock_name(db, trades)
+
+        if enriched != trades:
+            row.trades = enriched
+            db.commit()
 
         total = len(enriched)
         if limit is None:
@@ -589,46 +653,44 @@ class BacktestService:
                 query = query.offset(offset).limit(limit)
             rows = query.all()
             symbol_map = self._get_symbol_name_map(db, [r.symbol for r in rows])
-            return [
-                {
-                    "symbol": r.symbol,
-                    "stock_name": symbol_map.get(self._normalize_symbol_code(r.symbol)),
-                    "open_time": r.open_time,
-                    "open_price": r.open_price,
-                    "close_time": r.close_time,
-                    "close_price": r.close_price,
-                    "qty": r.qty,
-                    "holding_days": r.holding_days,
-                    "pnl_amount": r.pnl_amount,
-                    "pnl_ratio": r.pnl_ratio,
-                    "exit_reason": r.exit_reason,
-                    "max_favorable_excursion": r.max_favorable_excursion,
-                    "max_adverse_excursion": r.max_adverse_excursion,
-                }
-                for r in rows
-            ], total
+            needs_backfill = False
+            data: list[dict[str, Any]] = []
+            for r in rows:
+                code = self._normalize_symbol_code(r.symbol)
+                stock_name = r.stock_name or symbol_map.get(code)
+                if stock_name and r.stock_name != stock_name:
+                    r.stock_name = stock_name
+                    needs_backfill = True
+                data.append(
+                    {
+                        "symbol": r.symbol,
+                        "stock_name": stock_name,
+                        "open_time": r.open_time,
+                        "open_price": r.open_price,
+                        "close_time": r.close_time,
+                        "close_price": r.close_price,
+                        "qty": r.qty,
+                        "holding_days": r.holding_days,
+                        "pnl_amount": r.pnl_amount,
+                        "pnl_ratio": r.pnl_ratio,
+                        "exit_reason": r.exit_reason,
+                        "max_favorable_excursion": r.max_favorable_excursion,
+                        "max_adverse_excursion": r.max_adverse_excursion,
+                    }
+                )
+            if needs_backfill:
+                db.commit()
+            return data, total
 
         trades, _ = self.get_run_trades(run_id=run_id, current_user=current_user, db=db)
         rounds = self._build_round_trips(trades)
         if rounds:
-            symbol_map = self._get_symbol_name_map(
-                db,
-                [r.get("symbol") for r in rounds if isinstance(r, dict)],
-            )
-            rounds = [
-                {
-                    **r,
-                    "stock_name": symbol_map.get(
-                        self._normalize_symbol_code(r.get("symbol"))
-                    ),
-                }
-                for r in rounds
-            ]
-            self._persist_rounds(db=db, run_id=run_id, rounds=rounds)
-            total = len(rounds)
+            enriched_rounds = self._enrich_rounds_with_stock_name(db, rounds)
+            self._persist_rounds(db=db, run_id=run_id, rounds=enriched_rounds)
+            total = len(enriched_rounds)
             if limit is None:
-                return rounds, total
-            return rounds[offset : offset + limit], total
+                return enriched_rounds, total
+            return enriched_rounds[offset : offset + limit], total
         return [], 0
 
     def get_run_snapshots(
@@ -653,26 +715,12 @@ class BacktestService:
         positions = summary.get("positions_snapshot") or []
         snapshots = positions if isinstance(positions, list) else []
 
-        all_symbols: list[str] = []
-        for s in snapshots:
-            for h in (s.get("holdings") or []) if isinstance(s, dict) else []:
-                if isinstance(h, dict) and h.get("symbol"):
-                    all_symbols.append(str(h.get("symbol")))
-        symbol_map = self._get_symbol_name_map(db, all_symbols)
-
-        enriched_snapshots = []
-        for s in snapshots:
-            if not isinstance(s, dict):
-                enriched_snapshots.append(s)
-                continue
-            holdings = []
-            for h in s.get("holdings") or []:
-                if isinstance(h, dict):
-                    code = self._normalize_symbol_code(h.get("symbol"))
-                    holdings.append({**h, "stock_name": symbol_map.get(code)})
-                else:
-                    holdings.append(h)
-            enriched_snapshots.append({**s, "holdings": holdings})
+        enriched_snapshots = self._enrich_snapshots_with_stock_name(db, snapshots)
+        if enriched_snapshots != snapshots:
+            updated_summary = dict(summary)
+            updated_summary["positions_snapshot"] = enriched_snapshots
+            row.summary = updated_summary
+            db.commit()
 
         total = len(enriched_snapshots)
         if limit is None:
@@ -766,6 +814,7 @@ class BacktestService:
             BacktestRound(
                 run_id=run_id,
                 symbol=str(r.get("symbol", "")),
+                stock_name=r.get("stock_name"),
                 open_time=r.get("open_time"),
                 open_price=float(r.get("open_price", 0) or 0),
                 close_time=r.get("close_time"),
