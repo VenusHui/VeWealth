@@ -14,29 +14,21 @@ def migrate():
     """执行数据库迁移"""
     with engine.connect() as conn:
         try:
-            result = conn.execute(
-                text(
-                    """
+            result = conn.execute(text("""
                     SELECT column_name
                     FROM information_schema.columns
                     WHERE table_name='backtest_rounds' AND column_name='stock_name';
-                    """
-                )
-            )
+                    """))
 
             if result.fetchone():
                 print("✅ stock_name 字段已存在，无需迁移")
                 return
 
             print("开始添加 backtest_rounds.stock_name 字段...")
-            conn.execute(
-                text(
-                    """
+            conn.execute(text("""
                     ALTER TABLE backtest_rounds
                     ADD COLUMN stock_name VARCHAR(100);
-                    """
-                )
-            )
+                    """))
             conn.commit()
             print("✅ 成功添加 stock_name 字段")
         except Exception as e:
