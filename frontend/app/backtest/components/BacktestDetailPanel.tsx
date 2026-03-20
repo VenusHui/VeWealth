@@ -302,6 +302,29 @@ export function BacktestDetailPanel({
                       onChange={(value) => setSnapshotIndex(Number(value))}
                       tooltip={{ formatter: (value) => snapshotItems[Number(value || 0)]?.snapshot_time || '' }}
                     />
+                    <input
+                      type="range"
+                      min={0}
+                      max={Math.max(snapshotItems.length - 1, 0)}
+                      value={snapshotIndex}
+                      onChange={(e) => setSnapshotIndex(Number(e.target.value || 0))}
+                      className="w-full"
+                    />
+                    <Space>
+                      <Button
+                        size="small"
+                        disabled={snapshotIndex <= 0}
+                        onClick={() => setSnapshotIndex((prev) => Math.max(prev - 1, 0))}
+                      >上一帧</Button>
+                      <Button
+                        size="small"
+                        disabled={snapshotIndex >= snapshotItems.length - 1}
+                        onClick={() => setSnapshotIndex((prev) => Math.min(prev + 1, snapshotItems.length - 1))}
+                      >下一帧</Button>
+                      <Typography.Text type="secondary">
+                        {snapshotIndex + 1} / {snapshotItems.length}
+                      </Typography.Text>
+                    </Space>
                     <Typography.Text type="secondary">
                       权益: {currentSnapshot?.equity} | 现金: {currentSnapshot?.cash} | 持仓市值: {currentSnapshot?.position_value}
                     </Typography.Text>
