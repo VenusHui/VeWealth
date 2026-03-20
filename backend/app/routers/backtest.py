@@ -173,7 +173,7 @@ async def get_run_rounds(
 @router.get("/runs/{run_id}/snapshots", response_model=BacktestRunSnapshotsResponse)
 async def get_run_snapshots(
     run_id: int,
-    limit: int = Query(20, ge=1, le=200),
+    limit: int = Query(200, ge=1, le=10000),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
