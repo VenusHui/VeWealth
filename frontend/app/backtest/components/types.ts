@@ -73,6 +73,8 @@ export type SnapshotHolding = {
   last_price?: number
   market_value?: number
   weight?: number
+  position_status?: 'holding' | 'closed_today' | string
+  trade_date?: string
 }
 
 export type SnapshotRow = {
@@ -81,6 +83,30 @@ export type SnapshotRow = {
   cash?: number
   position_value?: number
   holdings?: SnapshotHolding[]
+}
+
+export type BacktestFacts = {
+  summary?: Record<string, unknown>
+  equity_curve_daily?: Array<{
+    trade_date: string
+    equity: number
+    daily_return?: number | null
+  }>
+  positions_daily_eod?: Array<{
+    trade_date: string
+    symbol?: string
+    stock_name?: string
+    qty?: number
+    last_price?: number
+    market_value?: number
+    weight?: number
+    position_status?: 'holding' | 'closed_today' | string
+  }>
+  instrument_meta?: Array<{ symbol?: string; stock_name?: string }>
+  data_quality?: {
+    missing_equity_dates?: string[]
+    missing_snapshot_dates?: string[]
+  }
 }
 
 export type StrategyConfig = Record<string, unknown>

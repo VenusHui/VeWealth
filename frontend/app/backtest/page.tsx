@@ -9,6 +9,7 @@ import { BacktestDetailPanel } from './components/BacktestDetailPanel'
 import { BacktestCreatePanel } from './components/BacktestCreatePanel'
 import type {
   BacktestOverview,
+  BacktestFacts,
   BacktestResult,
   DetailTab,
   JobItem,
@@ -66,6 +67,7 @@ export default function BacktestPage() {
   const [runRoundsPage, setRunRoundsPage] = useState(1)
   const [runRoundsPageSize, setRunRoundsPageSize] = useState(20)
   const [runSnapshots, setRunSnapshots] = useState<SnapshotRow[]>([])
+  const [runFacts, setRunFacts] = useState<BacktestFacts | null>(null)
   const [runStrategyConfig, setRunStrategyConfig] = useState<StrategyConfig | null>(null)
   const [detailLoading, setDetailLoading] = useState({
     overview: false,
@@ -128,6 +130,7 @@ export default function BacktestPage() {
     setRunRoundsTotal(0)
     setRunRoundsPage(1)
     setRunSnapshots([])
+    setRunFacts(null)
     setRunStrategyConfig(null)
     setDetailLoading({
       overview: false,
@@ -180,8 +183,12 @@ export default function BacktestPage() {
         setRunRoundsTotal(resp.data?.total || 0)
       }
       if (tab === 'snapshots') {
-        const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/snapshots?limit=10000&offset=0`, { headers })
-        setRunSnapshots(resp.data?.data || [])
+        const [factsResp, snapshotsResp] = await Promise.all([
+          axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/facts`, { headers }),
+          axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/snapshots?limit=10000&offset=0`, { headers }),
+        ])
+        setRunFacts(factsResp.data?.data || null)
+        setRunSnapshots(snapshotsResp.data?.data || [])
       }
       if (tab === 'strategy') {
         const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/strategy-config`, { headers })
@@ -476,6 +483,7 @@ export default function BacktestPage() {
           runTrades={runTrades}
           runRounds={runRounds}
           runSnapshots={runSnapshots}
+          runFacts={runFacts}
           runStrategyConfig={runStrategyConfig}
           onDownloadCsv={downloadCsv}
           apiBaseUrl={API_BASE_URL}

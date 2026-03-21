@@ -20,6 +20,7 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  ReferenceLine,
 } from 'recharts'
 import { LoadingHint } from './LoadingHint'
 import { BacktestTable } from './BacktestTable'
@@ -31,6 +32,7 @@ import type {
   SnapshotRow,
   StrategyConfig,
   TradeRow,
+  BacktestFacts,
 } from './types'
 
 const detailTabs: { key: DetailTab; label: string }[] = [
@@ -117,6 +119,13 @@ const holdingColumns: ColumnsType<SnapshotHolding> = [
   { title: '现价', dataIndex: 'last_price', key: 'last_price', align: 'right', width: 90 },
   { title: '市值', dataIndex: 'market_value', key: 'market_value', align: 'right', width: 120 },
   { title: '权重', dataIndex: 'weight', key: 'weight', align: 'right', width: 90 },
+  {
+    title: '状态',
+    dataIndex: 'position_status',
+    key: 'position_status',
+    width: 100,
+    render: (v) => (v === 'closed_today' ? <Tag color="gold">当日清仓</Tag> : '-'),
+  },
 ]
 
 export function BacktestDetailPanel({
@@ -128,6 +137,7 @@ export function BacktestDetailPanel({
   runTrades,
   runRounds,
   runSnapshots,
+  runFacts,
   runStrategyConfig,
   onDownloadCsv,
   apiBaseUrl,
@@ -150,6 +160,7 @@ export function BacktestDetailPanel({
   runTrades: TradeRow[]
   runRounds: RoundRow[]
   runSnapshots: SnapshotRow[]
+  runFacts: BacktestFacts | null
   runStrategyConfig: StrategyConfig | null
   onDownloadCsv: (url: string, filename: string) => void
   apiBaseUrl: string
@@ -168,15 +179,40 @@ export function BacktestDetailPanel({
   const symbols = (runStrategyConfig?.symbols as Record<string, unknown>) || {}
 
   const snapshotItems = useMemo(() => runSnapshots || [], [runSnapshots])
+  const factsCurve = useMemo(() => runFacts?.equity_curve_daily || [], [runFacts])
+  const factsPositions = useMemo(() => runFacts?.positions_daily_eod || [], [runFacts])
+  const snapshotDateItems = useMemo(() => {
+    const dates = Array.from(new Set(factsCurve.map((x) => x.trade_date).filter(Boolean))).sort()
+    return dates
+  }, [factsCurve])
   const [snapshotIndex, setSnapshotIndex] = useState(0)
 
   useEffect(() => {
+    if (snapshotDateItems.length > 0) {
+      setSnapshotIndex(snapshotDateItems.length - 1)
+      return
+    }
     if (snapshotItems.length === 0) {
       setSnapshotIndex(0)
       return
     }
     setSnapshotIndex(snapshotItems.length - 1)
-  }, [snapshotItems.length])
+  }, [snapshotDateItems.length, snapshotItems.length])
+
+  const currentTradeDate = snapshotDateItems[snapshotIndex]
+  const currentCurvePoint = factsCurve.find((x) => x.trade_date === currentTradeDate)
+  const currentSnapshotHoldings = useMemo(() => {
+    if (!currentTradeDate) return []
+    return factsPositions
+      .filter((x) => x.trade_date === currentTradeDate)
+      .sort((a, b) => {
+        const sa = a.position_status === 'closed_today' ? 1 : 0
+        const sb = b.position_status === 'closed_today' ? 1 : 0
+        if (sa !== sb) return sa - sb
+        return Number(b.market_value || 0) - Number(a.market_value || 0)
+      })
+      .map((x) => ({ ...x, trade_date: currentTradeDate }))
+  }, [factsPositions, currentTradeDate])
 
   const currentSnapshot = snapshotItems[snapshotIndex]
 
@@ -290,25 +326,30 @@ export function BacktestDetailPanel({
             <Space direction="vertical" size={12} className="w-full">
               {detailLoading.snapshots ? (
                 <LoadingHint text="持仓快照加载中..." />
-              ) : snapshotItems.length === 0 ? (
+              ) : snapshotDateItems.length === 0 && snapshotItems.length === 0 ? (
                 <Empty description="暂无持仓快照数据" />
               ) : (
-                <Card size="small" title={`快照时间：${currentSnapshot?.snapshot_time || '-'}`}>
+                <Card size="small" title={`快照时间：${currentTradeDate || currentSnapshot?.snapshot_time || '-'}`}>
                   <Space direction="vertical" size={12} className="w-full">
+                    <div className="h-[300px] border rounded-lg p-2">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={factsCurve} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="trade_date" tick={{ fontSize: 11 }} minTickGap={24} />
+                          <YAxis tick={{ fontSize: 11 }} domain={['dataMin', 'dataMax']} />
+                          <Tooltip />
+                          <Line type="monotone" dataKey="equity" stroke="#4f46e5" strokeWidth={2} dot={false} />
+                          {currentTradeDate ? <ReferenceLine x={currentTradeDate} stroke="#ef4444" strokeDasharray="4 4" /> : null}
+                          {currentCurvePoint ? <Line data={[currentCurvePoint]} dataKey="equity" stroke="transparent" dot={{ r: 5, fill: '#ef4444' }} /> : null}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
                     <Slider
                       min={0}
-                      max={Math.max(snapshotItems.length - 1, 0)}
+                      max={Math.max(snapshotDateItems.length - 1, 0)}
                       value={snapshotIndex}
                       onChange={(value) => setSnapshotIndex(Number(value))}
-                      tooltip={{ formatter: (value) => snapshotItems[Number(value || 0)]?.snapshot_time || '' }}
-                    />
-                    <input
-                      type="range"
-                      min={0}
-                      max={Math.max(snapshotItems.length - 1, 0)}
-                      value={snapshotIndex}
-                      onChange={(e) => setSnapshotIndex(Number(e.target.value || 0))}
-                      className="w-full"
+                      tooltip={{ formatter: (value) => snapshotDateItems[Number(value || 0)] || '' }}
                     />
                     <Space>
                       <Button
@@ -318,23 +359,32 @@ export function BacktestDetailPanel({
                       >上一帧</Button>
                       <Button
                         size="small"
-                        disabled={snapshotIndex >= snapshotItems.length - 1}
-                        onClick={() => setSnapshotIndex((prev) => Math.min(prev + 1, snapshotItems.length - 1))}
+                        disabled={snapshotIndex >= snapshotDateItems.length - 1}
+                        onClick={() => setSnapshotIndex((prev) => Math.min(prev + 1, snapshotDateItems.length - 1))}
                       >下一帧</Button>
                       <Typography.Text type="secondary">
-                        {snapshotIndex + 1} / {snapshotItems.length}
+                        {snapshotIndex + 1} / {snapshotDateItems.length}
                       </Typography.Text>
                     </Space>
                     <Typography.Text type="secondary">
-                      权益: {currentSnapshot?.equity} | 现金: {currentSnapshot?.cash} | 持仓市值: {currentSnapshot?.position_value}
+                      权益: {currentCurvePoint?.equity ?? currentSnapshot?.equity ?? '-'}
+                      {' '}| 当日收益率: {currentCurvePoint?.daily_return != null ? fmtPct(currentCurvePoint.daily_return) : '-'}
                     </Typography.Text>
+                    {(runFacts?.data_quality?.missing_equity_dates?.length || 0) > 0 || (runFacts?.data_quality?.missing_snapshot_dates?.length || 0) > 0 ? (
+                      <Alert
+                        type="warning"
+                        message="数据对齐存在缺失"
+                        description={`缺资金曲线日期: ${(runFacts?.data_quality?.missing_equity_dates || []).join(', ') || '-'}；缺快照日期: ${(runFacts?.data_quality?.missing_snapshot_dates || []).join(', ') || '-'}`}
+                      />
+                    ) : null}
                     <BacktestTable<SnapshotHolding>
-                      rowKey={(record, index) => `${record.symbol || ''}-${index}`}
+                      rowKey={(record, index) => `${record.trade_date || ''}-${record.symbol || ''}-${index}`}
                       columns={holdingColumns}
-                      dataSource={currentSnapshot?.holdings || []}
+                      dataSource={currentSnapshotHoldings.length > 0 ? currentSnapshotHoldings : (currentSnapshot?.holdings || [])}
                       pagination={false}
-                      scroll={{ x: 680, y: 420 }}
+                      scroll={{ x: 760, y: 420 }}
                       locale={{ emptyText: '空仓' }}
+                      rowClassName={(record) => (record.position_status === 'closed_today' ? 'opacity-70' : '')}
                     />
                   </Space>
                 </Card>
