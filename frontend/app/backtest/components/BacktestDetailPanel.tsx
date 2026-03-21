@@ -217,11 +217,6 @@ export function BacktestDetailPanel({
   }, [snapshotDateItems.length, snapshotItems.length])
 
   const hasFactsTimeline = snapshotDateItems.length > 0
-  const maxTimelineIndex = Math.max((hasFactsTimeline ? snapshotDateItems.length : snapshotItems.length) - 1, 0)
-  const safeSnapshotIndex = Math.min(Math.max(snapshotIndex, 0), maxTimelineIndex)
-
-  const currentTradeDate = snapshotDateItems[safeSnapshotIndex]
-  const currentCurvePoint = factsCurve.find((x) => x.trade_date === currentTradeDate)
   const benchmarkByDate = useMemo(() => {
     const map = new Map<string, number>()
     for (const p of runFacts?.benchmark_curve_daily || []) {
@@ -260,6 +255,16 @@ export function BacktestDetailPanel({
       })
       .filter((row) => row.main_norm != null)
   }, [snapshotDateItems, mainNormByDate, benchmarkByDate, compareByDate])
+
+  const timelineDates = useMemo(
+    () => (hasFactsTimeline ? comparisonChartData.map((x) => x.trade_date) : snapshotItems.map((x) => x.snapshot_time || '')),
+    [hasFactsTimeline, comparisonChartData, snapshotItems]
+  )
+  const maxTimelineIndex = Math.max(timelineDates.length - 1, 0)
+  const safeSnapshotIndex = Math.min(Math.max(snapshotIndex, 0), maxTimelineIndex)
+
+  const currentTradeDate = timelineDates[safeSnapshotIndex]
+  const currentCurvePoint = factsCurve.find((x) => x.trade_date === currentTradeDate)
 
   const compareRunOptions = useMemo(
     () => (allRuns || [])
