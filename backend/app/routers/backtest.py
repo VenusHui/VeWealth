@@ -23,6 +23,7 @@ from app.schemas.backtest import (
     BacktestRunRoundsResponse,
     BacktestRunSnapshotsResponse,
     BacktestRunStrategyConfigResponse,
+    BacktestRunFactsResponse,
     BacktestUniverseStatsResponse,
 )
 from app.services.backtest import backtest_service, backtest_job_manager
@@ -289,6 +290,21 @@ async def get_run_strategy_config(
             status_code=status.HTTP_404_NOT_FOUND, detail="回测记录不存在"
         )
     return BacktestRunStrategyConfigResponse(data=config)
+
+
+@router.get("/runs/{run_id}/facts", response_model=BacktestRunFactsResponse)
+async def get_run_facts(
+    run_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    _get_run_or_404(run_id=run_id, current_user=current_user, db=db)
+    data = backtest_service.get_run_facts(
+        run_id=run_id,
+        current_user=current_user,
+        db=db,
+    )
+    return BacktestRunFactsResponse(data=data)
 
 
 @router.post("/jobs", response_model=BacktestJobCreateResponse)

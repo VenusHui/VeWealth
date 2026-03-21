@@ -189,6 +189,11 @@ class BacktestRunStrategyConfigResponse(BaseModel):
     data: dict[str, Any]
 
 
+class BacktestRunFactsResponse(BaseModel):
+    success: bool = True
+    data: dict[str, Any]
+
+
 class BacktestUniverseStatsResponse(BaseModel):
     success: bool = True
     data: dict[str, Any]

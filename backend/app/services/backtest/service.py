@@ -111,6 +111,12 @@ class BacktestService:
             enriched_snapshots.append({**snapshot, "holdings": holdings})
         return enriched_snapshots
 
+    def _extract_trade_date(self, value: Any) -> str | None:
+        text = str(value or "").strip()
+        if len(text) >= 10:
+            return text[:10]
+        return None
+
     def get_universe_stats(self, db: Session) -> dict[str, Any]:
         base_query = db.query(SecurityUniverse).filter(
             SecurityUniverse.is_active.is_(True)
@@ -726,6 +732,163 @@ class BacktestService:
         if limit is None:
             return enriched_snapshots, total
         return enriched_snapshots[offset : offset + limit], total
+
+    def get_run_facts(
+        self,
+        run_id: int,
+        current_user: User,
+        db: Session,
+    ) -> dict[str, Any]:
+        run = self.get_run(run_id=run_id, current_user=current_user, db=db)
+        if not run:
+            return {
+                "run_id": run_id,
+                "summary": {},
+                "equity_curve_daily": [],
+                "positions_daily_eod": [],
+                "instrument_meta": [],
+                "data_quality": {
+                    "missing_equity_dates": [],
+                    "missing_snapshot_dates": [],
+                },
+            }
+
+        summary = run.summary or {}
+        snapshots_raw = summary.get("positions_snapshot") or []
+        snapshots = snapshots_raw if isinstance(snapshots_raw, list) else []
+        snapshots = self._enrich_snapshots_with_stock_name(db, snapshots)
+
+        trades_raw = run.trades or []
+        trades = self._enrich_trades_with_stock_name(db, trades_raw)
+
+        equity_curve_raw = run.equity_curve or []
+        equity_by_date: dict[str, float] = {}
+        for point in equity_curve_raw:
+            if not isinstance(point, dict):
+                continue
+            d = self._extract_trade_date(point.get("datetime"))
+            if not d:
+                continue
+            eq = point.get("equity")
+            try:
+                equity_by_date[d] = round(float(eq), 4)
+            except (TypeError, ValueError):
+                continue
+
+        equity_dates = sorted(equity_by_date.keys())
+        equity_curve_daily: list[dict[str, Any]] = []
+        prev_equity: float | None = None
+        for d in equity_dates:
+            curr_equity = equity_by_date[d]
+            daily_return = None
+            if prev_equity is not None and prev_equity != 0:
+                daily_return = round((curr_equity - prev_equity) / prev_equity, 6)
+            equity_curve_daily.append(
+                {
+                    "trade_date": d,
+                    "equity": curr_equity,
+                    "daily_return": daily_return,
+                }
+            )
+            prev_equity = curr_equity
+
+        snapshot_by_date: dict[str, dict[str, Any]] = {}
+        all_symbols: set[str] = set()
+        for snap in snapshots:
+            if not isinstance(snap, dict):
+                continue
+            d = self._extract_trade_date(snap.get("snapshot_time"))
+            if not d:
+                continue
+            snapshot_by_date[d] = snap
+            for h in snap.get("holdings") or []:
+                if isinstance(h, dict) and h.get("symbol"):
+                    all_symbols.add(str(h.get("symbol")))
+
+        sells_by_date: dict[str, set[str]] = defaultdict(set)
+        for trade in trades:
+            if not isinstance(trade, dict):
+                continue
+            if str(trade.get("side") or "").lower() != "sell":
+                continue
+            d = self._extract_trade_date(trade.get("datetime"))
+            symbol = str(trade.get("symbol") or "").strip()
+            if not d or not symbol:
+                continue
+            sells_by_date[d].add(symbol)
+            all_symbols.add(symbol)
+
+        symbol_name_map = self._get_symbol_name_map(db, list(all_symbols))
+        positions_daily_eod: list[dict[str, Any]] = []
+        snapshot_dates = sorted(snapshot_by_date.keys())
+        for d in snapshot_dates:
+            snap = snapshot_by_date[d]
+            holdings = snap.get("holdings") or []
+            existing_symbols: set[str] = set()
+            for h in holdings:
+                if not isinstance(h, dict):
+                    continue
+                symbol = str(h.get("symbol") or "").strip()
+                if not symbol:
+                    continue
+                existing_symbols.add(symbol)
+                code = self._normalize_symbol_code(symbol)
+                stock_name = h.get("stock_name") or symbol_name_map.get(code)
+                qty = int(h.get("qty", 0) or 0)
+                last_price = float(h.get("last_price", 0) or 0)
+                market_value = float(h.get("market_value", 0) or 0)
+                weight = float(h.get("weight", 0) or 0)
+                positions_daily_eod.append(
+                    {
+                        "trade_date": d,
+                        "symbol": symbol,
+                        "stock_name": stock_name,
+                        "qty": qty,
+                        "last_price": round(last_price, 4),
+                        "market_value": round(market_value, 4),
+                        "weight": round(weight, 6),
+                        "position_status": "holding",
+                    }
+                )
+
+            for symbol in sorted(sells_by_date.get(d, set())):
+                if symbol in existing_symbols:
+                    continue
+                code = self._normalize_symbol_code(symbol)
+                stock_name = symbol_name_map.get(code)
+                positions_daily_eod.append(
+                    {
+                        "trade_date": d,
+                        "symbol": symbol,
+                        "stock_name": stock_name,
+                        "qty": 0,
+                        "last_price": 0.0,
+                        "market_value": 0.0,
+                        "weight": 0.0,
+                        "position_status": "closed_today",
+                    }
+                )
+
+        equity_date_set = set(equity_dates)
+        snapshot_date_set = set(snapshot_dates)
+
+        return {
+            "run_id": run.id,
+            "summary": summary,
+            "equity_curve_daily": equity_curve_daily,
+            "positions_daily_eod": positions_daily_eod,
+            "instrument_meta": [
+                {
+                    "symbol": s,
+                    "stock_name": symbol_name_map.get(self._normalize_symbol_code(s)),
+                }
+                for s in sorted(all_symbols)
+            ],
+            "data_quality": {
+                "missing_equity_dates": sorted(snapshot_date_set - equity_date_set),
+                "missing_snapshot_dates": sorted(equity_date_set - snapshot_date_set),
+            },
+        }
 
     def get_run_strategy_config(
         self, run_id: int, current_user: User, db: Session
