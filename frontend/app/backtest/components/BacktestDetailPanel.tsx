@@ -216,7 +216,11 @@ export function BacktestDetailPanel({
     setSnapshotIndex(snapshotItems.length - 1)
   }, [snapshotDateItems.length, snapshotItems.length])
 
-  const currentTradeDate = snapshotDateItems[snapshotIndex]
+  const hasFactsTimeline = snapshotDateItems.length > 0
+  const maxTimelineIndex = Math.max((hasFactsTimeline ? snapshotDateItems.length : snapshotItems.length) - 1, 0)
+  const safeSnapshotIndex = Math.min(Math.max(snapshotIndex, 0), maxTimelineIndex)
+
+  const currentTradeDate = snapshotDateItems[safeSnapshotIndex]
   const currentCurvePoint = factsCurve.find((x) => x.trade_date === currentTradeDate)
   const benchmarkByDate = useMemo(() => {
     const map = new Map<string, number>()
@@ -270,7 +274,7 @@ export function BacktestDetailPanel({
       .map((x) => ({ ...x, trade_date: currentTradeDate }))
   }, [factsPositions, currentTradeDate])
 
-  const currentSnapshot = snapshotItems[snapshotIndex]
+  const currentSnapshot = snapshotItems[safeSnapshotIndex]
 
   return (
     <Card title={`回测详情 ${selectedRunId ? `(Run #${selectedRunId})` : ''}`}>
@@ -429,24 +433,29 @@ export function BacktestDetailPanel({
                     </div>
                     <Slider
                       min={0}
-                      max={Math.max(snapshotDateItems.length - 1, 0)}
-                      value={snapshotIndex}
+                      max={maxTimelineIndex}
+                      value={safeSnapshotIndex}
                       onChange={(value) => setSnapshotIndex(Number(value))}
-                      tooltip={{ formatter: (value) => snapshotDateItems[Number(value || 0)] || '' }}
+                      tooltip={{
+                        formatter: (value) =>
+                          hasFactsTimeline
+                            ? snapshotDateItems[Number(value || 0)] || ''
+                            : snapshotItems[Number(value || 0)]?.snapshot_time || '',
+                      }}
                     />
                     <Space>
                       <Button
                         size="small"
-                        disabled={snapshotIndex <= 0}
+                        disabled={safeSnapshotIndex <= 0}
                         onClick={() => setSnapshotIndex((prev) => Math.max(prev - 1, 0))}
                       >上一帧</Button>
                       <Button
                         size="small"
-                        disabled={snapshotIndex >= snapshotDateItems.length - 1}
-                        onClick={() => setSnapshotIndex((prev) => Math.min(prev + 1, snapshotDateItems.length - 1))}
+                        disabled={safeSnapshotIndex >= maxTimelineIndex}
+                        onClick={() => setSnapshotIndex((prev) => Math.min(prev + 1, maxTimelineIndex))}
                       >下一帧</Button>
                       <Typography.Text type="secondary">
-                        {snapshotIndex + 1} / {snapshotDateItems.length}
+                        {safeSnapshotIndex + 1} / {maxTimelineIndex + 1}
                       </Typography.Text>
                     </Space>
                     <Typography.Text type="secondary">
