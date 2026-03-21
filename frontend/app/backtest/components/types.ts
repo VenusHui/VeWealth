@@ -92,6 +92,25 @@ export type BacktestFacts = {
     equity: number
     daily_return?: number | null
   }>
+  benchmark_curve_daily?: Array<{
+    trade_date: string
+    value_raw?: number
+    value_norm?: number | null
+  }>
+  benchmark_meta?: {
+    benchmark_code?: string
+    source_type?: 'tr' | 'price' | string
+    source_note?: string | null
+  } | null
+  compare_run_curve_daily?: Array<{
+    trade_date: string
+    value_raw?: number
+    value_norm?: number | null
+  }>
+  compare_run_meta?: {
+    run_id?: number
+    run_name?: string
+  } | null
   positions_daily_eod?: Array<{
     trade_date: string
     symbol?: string

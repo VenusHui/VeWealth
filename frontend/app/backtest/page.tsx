@@ -68,6 +68,8 @@ export default function BacktestPage() {
   const [runRoundsPageSize, setRunRoundsPageSize] = useState(20)
   const [runSnapshots, setRunSnapshots] = useState<SnapshotRow[]>([])
   const [runFacts, setRunFacts] = useState<BacktestFacts | null>(null)
+  const [snapshotBenchmarkCode, setSnapshotBenchmarkCode] = useState<string | undefined>(undefined)
+  const [snapshotCompareRunId, setSnapshotCompareRunId] = useState<number | undefined>(undefined)
   const [runStrategyConfig, setRunStrategyConfig] = useState<StrategyConfig | null>(null)
   const [detailLoading, setDetailLoading] = useState({
     overview: false,
@@ -131,6 +133,8 @@ export default function BacktestPage() {
     setRunRoundsPage(1)
     setRunSnapshots([])
     setRunFacts(null)
+    setSnapshotBenchmarkCode(undefined)
+    setSnapshotCompareRunId(undefined)
     setRunStrategyConfig(null)
     setDetailLoading({
       overview: false,
@@ -157,6 +161,7 @@ export default function BacktestPage() {
     tab: DetailTab,
     page?: number,
     pageSize?: number,
+    snapshotOptions?: { benchmarkCode?: string; compareRunId?: number },
   ) => {
     const headers = getAuthHeader()
     setDetailLoading((prev) => ({ ...prev, [tab]: true }))
@@ -183,8 +188,15 @@ export default function BacktestPage() {
         setRunRoundsTotal(resp.data?.total || 0)
       }
       if (tab === 'snapshots') {
+        const benchmarkCode = snapshotOptions?.benchmarkCode
+        const compareRunId = snapshotOptions?.compareRunId
+        const params = new URLSearchParams()
+        if (benchmarkCode) params.set('benchmark_code', benchmarkCode)
+        if (compareRunId) params.set('compare_run_id', String(compareRunId))
+        const qs = params.toString()
+        const factsUrl = `${API_BASE_URL}/api/backtest/runs/${runId}/facts${qs ? `?${qs}` : ''}`
         const [factsResp, snapshotsResp] = await Promise.all([
-          axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/facts`, { headers }),
+          axios.get(factsUrl, { headers }),
           axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/snapshots?limit=10000&offset=0`, { headers }),
         ])
         setRunFacts(factsResp.data?.data || null)
@@ -308,13 +320,16 @@ export default function BacktestPage() {
       return
     }
     if (detailTab === 'snapshots' && !detailLoaded.snapshots && !detailLoading.snapshots) {
-      loadDetailTabData(selectedRunId, 'snapshots')
+      loadDetailTabData(selectedRunId, 'snapshots', undefined, undefined, {
+        benchmarkCode: snapshotBenchmarkCode,
+        compareRunId: snapshotCompareRunId,
+      })
       return
     }
     if (detailTab === 'strategy' && !detailLoaded.strategy && !detailLoading.strategy) {
       loadDetailTabData(selectedRunId, 'strategy')
     }
-  }, [mainTab, selectedRunId, detailTab, detailLoaded, detailLoading, loadDetailTabData])
+  }, [mainTab, selectedRunId, detailTab, detailLoaded, detailLoading, loadDetailTabData, snapshotBenchmarkCode, snapshotCompareRunId])
 
   const handleRun = async () => {
     if (!isAuthenticated()) {
@@ -395,6 +410,16 @@ export default function BacktestPage() {
     setRunRoundsPageSize(size)
     setRunRoundsPage(1)
     loadDetailTabData(selectedRunId, 'rounds', 1, size)
+  }
+
+  const changeSnapshotComparison = (benchmarkCode?: string, compareRunId?: number) => {
+    if (!selectedRunId) return
+    setSnapshotBenchmarkCode(benchmarkCode)
+    setSnapshotCompareRunId(compareRunId)
+    loadDetailTabData(selectedRunId, 'snapshots', undefined, undefined, {
+      benchmarkCode,
+      compareRunId,
+    })
   }
 
   if (!isAuthenticated()) {
@@ -484,6 +509,10 @@ export default function BacktestPage() {
           runRounds={runRounds}
           runSnapshots={runSnapshots}
           runFacts={runFacts}
+          allRuns={runs}
+          benchmarkCode={snapshotBenchmarkCode}
+          compareRunId={snapshotCompareRunId}
+          onChangeSnapshotComparison={changeSnapshotComparison}
           runStrategyConfig={runStrategyConfig}
           onDownloadCsv={downloadCsv}
           apiBaseUrl={API_BASE_URL}

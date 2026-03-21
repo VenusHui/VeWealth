@@ -6,6 +6,7 @@ import {
   Collapse,
   Descriptions,
   Empty,
+  Select,
   Slider,
   Space,
   Tag,
@@ -28,6 +29,7 @@ import type {
   BacktestOverview,
   DetailTab,
   RoundRow,
+  RunItem,
   SnapshotHolding,
   SnapshotRow,
   StrategyConfig,
@@ -41,6 +43,13 @@ const detailTabs: { key: DetailTab; label: string }[] = [
   { key: 'rounds', label: '回合交易' },
   { key: 'snapshots', label: '持仓快照' },
   { key: 'strategy', label: '策略配置' },
+]
+
+const benchmarkOptions = [
+  { label: '上证综指', value: '000001.SH' },
+  { label: '深证成指', value: '399001.SZ' },
+  { label: '创业板指', value: '399006.SZ' },
+  { label: '沪深300', value: '000300.SH' },
 ]
 
 function fmtPct(value: unknown): string {
@@ -138,6 +147,10 @@ export function BacktestDetailPanel({
   runRounds,
   runSnapshots,
   runFacts,
+  allRuns,
+  benchmarkCode,
+  compareRunId,
+  onChangeSnapshotComparison,
   runStrategyConfig,
   onDownloadCsv,
   apiBaseUrl,
@@ -161,6 +174,10 @@ export function BacktestDetailPanel({
   runRounds: RoundRow[]
   runSnapshots: SnapshotRow[]
   runFacts: BacktestFacts | null
+  allRuns: RunItem[]
+  benchmarkCode?: string
+  compareRunId?: number
+  onChangeSnapshotComparison: (benchmarkCode?: string, compareRunId?: number) => void
   runStrategyConfig: StrategyConfig | null
   onDownloadCsv: (url: string, filename: string) => void
   apiBaseUrl: string
@@ -201,6 +218,45 @@ export function BacktestDetailPanel({
 
   const currentTradeDate = snapshotDateItems[snapshotIndex]
   const currentCurvePoint = factsCurve.find((x) => x.trade_date === currentTradeDate)
+  const benchmarkByDate = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const p of runFacts?.benchmark_curve_daily || []) {
+      if (p.trade_date && p.value_norm != null) map.set(p.trade_date, Number(p.value_norm))
+    }
+    return map
+  }, [runFacts])
+  const compareByDate = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const p of runFacts?.compare_run_curve_daily || []) {
+      if (p.trade_date && p.value_norm != null) map.set(p.trade_date, Number(p.value_norm))
+    }
+    return map
+  }, [runFacts])
+  const mainNormByDate = useMemo(() => {
+    const map = new Map<string, number>()
+    const first = factsCurve.find((x) => Number(x.equity) > 0)
+    const base = first ? Number(first.equity) : 0
+    for (const p of factsCurve) {
+      if (base > 0) map.set(p.trade_date, Number((Number(p.equity) / base).toFixed(6)))
+    }
+    return map
+  }, [factsCurve])
+  const comparisonChartData = useMemo(() => {
+    return snapshotDateItems.map((d) => ({
+      trade_date: d,
+      main_norm: mainNormByDate.get(d),
+      benchmark_norm: benchmarkByDate.get(d),
+      compare_norm: compareByDate.get(d),
+    }))
+  }, [snapshotDateItems, mainNormByDate, benchmarkByDate, compareByDate])
+
+  const compareRunOptions = useMemo(
+    () => (allRuns || [])
+      .filter((r) => selectedRunId == null || r.id !== selectedRunId)
+      .map((r) => ({ label: `#${r.id} ${r.name}`, value: r.id })),
+    [allRuns, selectedRunId]
+  )
+
   const currentSnapshotHoldings = useMemo(() => {
     if (!currentTradeDate) return []
     return factsPositions
@@ -331,16 +387,43 @@ export function BacktestDetailPanel({
               ) : (
                 <Card size="small" title={`快照时间：${currentTradeDate || currentSnapshot?.snapshot_time || '-'}`}>
                   <Space direction="vertical" size={12} className="w-full">
+                    <Space wrap>
+                      <Select
+                        allowClear
+                        style={{ width: 220 }}
+                        placeholder="指数对比"
+                        options={benchmarkOptions}
+                        value={benchmarkCode}
+                        onChange={(value) => onChangeSnapshotComparison(value, compareRunId)}
+                      />
+                      <Select
+                        allowClear
+                        style={{ width: 280 }}
+                        placeholder="策略对比（单选）"
+                        options={compareRunOptions}
+                        value={compareRunId}
+                        onChange={(value) => onChangeSnapshotComparison(benchmarkCode, value)}
+                      />
+                      {runFacts?.benchmark_meta?.source_type ? (
+                        <Tag color={runFacts?.benchmark_meta?.source_type === 'tr' ? 'green' : 'orange'}>
+                          指数口径：{String(runFacts?.benchmark_meta?.source_type || '').toUpperCase()}
+                        </Tag>
+                      ) : null}
+                    </Space>
+                    {runFacts?.benchmark_meta?.source_note ? (
+                      <Alert type="warning" message={runFacts.benchmark_meta.source_note} />
+                    ) : null}
                     <div className="h-[300px] border rounded-lg p-2">
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={factsCurve} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
+                        <LineChart data={comparisonChartData} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis dataKey="trade_date" tick={{ fontSize: 11 }} minTickGap={24} />
                           <YAxis tick={{ fontSize: 11 }} domain={['dataMin', 'dataMax']} />
                           <Tooltip />
-                          <Line type="monotone" dataKey="equity" stroke="#4f46e5" strokeWidth={2} dot={false} />
+                          <Line type="monotone" dataKey="main_norm" name="主策略" stroke="#4f46e5" strokeWidth={2} dot={false} />
+                          <Line type="monotone" dataKey="benchmark_norm" name="指数对比" stroke="#f59e0b" strokeWidth={2} dot={false} connectNulls={false} />
+                          <Line type="monotone" dataKey="compare_norm" name="策略对比" stroke="#10b981" strokeWidth={2} dot={false} connectNulls={false} />
                           {currentTradeDate ? <ReferenceLine x={currentTradeDate} stroke="#ef4444" strokeDasharray="4 4" /> : null}
-                          {currentCurvePoint ? <Line data={[currentCurvePoint]} dataKey="equity" stroke="transparent" dot={{ r: 5, fill: '#ef4444' }} /> : null}
                         </LineChart>
                       </ResponsiveContainer>
                     </div>

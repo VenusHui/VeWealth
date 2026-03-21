@@ -295,6 +295,8 @@ async def get_run_strategy_config(
 @router.get("/runs/{run_id}/facts", response_model=BacktestRunFactsResponse)
 async def get_run_facts(
     run_id: int,
+    benchmark_code: str | None = Query(None),
+    compare_run_id: int | None = Query(None, ge=1),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
@@ -303,6 +305,8 @@ async def get_run_facts(
         run_id=run_id,
         current_user=current_user,
         db=db,
+        benchmark_code=benchmark_code,
+        compare_run_id=compare_run_id,
     )
     return BacktestRunFactsResponse(data=data)
 

@@ -733,11 +733,77 @@ class BacktestService:
             return enriched_snapshots, total
         return enriched_snapshots[offset : offset + limit], total
 
+    def _normalize_curve_to_base_one(
+        self, values_by_date: dict[str, float], base_dates: list[str]
+    ) -> list[dict[str, Any]]:
+        base_value: float | None = None
+        result: list[dict[str, Any]] = []
+        for d in base_dates:
+            raw = values_by_date.get(d)
+            if raw is None:
+                continue
+            if base_value is None and raw != 0:
+                base_value = raw
+            norm = None
+            if base_value is not None and base_value != 0:
+                norm = round(raw / base_value, 6)
+            result.append({"trade_date": d, "value_raw": raw, "value_norm": norm})
+        return result
+
+    def _load_benchmark_series(
+        self, benchmark_code: str, start_date: str, end_date: str
+    ) -> tuple[dict[str, float], str, str | None]:
+        code = (benchmark_code or "").strip()
+        if not code:
+            return {}, "price", None
+
+        tr_candidates = [f"{code}_TR", f"{code}.TR"]
+        for tr_code in tr_candidates:
+            try:
+                tr_df, _, _ = stock_service.get_daily_data(
+                    symbol=tr_code, start_date=start_date, end_date=end_date
+                )
+                if tr_df is not None and not tr_df.empty:
+                    tr_values: dict[str, float] = {}
+                    for _, row in tr_df.iterrows():
+                        d = self._extract_trade_date(row.get("datetime"))
+                        if not d:
+                            continue
+                        tr_values[d] = float(row.get("close", 0) or 0)
+                    if tr_values:
+                        return tr_values, "tr", None
+            except Exception:
+                continue
+
+        try:
+            px_df, _, _ = stock_service.get_daily_data(
+                symbol=code, start_date=start_date, end_date=end_date
+            )
+            px_values: dict[str, float] = {}
+            if px_df is not None and not px_df.empty:
+                for _, row in px_df.iterrows():
+                    d = self._extract_trade_date(row.get("datetime"))
+                    if not d:
+                        continue
+                    px_values[d] = float(row.get("close", 0) or 0)
+            if px_values:
+                return (
+                    px_values,
+                    "price",
+                    "TR不可用，回退价格指数（未含分红）",
+                )
+        except Exception:
+            pass
+
+        return {}, "price", "指数数据不可用"
+
     def get_run_facts(
         self,
         run_id: int,
         current_user: User,
         db: Session,
+        benchmark_code: str | None = None,
+        compare_run_id: int | None = None,
     ) -> dict[str, Any]:
         run = self.get_run(run_id=run_id, current_user=current_user, db=db)
         if not run:
@@ -747,6 +813,10 @@ class BacktestService:
                 "equity_curve_daily": [],
                 "positions_daily_eod": [],
                 "instrument_meta": [],
+                "benchmark_curve_daily": [],
+                "benchmark_meta": None,
+                "compare_run_curve_daily": [],
+                "compare_run_meta": None,
                 "data_quality": {
                     "missing_equity_dates": [],
                     "missing_snapshot_dates": [],
@@ -872,6 +942,51 @@ class BacktestService:
         equity_date_set = set(equity_dates)
         snapshot_date_set = set(snapshot_dates)
 
+        benchmark_curve_daily: list[dict[str, Any]] = []
+        benchmark_meta: dict[str, Any] | None = None
+        if benchmark_code and run.start_date and run.end_date:
+            benchmark_values, source_type, source_note = self._load_benchmark_series(
+                benchmark_code=benchmark_code,
+                start_date=run.start_date.strftime("%Y-%m-%d"),
+                end_date=run.end_date.strftime("%Y-%m-%d"),
+            )
+            benchmark_curve_daily = self._normalize_curve_to_base_one(
+                benchmark_values, equity_dates
+            )
+            benchmark_meta = {
+                "benchmark_code": benchmark_code,
+                "source_type": source_type,
+                "source_note": source_note,
+            }
+
+        compare_run_curve_daily: list[dict[str, Any]] = []
+        compare_run_meta: dict[str, Any] | None = None
+        if compare_run_id and compare_run_id != run.id:
+            compare_run = self.get_run(
+                run_id=compare_run_id,
+                current_user=current_user,
+                db=db,
+            )
+            if compare_run:
+                compare_values: dict[str, float] = {}
+                for point in compare_run.equity_curve or []:
+                    if not isinstance(point, dict):
+                        continue
+                    d = self._extract_trade_date(point.get("datetime"))
+                    if not d:
+                        continue
+                    try:
+                        compare_values[d] = float(point.get("equity", 0) or 0)
+                    except (TypeError, ValueError):
+                        continue
+                compare_run_curve_daily = self._normalize_curve_to_base_one(
+                    compare_values, equity_dates
+                )
+                compare_run_meta = {
+                    "run_id": compare_run.id,
+                    "run_name": compare_run.name,
+                }
+
         return {
             "run_id": run.id,
             "summary": summary,
@@ -884,6 +999,10 @@ class BacktestService:
                 }
                 for s in sorted(all_symbols)
             ],
+            "benchmark_curve_daily": benchmark_curve_daily,
+            "benchmark_meta": benchmark_meta,
+            "compare_run_curve_daily": compare_run_curve_daily,
+            "compare_run_meta": compare_run_meta,
             "data_quality": {
                 "missing_equity_dates": sorted(snapshot_date_set - equity_date_set),
                 "missing_snapshot_dates": sorted(equity_date_set - snapshot_date_set),
