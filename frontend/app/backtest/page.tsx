@@ -29,6 +29,7 @@ const ACTIVE_JOB_STATUSES = ['pending', 'running'] as const
 export default function BacktestPage() {
   const [mainTab, setMainTab] = useState<MainTab>('create')
   const [detailTab, setDetailTab] = useState<DetailTab>('overview')
+  const [mounted, setMounted] = useState(false)
 
   const [strategies, setStrategies] = useState<Strategy[]>([])
   const [strategyId, setStrategyId] = useState('')
@@ -228,6 +229,11 @@ export default function BacktestPage() {
   }
 
   useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  useEffect(() => {
+    if (!mounted) return
     if (!isAuthenticated()) return
 
     const fetchStrategies = async () => {
@@ -254,11 +260,12 @@ export default function BacktestPage() {
 
     fetchStrategies()
     fetchJobs()
-  }, [fetchJobs])
+  }, [fetchJobs, mounted])
 
   useEffect(() => {
+    if (!mounted) return
     fetchRuns(runsPage, runsPageSize)
-  }, [fetchRuns, runsPage, runsPageSize])
+  }, [fetchRuns, runsPage, runsPageSize, mounted])
 
   useEffect(() => {
     if (!selectedStrategy) return
@@ -420,6 +427,10 @@ export default function BacktestPage() {
       benchmarkCode,
       compareRunId,
     })
+  }
+
+  if (!mounted) {
+    return <div className="max-w-3xl mx-auto py-10 px-4">加载中...</div>
   }
 
   if (!isAuthenticated()) {
