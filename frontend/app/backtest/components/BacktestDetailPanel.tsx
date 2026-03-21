@@ -246,12 +246,19 @@ export function BacktestDetailPanel({
     return map
   }, [factsCurve])
   const comparisonChartData = useMemo(() => {
-    return snapshotDateItems.map((d) => ({
-      trade_date: d,
-      main_norm: mainNormByDate.get(d),
-      benchmark_norm: benchmarkByDate.get(d),
-      compare_norm: compareByDate.get(d),
-    }))
+    return snapshotDateItems
+      .map((d) => {
+        const mainNorm = mainNormByDate.get(d)
+        const benchmarkNorm = benchmarkByDate.get(d)
+        const compareNorm = compareByDate.get(d)
+        return {
+          trade_date: d,
+          main_norm: Number.isFinite(mainNorm as number) ? (mainNorm as number) : null,
+          benchmark_norm: Number.isFinite(benchmarkNorm as number) ? (benchmarkNorm as number) : null,
+          compare_norm: Number.isFinite(compareNorm as number) ? (compareNorm as number) : null,
+        }
+      })
+      .filter((row) => row.main_norm != null)
   }, [snapshotDateItems, mainNormByDate, benchmarkByDate, compareByDate])
 
   const compareRunOptions = useMemo(
@@ -422,7 +429,7 @@ export function BacktestDetailPanel({
                         <LineChart data={comparisonChartData} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis dataKey="trade_date" tick={{ fontSize: 11 }} minTickGap={24} />
-                          <YAxis tick={{ fontSize: 11 }} domain={['dataMin', 'dataMax']} />
+                          <YAxis tick={{ fontSize: 11 }} domain={[0.8, 'auto']} />
                           <Tooltip />
                           <Line type="monotone" dataKey="main_norm" name="主策略" stroke="#4f46e5" strokeWidth={2} dot={false} />
                           <Line type="monotone" dataKey="benchmark_norm" name="指数对比" stroke="#f59e0b" strokeWidth={2} dot={false} connectNulls={false} />
