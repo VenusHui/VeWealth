@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Component, type ReactNode, useEffect, useMemo, useState } from 'react'
 import {
   Alert,
   Button,
@@ -51,6 +51,32 @@ const benchmarkOptions = [
   { label: '创业板指', value: '399006.SZ' },
   { label: '沪深300', value: '000300.SH' },
 ]
+
+class SnapshotErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error: unknown) {
+    // eslint-disable-next-line no-console
+    console.error('Snapshot panel render error', error)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <Alert type="error" message="快照图表渲染异常，请刷新页面重试" />
+    }
+    return this.props.children
+  }
+}
 
 function fmtPct(value: unknown): string {
   const num = Number(value)
@@ -401,6 +427,7 @@ export function BacktestDetailPanel({
               ) : snapshotDateItems.length === 0 && snapshotItems.length === 0 ? (
                 <Empty description="暂无持仓快照数据" />
               ) : (
+                <SnapshotErrorBoundary>
                 <Card size="small" title={`快照时间：${currentTradeDate || currentSnapshot?.snapshot_time || '-'}`}>
                   <Space direction="vertical" size={12} className="w-full">
                     <Space wrap>
@@ -492,6 +519,7 @@ export function BacktestDetailPanel({
                     />
                   </Space>
                 </Card>
+                </SnapshotErrorBoundary>
               )}
             </Space>
           )}
