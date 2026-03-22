@@ -22,6 +22,9 @@ class StrategyInfo(BaseModel):
     name: str
     description: str
     param_schema: list[StrategyParamSchema]
+    usable: bool = True
+    unusable_reasons: list[str] = Field(default_factory=list)
+    policy_profile: Optional[str] = None
 
 
 class BacktestStrategiesResponse(BaseModel):
