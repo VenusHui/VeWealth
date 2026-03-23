@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import axios from 'axios'
 import { getAuthHeader, isAuthenticated } from '../lib/auth'
 import { MainTabSwitcher } from './components/MainTabSwitcher'
@@ -20,7 +21,6 @@ import type {
   SnapshotRow,
   Strategy,
   StrategyConfig,
-  StrategyManagementDetail,
   StrategyManagementListItem,
   TradeRow,
 } from './components/types'
@@ -30,6 +30,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
 const ACTIVE_JOB_STATUSES = ['pending', 'running'] as const
 
 export default function BacktestPage() {
+  const searchParams = useSearchParams()
   const [mainTab, setMainTab] = useState<MainTab>('create')
   const [detailTab, setDetailTab] = useState<DetailTab>('overview')
   const [mounted, setMounted] = useState(false)
@@ -92,8 +93,11 @@ export default function BacktestPage() {
 
   const [strategyManagementItems, setStrategyManagementItems] = useState<StrategyManagementListItem[]>([])
   const [strategyManagementLoading, setStrategyManagementLoading] = useState(false)
-  const [strategyManagementDetailLoading, setStrategyManagementDetailLoading] = useState(false)
-  const [strategyManagementDetail, setStrategyManagementDetail] = useState<StrategyManagementDetail | null>(null)
+  const [strategyManagementQuery, setStrategyManagementQuery] = useState('')
+  const [strategyManagementUsable, setStrategyManagementUsable] = useState<'all' | 'true' | 'false'>('all')
+  const [strategyManagementPage, setStrategyManagementPage] = useState(1)
+  const [strategyManagementPageSize, setStrategyManagementPageSize] = useState(20)
+  const [strategyManagementTotal, setStrategyManagementTotal] = useState(0)
 
   const selectedStrategy = useMemo(
     () => strategies.find((s) => s.strategy_id === strategyId),
@@ -132,38 +136,37 @@ export default function BacktestPage() {
     }
   }, [])
 
-  const fetchStrategyManagementList = useCallback(async () => {
+  const fetchStrategyManagementList = useCallback(async (
+    page = strategyManagementPage,
+    pageSize = strategyManagementPageSize,
+    query = strategyManagementQuery,
+    usable = strategyManagementUsable,
+  ) => {
     if (!isAuthenticated()) return
     setStrategyManagementLoading(true)
     try {
-      const resp = await axios.get(`${API_BASE_URL}/api/backtest/strategy-management/list`, {
+      const params = new URLSearchParams()
+      params.set('page', String(page))
+      params.set('page_size', String(pageSize))
+      params.set('usable', usable)
+      params.set('sort_by', 'last_modified_at')
+      params.set('sort_order', 'desc')
+      if (query.trim()) params.set('query', query.trim())
+
+      const resp = await axios.get(`${API_BASE_URL}/api/backtest/strategy-management/list?${params.toString()}`, {
         headers: getAuthHeader(),
       })
       const list: StrategyManagementListItem[] = Array.isArray(resp.data?.data)
         ? (resp.data.data as StrategyManagementListItem[])
         : []
       setStrategyManagementItems(list)
+      setStrategyManagementTotal(Number(resp.data?.total || 0))
     } catch {
       // ignore
     } finally {
       setStrategyManagementLoading(false)
     }
-  }, [])
-
-  const fetchStrategyManagementDetail = useCallback(async (targetStrategyId: string) => {
-    if (!isAuthenticated() || !targetStrategyId) return
-    setStrategyManagementDetailLoading(true)
-    try {
-      const resp = await axios.get(`${API_BASE_URL}/api/backtest/strategy-management/${targetStrategyId}`, {
-        headers: getAuthHeader(),
-      })
-      setStrategyManagementDetail((resp.data?.data || null) as StrategyManagementDetail | null)
-    } catch {
-      // ignore
-    } finally {
-      setStrategyManagementDetailLoading(false)
-    }
-  }, [])
+  }, [strategyManagementPage, strategyManagementPageSize, strategyManagementQuery, strategyManagementUsable])
 
   const loadRunDetail = (runId: number) => {
     setRunOverview(null)
@@ -274,6 +277,13 @@ export default function BacktestPage() {
   }, [])
 
   useEffect(() => {
+    const tab = searchParams.get('tab')
+    if (tab === 'strategies') {
+      setMainTab('strategies')
+    }
+  }, [searchParams])
+
+  useEffect(() => {
     if (!mounted) return
     if (!isAuthenticated()) return
 
@@ -301,13 +311,29 @@ export default function BacktestPage() {
 
     fetchStrategies()
     fetchJobs()
-    fetchStrategyManagementList()
-  }, [fetchJobs, fetchStrategyManagementList, mounted])
+  }, [fetchJobs, mounted])
 
   useEffect(() => {
     if (!mounted) return
     fetchRuns(runsPage, runsPageSize)
   }, [fetchRuns, runsPage, runsPageSize, mounted])
+
+  useEffect(() => {
+    if (!mounted) return
+    fetchStrategyManagementList(
+      strategyManagementPage,
+      strategyManagementPageSize,
+      strategyManagementQuery,
+      strategyManagementUsable,
+    )
+  }, [
+    mounted,
+    fetchStrategyManagementList,
+    strategyManagementPage,
+    strategyManagementPageSize,
+    strategyManagementQuery,
+    strategyManagementUsable,
+  ])
 
   useEffect(() => {
     if (!selectedStrategy) return
@@ -318,11 +344,6 @@ export default function BacktestPage() {
     setStrategyParams(defaults)
   }, [selectedStrategy])
 
-  useEffect(() => {
-    if (!strategyManagementItems.length) return
-    if (strategyManagementDetail) return
-    fetchStrategyManagementDetail(strategyManagementItems[0].strategy_id)
-  }, [fetchStrategyManagementDetail, strategyManagementDetail, strategyManagementItems])
 
   useEffect(() => {
     const hasActive = (job && ACTIVE_JOB_STATUSES.includes(job.status as (typeof ACTIVE_JOB_STATUSES)[number]))
@@ -591,11 +612,26 @@ export default function BacktestPage() {
       {mainTab === 'strategies' && (
         <StrategyManagementPanel
           loading={strategyManagementLoading}
-          detailLoading={strategyManagementDetailLoading}
           items={strategyManagementItems}
-          detail={strategyManagementDetail}
-          onRefresh={fetchStrategyManagementList}
-          onOpenDetail={fetchStrategyManagementDetail}
+          query={strategyManagementQuery}
+          usableFilter={strategyManagementUsable}
+          total={strategyManagementTotal}
+          page={strategyManagementPage}
+          pageSize={strategyManagementPageSize}
+          onRefresh={() => fetchStrategyManagementList(strategyManagementPage, strategyManagementPageSize, strategyManagementQuery, strategyManagementUsable)}
+          onQueryChange={(value) => {
+            setStrategyManagementQuery(value)
+            setStrategyManagementPage(1)
+          }}
+          onUsableFilterChange={(value) => {
+            setStrategyManagementUsable(value)
+            setStrategyManagementPage(1)
+          }}
+          onPageChange={setStrategyManagementPage}
+          onPageSizeChange={(size) => {
+            setStrategyManagementPageSize(size)
+            setStrategyManagementPage(1)
+          }}
         />
       )}
 

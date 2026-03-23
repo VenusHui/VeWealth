@@ -79,7 +79,6 @@ class BacktestStrategyManagementService:
             lines = full_source.splitlines()
             snippets: list[str] = []
 
-            # class 头部
             class_start = class_node.lineno - 1
             class_header_end = class_start
             while class_header_end < len(lines) and not lines[
@@ -100,7 +99,7 @@ class BacktestStrategyManagementService:
         except Exception:
             return full_source
 
-    def list_strategies(self, db: Session) -> list[dict[str, Any]]:
+    def _build_all_items(self, db: Session) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         for strategy_id, strategy_cls in STRATEGY_REGISTRY.items():
             validation = get_strategy_validation(strategy_id)
@@ -123,15 +122,59 @@ class BacktestStrategyManagementService:
                     "has_code": has_code,
                 }
             )
-
-        items.sort(
-            key=lambda x: (
-                x.get("last_modified_at") or datetime.fromtimestamp(0),
-                x.get("strategy_id") or "",
-            ),
-            reverse=True,
-        )
         return items
+
+    def list_strategies(
+        self,
+        db: Session,
+        page: int = 1,
+        page_size: int = 20,
+        query: str | None = None,
+        usable: str = "all",
+        sort_by: str = "last_modified_at",
+        sort_order: str = "desc",
+    ) -> dict[str, Any]:
+        items = self._build_all_items(db)
+
+        if query:
+            q = query.strip().lower()
+            items = [
+                x
+                for x in items
+                if q in (x.get("name") or "").lower()
+                or q in (x.get("strategy_id") or "").lower()
+            ]
+
+        if usable == "true":
+            items = [x for x in items if x.get("usable") is True]
+        elif usable == "false":
+            items = [x for x in items if x.get("usable") is False]
+
+        reverse = sort_order != "asc"
+        if sort_by == "annual_return":
+            items.sort(
+                key=lambda x: (
+                    (x.get("latest_backtest") or {}).get("annual_return")
+                    if (x.get("latest_backtest") or {}).get("annual_return") is not None
+                    else float("-inf")
+                ),
+                reverse=reverse,
+            )
+        else:
+            items.sort(
+                key=lambda x: x.get("last_modified_at") or datetime.fromtimestamp(0),
+                reverse=reverse,
+            )
+
+        total = len(items)
+        start = (page - 1) * page_size
+        end = start + page_size
+        return {
+            "data": items[start:end],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
 
     def get_strategy_detail(self, db: Session, strategy_id: str) -> dict[str, Any]:
         strategy_cls = STRATEGY_REGISTRY.get(strategy_id)
@@ -147,6 +190,7 @@ class BacktestStrategyManagementService:
         if source_path and Path(source_path).exists():
             last_modified_at = datetime.fromtimestamp(Path(source_path).stat().st_mtime)
 
+        latest_backtest = self._extract_latest_backtest(db, strategy_id)
         core_snippet = (
             self._extract_core_snippet(full_source, strategy_cls.__name__)
             if full_source
@@ -161,10 +205,10 @@ class BacktestStrategyManagementService:
                 "usable": bool(validation.get("usable", False)),
                 "policy_profile": validation.get("policy_profile"),
                 "last_modified_at": last_modified_at,
-                "latest_backtest": self._extract_latest_backtest(db, strategy_id),
+                "latest_backtest": latest_backtest,
                 "has_code": has_code,
             },
-            "latest_backtest": self._extract_latest_backtest(db, strategy_id),
+            "latest_backtest": latest_backtest,
             "code": {
                 "language": "python",
                 "source_path": normalized_path,

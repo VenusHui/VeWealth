@@ -1,10 +1,8 @@
-import { Button, Card, Input, Segmented, Space, Table, Tag, Typography } from 'antd'
+import Link from 'next/link'
+import { Button, Card, Input, Pagination, Segmented, Space, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { useMemo, useState } from 'react'
-import type {
-  StrategyManagementDetail,
-  StrategyManagementListItem,
-} from './types'
+import { useMemo } from 'react'
+import type { StrategyManagementListItem } from './types'
 
 const { Text } = Typography
 
@@ -19,9 +17,7 @@ function fmtTime(value: string | null | undefined): string {
   return new Date(value).toLocaleString()
 }
 
-function getColumns(
-  onOpenDetail: (strategyId: string) => void,
-): ColumnsType<StrategyManagementListItem> {
+function getColumns(): ColumnsType<StrategyManagementListItem> {
   return [
     {
       title: '策略名',
@@ -34,7 +30,7 @@ function getColumns(
       title: 'strategy_id',
       dataIndex: 'strategy_id',
       key: 'strategy_id',
-      width: 200,
+      width: 220,
       ellipsis: true,
       render: (v: string) => <Text code>{v}</Text>,
     },
@@ -42,7 +38,7 @@ function getColumns(
       title: '最近修改',
       dataIndex: 'last_modified_at',
       key: 'last_modified_at',
-      width: 180,
+      width: 190,
       render: (v: string) => fmtTime(v),
     },
     {
@@ -69,9 +65,9 @@ function getColumns(
       key: 'action',
       width: 120,
       render: (_, row) => (
-        <Button type="link" onClick={() => onOpenDetail(row.strategy_id)}>
+        <Link href={`/backtest/strategies/${row.strategy_id}`} className="text-indigo-600 hover:text-indigo-800">
           查看详情
-        </Button>
+        </Link>
       ),
     },
   ]
@@ -79,114 +75,115 @@ function getColumns(
 
 export function StrategyManagementPanel({
   loading,
-  detailLoading,
   items,
-  detail,
+  query,
+  usableFilter,
+  total,
+  page,
+  pageSize,
   onRefresh,
-  onOpenDetail,
+  onQueryChange,
+  onUsableFilterChange,
+  onPageChange,
+  onPageSizeChange,
 }: {
   loading: boolean
-  detailLoading: boolean
   items: StrategyManagementListItem[]
-  detail: StrategyManagementDetail | null
+  query: string
+  usableFilter: 'all' | 'true' | 'false'
+  total: number
+  page: number
+  pageSize: number
   onRefresh: () => void
-  onOpenDetail: (strategyId: string) => void
+  onQueryChange: (value: string) => void
+  onUsableFilterChange: (value: 'all' | 'true' | 'false') => void
+  onPageChange: (value: number) => void
+  onPageSizeChange: (value: number) => void
 }) {
-  const [query, setQuery] = useState('')
-  const [usableFilter, setUsableFilter] = useState<'all' | 'usable' | 'unusable'>('all')
-  const [codeTab, setCodeTab] = useState<'core' | 'full'>('core')
-
-  const filteredItems = useMemo(() => {
-    const keyword = query.trim().toLowerCase()
-    return items.filter((item) => {
-      if (usableFilter === 'usable' && !item.usable) return false
-      if (usableFilter === 'unusable' && item.usable) return false
-      if (!keyword) return true
-      return (
-        item.name.toLowerCase().includes(keyword) ||
-        item.strategy_id.toLowerCase().includes(keyword)
-      )
-    })
-  }, [items, query, usableFilter])
-
-  const codeText =
-    codeTab === 'core'
-      ? detail?.code?.core_snippet || '暂无核心片段'
-      : detail?.code?.full_source || '暂无源码'
+  const mobileCards = useMemo(
+    () =>
+      items.map((item) => {
+        const annual = Number(item.latest_backtest?.annual_return)
+        return (
+          <Card key={item.strategy_id} size="small" className="mb-2">
+            <div className="space-y-1 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium truncate">{item.name}</span>
+                <Tag color={item.usable ? 'green' : 'red'}>{item.usable ? '可用' : '不可用'}</Tag>
+              </div>
+              <div><Text code>{item.strategy_id}</Text></div>
+              <div>最近修改：{fmtTime(item.last_modified_at || undefined)}</div>
+              <div>
+                年化：
+                {Number.isFinite(annual) ? (
+                  <span className={annual >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{fmtPct(annual)}</span>
+                ) : (
+                  '-'
+                )}
+              </div>
+              <div>
+                <Link href={`/backtest/strategies/${item.strategy_id}`} className="text-indigo-600 hover:text-indigo-800">
+                  查看详情
+                </Link>
+              </div>
+            </div>
+          </Card>
+        )
+      }),
+    [items],
+  )
 
   return (
-    <div className="space-y-4">
-      <Card
-        title="策略管理"
-        extra={<Button type="link" onClick={onRefresh}>刷新</Button>}
-      >
-        <Space className="mb-3" wrap>
-          <Input.Search
-            allowClear
-            placeholder="按策略名/strategy_id 搜索"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            style={{ width: 280 }}
-          />
-          <Segmented
-            value={usableFilter}
-            options={[
-              { label: '全部', value: 'all' },
-              { label: '仅可用', value: 'usable' },
-              { label: '仅不可用', value: 'unusable' },
-            ]}
-            onChange={(v) => setUsableFilter(v as 'all' | 'usable' | 'unusable')}
-          />
-        </Space>
+    <Card title="策略管理" extra={<Button type="link" onClick={onRefresh}>刷新</Button>}>
+      <Space className="mb-3 w-full" wrap>
+        <Input.Search
+          allowClear
+          placeholder="按策略名/strategy_id 搜索"
+          value={query}
+          onChange={(e) => onQueryChange(e.target.value)}
+          style={{ width: 280, maxWidth: '100%' }}
+        />
+        <Segmented
+          value={usableFilter}
+          options={[
+            { label: '全部', value: 'all' },
+            { label: '仅可用', value: 'true' },
+            { label: '仅不可用', value: 'false' },
+          ]}
+          onChange={(v) => onUsableFilterChange(v as 'all' | 'true' | 'false')}
+        />
+      </Space>
 
+      <div className="hidden md:block">
         <Table<StrategyManagementListItem>
           rowKey="strategy_id"
           bordered
           size="small"
           loading={loading}
-          columns={getColumns(onOpenDetail)}
-          dataSource={filteredItems}
+          columns={getColumns()}
+          dataSource={items}
           scroll={{ x: 980 }}
           pagination={false}
           locale={{ emptyText: '暂无策略' }}
         />
-      </Card>
+      </div>
 
-      <Card title="策略详情" loading={detailLoading}>
-        {!detail ? (
-          <div className="text-gray-500 text-sm">请选择一条策略查看详情</div>
-        ) : (
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-              <div>
-                <Text strong>策略：</Text>{detail.strategy_info.name} <Text code>{detail.strategy_info.strategy_id}</Text>
-              </div>
-              <div>
-                <Text strong>最近修改：</Text>{fmtTime(detail.strategy_info.last_modified_at || undefined)}
-              </div>
-              <div>
-                <Text strong>最近回测年化：</Text>{fmtPct(detail.latest_backtest?.annual_return)}
-              </div>
-              <div>
-                <Text strong>代码行数：</Text>{detail.code?.line_count ?? 0}
-              </div>
-            </div>
+      <div className="md:hidden">{mobileCards.length ? mobileCards : <div className="text-sm text-gray-500">暂无策略</div>}</div>
 
-            <Segmented
-              value={codeTab}
-              options={[
-                { label: '核心片段', value: 'core' },
-                { label: '源码全文', value: 'full' },
-              ]}
-              onChange={(v) => setCodeTab(v as 'core' | 'full')}
-            />
-
-            <pre className="bg-gray-900 text-gray-100 text-xs p-3 rounded-lg overflow-auto max-h-[520px]">
-              {codeText}
-            </pre>
-          </div>
-        )}
-      </Card>
-    </div>
+      <div className="mt-3 flex justify-end">
+        <Pagination
+          current={page}
+          pageSize={pageSize}
+          total={total}
+          showSizeChanger
+          pageSizeOptions={[10, 20, 50]}
+          onChange={(nextPage, nextSize) => {
+            if (nextSize !== pageSize) onPageSizeChange(nextSize)
+            onPageChange(nextPage)
+          }}
+          showTotal={(count) => `共 ${count} 条`}
+        />
+      </div>
+    </Card>
   )
 }

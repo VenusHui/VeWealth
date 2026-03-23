@@ -76,12 +76,28 @@ async def get_strategies(
     response_model=BacktestStrategyManagementListResponse,
 )
 async def get_strategy_management_list(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    query: str | None = Query(None),
+    usable: str = Query("all", pattern="^(all|true|false)$"),
+    sort_by: str = Query(
+        "last_modified_at", pattern="^(last_modified_at|annual_return)$"
+    ),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     _ = current_user
-    data = backtest_strategy_management_service.list_strategies(db=db)
-    return BacktestStrategyManagementListResponse(data=data)
+    payload = backtest_strategy_management_service.list_strategies(
+        db=db,
+        page=page,
+        page_size=page_size,
+        query=query,
+        usable=usable,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return BacktestStrategyManagementListResponse(**payload)
 
 
 @router.get(

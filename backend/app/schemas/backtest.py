@@ -240,6 +240,9 @@ class StrategyManagementDetail(BaseModel):
 class BacktestStrategyManagementListResponse(BaseModel):
     success: bool = True
     data: list[StrategyManagementListItem]
+    total: int
+    page: int
+    page_size: int
 
 
 class BacktestStrategyManagementDetailResponse(BaseModel):
