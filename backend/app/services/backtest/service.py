@@ -5,6 +5,7 @@ from datetime import datetime
 import re
 from typing import Any, Callable
 
+import pandas as pd
 from sqlalchemy import func
 from sqlalchemy.orm import Session, load_only
 
@@ -15,6 +16,8 @@ from app.schemas.backtest import BacktestRunRequest
 from app.services.backtest.costs import CostModel
 from app.services.backtest.engine import run_for_symbol
 from app.services.backtest.metrics import calc_summary
+from app.services.backtest.policies.base import PolicyContext
+from app.services.backtest.policies.registry import resolve_profile
 from app.services.backtest.registry import get_strategy, list_strategies
 from app.services.stock_service import stock_service
 
@@ -326,20 +329,10 @@ class BacktestService:
         request: BacktestRunRequest,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
-        if request.strategy_id != "volume_shrink_drop_v1":
-            raise ValueError(
-                "strategy_select 模式当前仅支持 volume_shrink_drop_v1 策略"
-            )
-
-        # 正式生效：strategy_select 仅允许执行可用策略。
-        get_strategy(request.strategy_id, require_usable=True)
+        strategy = get_strategy(request.strategy_id, require_usable=True)
 
         params = request.strategy_params or {}
-        min_price_drop_pct = float(params.get("min_price_drop_pct", -1.0))
-        min_volume_shrink_pct = float(params.get("min_volume_shrink_pct", 10.0))
-        consecutive_days = int(params.get("consecutive_days", 3))
         hold_days = int(params.get("hold_days", 5))
-        position_size_pct = float(params.get("position_size_pct", 0.1))
 
         raw_boards = params.get("boards", ["main"])
         if isinstance(raw_boards, str):
@@ -378,11 +371,14 @@ class BacktestService:
                 "选股池为空，无法执行 strategy_select 回测（可能是行情源连接失败）。请先改用 custom 股票池，或稍后重试。"
             )
 
+        required_columns = set(strategy.required_columns())
+
         warnings: list[str] = []
-        events: list[dict[str, Any]] = []
         data_available_count = 0
         data_empty_count = 0
         empty_symbols_preview: list[str] = []
+        market_data_map: dict[str, pd.DataFrame] = {}
+        candidate_frames: list[pd.DataFrame] = []
 
         total = len(universe)
         for idx, symbol in enumerate(universe, start=1):
@@ -395,74 +391,47 @@ class BacktestService:
                         "progress_pct": round((idx - 1) * 100 / total, 2),
                     }
                 )
+
             df, _, _ = stock_service.get_daily_data(
                 symbol=symbol,
                 start_date=request.start_date.strftime("%Y-%m-%d"),
                 end_date=request.end_date.strftime("%Y-%m-%d"),
             )
-            if df.empty or len(df) < (consecutive_days + hold_days + 2):
+
+            if df.empty or len(df) < (hold_days + 2):
                 data_empty_count += 1
                 if len(empty_symbols_preview) < 30:
                     empty_symbols_preview.append(symbol)
                 continue
 
+            missing_cols = [c for c in required_columns if c not in df.columns]
+            if missing_cols:
+                warnings.append(f"{symbol}: 缺少必需列 {missing_cols}，已跳过")
+                continue
+
             data_available_count += 1
-
             work = df.copy().reset_index(drop=True)
-            work["close_prev"] = work["close"].shift(1)
-            work["vol_prev"] = work["volume"].shift(1)
-            work["price_drop_pct"] = (work["close"] / work["close_prev"] - 1.0) * 100
-            work["volume_shrink_pct"] = (
-                (work["vol_prev"] - work["volume"]) / work["vol_prev"]
-            ) * 100
-            work["daily_pass"] = (work["price_drop_pct"] <= min_price_drop_pct) & (
-                work["volume_shrink_pct"] >= min_volume_shrink_pct
-            )
+            work["symbol"] = symbol
+            market_data_map[symbol] = work
 
-            i = consecutive_days
-            while i < len(work) - hold_days - 1:
-                window = work.iloc[i - consecutive_days + 1 : i + 1]
-                if bool(window["daily_pass"].all()):
-                    buy_idx = i + 1
-                    sell_idx = buy_idx + hold_days
-                    if sell_idx >= len(work):
-                        break
+            candidates = strategy.generate_candidates(work, params)
+            if candidates is None or candidates.empty:
+                continue
 
-                    buy_row = work.iloc[buy_idx]
-                    sell_row = work.iloc[sell_idx]
-                    buy_price = float(buy_row["open"])
-                    sell_price = float(sell_row["open"])
-                    if buy_price <= 0:
-                        i += 1
-                        continue
+            required_candidate_cols = {"trade_date", "symbol"}
+            if not required_candidate_cols.issubset(set(candidates.columns)):
+                warnings.append(
+                    f"{symbol}: candidates 缺少列 {sorted(required_candidate_cols - set(candidates.columns))}"
+                )
+                continue
 
-                    ret = (sell_price - buy_price) / buy_price
-                    events.append(
-                        {
-                            "symbol": symbol,
-                            "signal_date": work.iloc[i]["datetime"],
-                            "buy_datetime": buy_row["datetime"],
-                            "sell_datetime": sell_row["datetime"],
-                            "buy_price": round(buy_price, 4),
-                            "sell_price": round(sell_price, 4),
-                            "return": round(ret, 6),
-                            "reason": f"连续{consecutive_days}天缩量下跌",
-                        }
-                    )
-                    i = sell_idx + 1
-                else:
-                    i += 1
-
-        diagnostics = {
-            "universe_size": len(universe),
-            "data_available_count": data_available_count,
-            "data_empty_count": data_empty_count,
-            "signal_hit_count": len(events),
-            "effective_universe_filter": {
-                "boards": boards,
-                "exclude_st": exclude_st,
-            },
-        }
+            cdf = candidates.copy()
+            cdf["trade_date"] = pd.to_datetime(cdf["trade_date"]).dt.normalize()
+            if "signal_strength" not in cdf.columns:
+                cdf["signal_strength"] = 0.0
+            if "reason" not in cdf.columns:
+                cdf["reason"] = "strategy_candidate"
+            candidate_frames.append(cdf)
 
         if data_empty_count > 0:
             preview = ",".join(empty_symbols_preview)
@@ -471,8 +440,75 @@ class BacktestService:
                 f"无可用日线数据股票数: {data_empty_count}/{len(universe)}，示例: {preview}{suffix}"
             )
 
-        if not events:
+        if not candidate_frames:
             warnings.append("未命中任何交易信号")
+            diagnostics = {
+                "universe_size": len(universe),
+                "data_available_count": data_available_count,
+                "data_empty_count": data_empty_count,
+                "candidate_count": 0,
+                "selected_count": 0,
+                "event_count": 0,
+                "effective_universe_filter": {
+                    "boards": boards,
+                    "exclude_st": exclude_st,
+                },
+            }
+            return {
+                "summary": calc_summary([], [], request.initial_cash),
+                "equity_curve": [],
+                "trades": [],
+                "warnings": warnings,
+                "positions_snapshot": [],
+                "symbols": universe,
+                "diagnostics": diagnostics,
+            }
+
+        candidates_df = pd.concat(candidate_frames, ignore_index=True)
+
+        policy_profile_id = str(params.get("policy_profile") or strategy.default_policy_profile())
+        pipeline = resolve_profile(policy_profile_id)
+        context = PolicyContext(
+            strategy_id=request.strategy_id,
+            params=params,
+            extras={"market_data_map": market_data_map},
+        )
+
+        ranked_df = pipeline["ranking"].rank(candidates_df, context)
+        selected_df = pipeline["selection"].select(ranked_df, portfolio_state={}, context=context)
+        allocated_df = pipeline["allocation"].allocate(
+            selected_df,
+            equity=float(request.initial_cash),
+            risk_state={},
+            context=context,
+        )
+        orders_df = pipeline["risk"].check_pre_trade(allocated_df, portfolio_state={}, context=context)
+
+        events = pipeline["execution"].simulate_fill(
+            orders_df,
+            bar_df=pd.DataFrame(),
+            cost_model=None,
+            context=context,
+        )
+
+        diagnostics = {
+            "universe_size": len(universe),
+            "data_available_count": data_available_count,
+            "data_empty_count": data_empty_count,
+            "candidate_count": int(len(candidates_df)),
+            "ranked_count": int(len(ranked_df)),
+            "selected_count": int(len(selected_df)),
+            "ordered_count": int(len(orders_df)),
+            "event_count": int(len(events)),
+            "policy_profile": policy_profile_id,
+            "effective_universe_filter": {
+                "boards": boards,
+                "exclude_st": exclude_st,
+            },
+        }
+
+        if not events:
+            warnings.append("候选已生成，但经 policy pipeline 后无可执行订单")
             return {
                 "summary": calc_summary([], [], request.initial_cash),
                 "equity_curve": [],
@@ -504,8 +540,10 @@ class BacktestService:
         trades: list[dict[str, Any]] = []
 
         for ev in events:
-            position_amount = equity * max(0.0, min(1.0, position_size_pct))
-            pnl = position_amount * ev["return"]
+            position_size_pct = float(ev.get("position_size_pct") or params.get("position_size_pct", 0.1) or 0.1)
+            position_size_pct = max(0.0, min(1.0, position_size_pct))
+            position_amount = equity * position_size_pct
+            pnl = position_amount * float(ev["return"])
             equity += pnl
 
             trades.append(
@@ -527,19 +565,17 @@ class BacktestService:
                     "side": "sell",
                     "price": ev["sell_price"],
                     "qty": 1,
-                    "amount": round(position_amount * (1 + ev["return"]), 4),
+                    "amount": round(position_amount * (1 + float(ev["return"])), 4),
                     "fee": 0.0,
                     "pnl": round(pnl, 4),
                     "reason": ev["reason"],
                 }
             )
-            equity_curve.append(
-                {"datetime": ev["sell_datetime"], "equity": round(equity, 4)}
-            )
+            equity_curve.append({"datetime": ev["sell_datetime"], "equity": round(equity, 4)})
 
         summary = calc_summary(equity_curve, trades, request.initial_cash)
         warnings.append(
-            f"strategy_select 扫描股票数: {len(universe)}，有效行情股票数: {data_available_count}，命中信号数: {len(events)}"
+            f"strategy_select 扫描股票数: {len(universe)}，有效行情股票数: {data_available_count}，候选数: {len(candidates_df)}，执行事件数: {len(events)}"
         )
 
         return {
