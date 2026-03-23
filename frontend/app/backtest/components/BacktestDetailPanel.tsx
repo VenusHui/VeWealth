@@ -368,25 +368,44 @@ export function BacktestDetailPanel({
             ) : (
               <Space direction="vertical" size={12} className="w-full">
                 <Button onClick={() => onDownloadCsv(`${apiBaseUrl}/api/backtest/runs/${selectedRunId}/trades/export`, `backtest_run_${selectedRunId}_trades.csv`)}>导出成交 CSV</Button>
-                <BacktestTable<TradeRow>
-                  rowKey={(record, index) => `${record.datetime || ''}-${record.symbol || ''}-${index}`}
-                  columns={tradeColumns}
-                  dataSource={runTrades}
-                  locale={{ emptyText: '暂无成交数据' }}
-                  scroll={{ x: 1080, y: 460 }}
-                  pagination={{
-                    current: tradesPage,
-                    pageSize: tradesPageSize,
-                    total: tradesTotal,
-                    showSizeChanger: true,
-                    pageSizeOptions: [20, 50, 100],
-                    onChange: (page, pageSize) => {
-                      if (pageSize !== tradesPageSize) onTradesPageSizeChange(pageSize)
-                      onTradesPageChange(page)
-                    },
-                    showTotal: (total) => `共 ${total} 条`,
-                  }}
-                />
+                <div className="hidden md:block">
+                  <BacktestTable<TradeRow>
+                    rowKey={(record, index) => `${record.datetime || ''}-${record.symbol || ''}-${index}`}
+                    columns={tradeColumns}
+                    dataSource={runTrades}
+                    locale={{ emptyText: '暂无成交数据' }}
+                    scroll={{ x: 1080, y: 460 }}
+                    pagination={{
+                      current: tradesPage,
+                      pageSize: tradesPageSize,
+                      total: tradesTotal,
+                      showSizeChanger: true,
+                      pageSizeOptions: [20, 50, 100],
+                      onChange: (page, pageSize) => {
+                        if (pageSize !== tradesPageSize) onTradesPageSizeChange(pageSize)
+                        onTradesPageChange(page)
+                      },
+                      showTotal: (total) => `共 ${total} 条`,
+                    }}
+                  />
+                </div>
+                <div className="md:hidden space-y-2">
+                  {runTrades.map((r, idx) => (
+                    <Card key={`${r.datetime || ''}-${r.symbol || ''}-${idx}`} size="small">
+                      <div className="space-y-1 text-sm">
+                        <div className="flex items-center justify-between">
+                          <span>{fmtSymbolLabel(r.symbol, r.stock_name)}</span>
+                          <Tag color={r.side === 'buy' ? 'green' : 'red'}>{r.side || '-'}</Tag>
+                        </div>
+                        <div>{r.datetime || '-'}</div>
+                        <div>价格/数量：{r.price ?? '-'} / {r.qty ?? '-'}</div>
+                        <div>金额/手续费：{r.amount ?? '-'} / {r.fee ?? '-'}</div>
+                        <div className="text-gray-500">{r.reason || '-'}</div>
+                      </div>
+                    </Card>
+                  ))}
+                  {runTrades.length === 0 && <div className="text-sm text-gray-500">暂无成交数据</div>}
+                </div>
               </Space>
             )
           )}
@@ -397,25 +416,42 @@ export function BacktestDetailPanel({
             ) : (
               <Space direction="vertical" size={12} className="w-full">
                 <Button onClick={() => onDownloadCsv(`${apiBaseUrl}/api/backtest/runs/${selectedRunId}/rounds/export`, `backtest_run_${selectedRunId}_rounds.csv`)}>导出回合 CSV</Button>
-                <BacktestTable<RoundRow>
-                  rowKey={(record, index) => `${record.symbol || ''}-${record.open_time || ''}-${index}`}
-                  columns={roundColumns}
-                  dataSource={runRounds}
-                  locale={{ emptyText: '暂无回合交易数据' }}
-                  scroll={{ x: 1080, y: 460 }}
-                  pagination={{
-                    current: roundsPage,
-                    pageSize: roundsPageSize,
-                    total: roundsTotal,
-                    showSizeChanger: true,
-                    pageSizeOptions: [20, 50, 100],
-                    onChange: (page, pageSize) => {
-                      if (pageSize !== roundsPageSize) onRoundsPageSizeChange(pageSize)
-                      onRoundsPageChange(page)
-                    },
-                    showTotal: (total) => `共 ${total} 条`,
-                  }}
-                />
+                <div className="hidden md:block">
+                  <BacktestTable<RoundRow>
+                    rowKey={(record, index) => `${record.symbol || ''}-${record.open_time || ''}-${index}`}
+                    columns={roundColumns}
+                    dataSource={runRounds}
+                    locale={{ emptyText: '暂无回合交易数据' }}
+                    scroll={{ x: 1080, y: 460 }}
+                    pagination={{
+                      current: roundsPage,
+                      pageSize: roundsPageSize,
+                      total: roundsTotal,
+                      showSizeChanger: true,
+                      pageSizeOptions: [20, 50, 100],
+                      onChange: (page, pageSize) => {
+                        if (pageSize !== roundsPageSize) onRoundsPageSizeChange(pageSize)
+                        onRoundsPageChange(page)
+                      },
+                      showTotal: (total) => `共 ${total} 条`,
+                    }}
+                  />
+                </div>
+                <div className="md:hidden space-y-2">
+                  {runRounds.map((r, idx) => (
+                    <Card key={`${r.symbol || ''}-${r.open_time || ''}-${idx}`} size="small">
+                      <div className="space-y-1 text-sm">
+                        <div className="font-medium">{fmtSymbolLabel(r.symbol, r.stock_name)}</div>
+                        <div>开仓：{r.open_time || '-'} @ {r.open_price ?? '-'}</div>
+                        <div>平仓：{r.close_time || '-'} @ {r.close_price ?? '-'}</div>
+                        <div>持有天数：{r.holding_days ?? '-'}</div>
+                        <div>收益率/盈亏：{fmtPct(r.pnl_ratio)} / {r.pnl_amount ?? '-'}</div>
+                        <div className="text-gray-500">退出原因：{r.exit_reason || '-'}</div>
+                      </div>
+                    </Card>
+                  ))}
+                  {runRounds.length === 0 && <div className="text-sm text-gray-500">暂无回合交易数据</div>}
+                </div>
               </Space>
             )
           )}
@@ -508,15 +544,36 @@ export function BacktestDetailPanel({
                         description={`缺资金曲线日期: ${(runFacts?.data_quality?.missing_equity_dates || []).join(', ') || '-'}；缺快照日期: ${(runFacts?.data_quality?.missing_snapshot_dates || []).join(', ') || '-'}`}
                       />
                     ) : null}
-                    <BacktestTable<SnapshotHolding>
-                      rowKey={(record, index) => `${record.trade_date || ''}-${record.symbol || ''}-${index}`}
-                      columns={holdingColumns}
-                      dataSource={currentSnapshotHoldings.length > 0 ? currentSnapshotHoldings : (currentSnapshot?.holdings || [])}
-                      pagination={false}
-                      scroll={{ x: 760, y: 420 }}
-                      locale={{ emptyText: '空仓' }}
-                      rowClassName={(record) => (record.position_status === 'closed_today' ? 'opacity-70' : '')}
-                    />
+                    <div className="hidden md:block">
+                      <BacktestTable<SnapshotHolding>
+                        rowKey={(record, index) => `${record.trade_date || ''}-${record.symbol || ''}-${index}`}
+                        columns={holdingColumns}
+                        dataSource={currentSnapshotHoldings.length > 0 ? currentSnapshotHoldings : (currentSnapshot?.holdings || [])}
+                        pagination={false}
+                        scroll={{ x: 760, y: 420 }}
+                        locale={{ emptyText: '空仓' }}
+                        rowClassName={(record) => (record.position_status === 'closed_today' ? 'opacity-70' : '')}
+                      />
+                    </div>
+                    <div className="md:hidden space-y-2">
+                      {(currentSnapshotHoldings.length > 0 ? currentSnapshotHoldings : (currentSnapshot?.holdings || [])).map((h, idx) => (
+                        <Card key={`${h.trade_date || ''}-${h.symbol || ''}-${idx}`} size="small" className={h.position_status === 'closed_today' ? 'opacity-70' : ''}>
+                          <div className="space-y-1 text-sm">
+                            <div className="flex items-center justify-between">
+                              <span>{fmtSymbolLabel(h.symbol, h.stock_name)}</span>
+                              {h.position_status === 'closed_today' ? <Tag color="gold">当日清仓</Tag> : null}
+                            </div>
+                            <div>数量：{h.qty ?? '-'}</div>
+                            <div>现价：{h.last_price ?? '-'}</div>
+                            <div>市值：{h.market_value ?? '-'}</div>
+                            <div>权重：{h.weight ?? '-'}</div>
+                          </div>
+                        </Card>
+                      ))}
+                      {(currentSnapshotHoldings.length > 0 ? currentSnapshotHoldings : (currentSnapshot?.holdings || [])).length === 0 && (
+                        <div className="text-sm text-gray-500">空仓</div>
+                      )}
+                    </div>
                   </Space>
                 </Card>
                 </SnapshotErrorBoundary>
