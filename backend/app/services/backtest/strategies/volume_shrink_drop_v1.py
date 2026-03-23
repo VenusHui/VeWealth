@@ -1,9 +1,14 @@
 """连续缩量下跌策略（选股+固定持有）"""
 
+from __future__ import annotations
+
+import pandas as pd
+
 from .base import BaseStrategy
+from .contracts import BaseStrategyV2
 
 
-class VolumeShrinkDropV1Strategy(BaseStrategy):
+class VolumeShrinkDropV1Strategy(BaseStrategy, BaseStrategyV2):
     strategy_id = "volume_shrink_drop_v1"
     name = "连续缩量下跌反弹 v1"
     description = "连续N天缩量下跌，下一交易日开盘买入，持有M天后开盘卖出。"
@@ -54,5 +59,58 @@ class VolumeShrinkDropV1Strategy(BaseStrategy):
             },
         ]
 
-    def generate_signals(self, df, params):
+    @classmethod
+    def required_columns(cls) -> set[str]:
+        return {"datetime", "open", "close", "volume"}
+
+    @classmethod
+    def default_policy_profile(cls) -> str:
+        return "vsd_v1_default"
+
+    def generate_signals(self, df: pd.DataFrame, params: dict) -> pd.DataFrame:
+        # 保持 v1 手动回测链路兼容：该策略在 engine/manual 模式下不依赖买卖信号列。
         return df
+
+    def generate_candidates(self, market_df: pd.DataFrame, params: dict) -> pd.DataFrame:
+        """V2 候选生成：保持与 strategy_select 触发条件一致，仅输出买入候选日。"""
+        if market_df.empty:
+            return pd.DataFrame(columns=["trade_date", "symbol", "signal_strength", "reason"])
+
+        min_price_drop_pct = float(params.get("min_price_drop_pct", -1.0))
+        min_volume_shrink_pct = float(params.get("min_volume_shrink_pct", 10.0))
+        consecutive_days = int(params.get("consecutive_days", 3))
+
+        work = market_df.copy().reset_index(drop=True)
+        work["trade_date"] = pd.to_datetime(work["datetime"])
+        work["close_prev"] = work["close"].shift(1)
+        work["vol_prev"] = work["volume"].shift(1)
+        work["price_drop_pct"] = (work["close"] / work["close_prev"] - 1.0) * 100
+        work["volume_shrink_pct"] = (
+            (work["vol_prev"] - work["volume"]) / work["vol_prev"]
+        ) * 100
+        work["daily_pass"] = (work["price_drop_pct"] <= min_price_drop_pct) & (
+            work["volume_shrink_pct"] >= min_volume_shrink_pct
+        )
+
+        candidates: list[dict] = []
+        i = consecutive_days
+        while i < len(work):
+            window = work.iloc[i - consecutive_days + 1 : i + 1]
+            if bool(window["daily_pass"].all()):
+                buy_idx = i + 1
+                if buy_idx >= len(work):
+                    break
+                buy_row = work.iloc[buy_idx]
+                symbol = str(buy_row.get("symbol") or "").strip()
+                if symbol:
+                    candidates.append(
+                        {
+                            "trade_date": buy_row["trade_date"],
+                            "symbol": symbol,
+                            "signal_strength": 1.0,
+                            "reason": f"连续{consecutive_days}天缩量下跌",
+                        }
+                    )
+            i += 1
+
+        return pd.DataFrame(candidates)

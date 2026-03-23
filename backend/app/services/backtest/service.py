@@ -15,7 +15,7 @@ from app.schemas.backtest import BacktestRunRequest
 from app.services.backtest.costs import CostModel
 from app.services.backtest.engine import run_for_symbol
 from app.services.backtest.metrics import calc_summary
-from app.services.backtest.registry import list_strategies
+from app.services.backtest.registry import get_strategy, list_strategies
 from app.services.stock_service import stock_service
 
 
@@ -330,6 +330,9 @@ class BacktestService:
             raise ValueError(
                 "strategy_select 模式当前仅支持 volume_shrink_drop_v1 策略"
             )
+
+        # 正式生效：strategy_select 仅允许执行可用策略。
+        get_strategy(request.strategy_id, require_usable=True)
 
         params = request.strategy_params or {}
         min_price_drop_pct = float(params.get("min_price_drop_pct", -1.0))
