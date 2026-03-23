@@ -1,7 +1,6 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
 import axios from 'axios'
 import { getAuthHeader, isAuthenticated } from '../lib/auth'
 import { MainTabSwitcher } from './components/MainTabSwitcher'
@@ -30,7 +29,6 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
 const ACTIVE_JOB_STATUSES = ['pending', 'running'] as const
 
 export default function BacktestPage() {
-  const searchParams = useSearchParams()
   const [mainTab, setMainTab] = useState<MainTab>('create')
   const [detailTab, setDetailTab] = useState<DetailTab>('overview')
   const [mounted, setMounted] = useState(false)
@@ -277,11 +275,12 @@ export default function BacktestPage() {
   }, [])
 
   useEffect(() => {
-    const tab = searchParams.get('tab')
+    if (typeof window === 'undefined') return
+    const tab = new URLSearchParams(window.location.search).get('tab')
     if (tab === 'strategies') {
       setMainTab('strategies')
     }
-  }, [searchParams])
+  }, [])
 
   useEffect(() => {
     if (!mounted) return
