@@ -25,6 +25,7 @@ import {
 } from 'recharts'
 import { LoadingHint } from './LoadingHint'
 import { BacktestTable } from './BacktestTable'
+import { formatPct, marketClassByValue } from '../../lib/marketColors'
 import type {
   BacktestOverview,
   DetailTab,
@@ -76,12 +77,6 @@ class SnapshotErrorBoundary extends Component<
     }
     return this.props.children
   }
-}
-
-function fmtPct(value: unknown): string {
-  const num = Number(value)
-  if (!Number.isFinite(num)) return '-'
-  return `${(num * 100).toFixed(2)}%`
 }
 
 function fmtSymbolLabel(symbol?: string, stockName?: string): string {
@@ -136,9 +131,16 @@ const roundColumns: ColumnsType<RoundRow> = [
     key: 'pnl_ratio',
     width: 100,
     align: 'right',
-    render: (v) => fmtPct(v),
+    render: (v) => <span className={marketClassByValue(v)}>{formatPct(v)}</span>,
   },
-  { title: '盈亏', dataIndex: 'pnl_amount', key: 'pnl_amount', width: 120, align: 'right' },
+  {
+    title: '盈亏',
+    dataIndex: 'pnl_amount',
+    key: 'pnl_amount',
+    width: 120,
+    align: 'right',
+    render: (v) => <span className={marketClassByValue(v)}>{v ?? '-'}</span>,
+  },
   { title: '退出原因', dataIndex: 'exit_reason', key: 'exit_reason', ellipsis: true, render: (v) => v || '-' },
 ]
 
@@ -342,7 +344,9 @@ export function BacktestDetailPanel({
                       return (
                         <Card key={k} size="small">
                           <div className="text-xs text-gray-500">{k}</div>
-                          <div className="font-semibold">{isPct ? fmtPct(v) : String(v)}</div>
+                          <div className={`font-semibold ${isPct ? marketClassByValue(v) : ''}`}>
+                            {isPct ? formatPct(v) : String(v)}
+                          </div>
                         </Card>
                       )
                     })}
@@ -445,7 +449,12 @@ export function BacktestDetailPanel({
                         <div>开仓：{r.open_time || '-'} @ {r.open_price ?? '-'}</div>
                         <div>平仓：{r.close_time || '-'} @ {r.close_price ?? '-'}</div>
                         <div>持有天数：{r.holding_days ?? '-'}</div>
-                        <div>收益率/盈亏：{fmtPct(r.pnl_ratio)} / {r.pnl_amount ?? '-'}</div>
+                        <div>
+                          收益率/盈亏：
+                          <span className={marketClassByValue(r.pnl_ratio)}>{formatPct(r.pnl_ratio)}</span>
+                          {' / '}
+                          <span className={marketClassByValue(r.pnl_amount)}>{r.pnl_amount ?? '-'}</span>
+                        </div>
                         <div className="text-gray-500">退出原因：{r.exit_reason || '-'}</div>
                       </div>
                     </Card>
@@ -535,7 +544,9 @@ export function BacktestDetailPanel({
                     </Space>
                     <Typography.Text type="secondary">
                       权益: {currentCurvePoint?.equity ?? currentSnapshot?.equity ?? '-'}
-                      {' '}| 当日收益率: {currentCurvePoint?.daily_return != null ? fmtPct(currentCurvePoint.daily_return) : '-'}
+                      {' '}| 当日收益率: {currentCurvePoint?.daily_return != null ? (
+                        <span className={marketClassByValue(currentCurvePoint.daily_return)}>{formatPct(currentCurvePoint.daily_return)}</span>
+                      ) : '-'}
                     </Typography.Text>
                     {(runFacts?.data_quality?.missing_equity_dates?.length || 0) > 0 || (runFacts?.data_quality?.missing_snapshot_dates?.length || 0) > 0 ? (
                       <Alert

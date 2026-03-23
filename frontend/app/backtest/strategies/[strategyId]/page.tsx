@@ -5,17 +5,14 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import axios from 'axios'
 import { Breadcrumb, Card, Segmented, Skeleton, Tag, Typography } from 'antd'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { getAuthHeader, isAuthenticated } from '../../../lib/auth'
+import { formatPct, marketClassByValue } from '../../../lib/marketColors'
 import type { StrategyManagementDetail } from '../../components/types'
 
 const { Text } = Typography
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
-
-function fmtPct(value: unknown): string {
-  const num = Number(value)
-  if (!Number.isFinite(num)) return '-'
-  return `${(num * 100).toFixed(2)}%`
-}
 
 function fmtTime(value: string | null | undefined): string {
   if (!value) return '-'
@@ -85,10 +82,10 @@ export default function StrategyDetailPage() {
             <Card title="最近回测成绩">
               {detail.latest_backtest ? (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                  <div><Text strong>年化：</Text>{fmtPct(detail.latest_backtest.annual_return)}</div>
-                  <div><Text strong>总收益：</Text>{fmtPct(detail.latest_backtest.total_return)}</div>
+                  <div><Text strong>年化：</Text><span className={marketClassByValue(detail.latest_backtest.annual_return)}>{formatPct(detail.latest_backtest.annual_return)}</span></div>
+                  <div><Text strong>总收益：</Text><span className={marketClassByValue(detail.latest_backtest.total_return)}>{formatPct(detail.latest_backtest.total_return)}</span></div>
                   <div><Text strong>夏普：</Text>{detail.latest_backtest.sharpe ?? '-'}</div>
-                  <div><Text strong>最大回撤：</Text>{fmtPct(detail.latest_backtest.max_drawdown)}</div>
+                  <div><Text strong>最大回撤：</Text><span className={marketClassByValue(detail.latest_backtest.max_drawdown)}>{formatPct(detail.latest_backtest.max_drawdown)}</span></div>
                 </div>
               ) : (
                 <div className="text-sm text-gray-500">暂无回测</div>
@@ -106,9 +103,17 @@ export default function StrategyDetailPage() {
                   onChange={(v) => setCodeTab(v as 'core' | 'full')}
                 />
               </div>
-              <pre className="bg-gray-900 text-gray-100 text-xs p-3 rounded-lg overflow-auto max-h-[70vh]">
-                {codeText}
-              </pre>
+              <div className="rounded-lg overflow-auto max-h-[70vh]">
+                <SyntaxHighlighter
+                  language="python"
+                  style={oneDark}
+                  customStyle={{ margin: 0, fontSize: '12px', minWidth: '100%' }}
+                  wrapLongLines={false}
+                  showLineNumbers
+                >
+                  {codeText || ''}
+                </SyntaxHighlighter>
+              </div>
             </Card>
           </>
         )}

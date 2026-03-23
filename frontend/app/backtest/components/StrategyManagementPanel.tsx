@@ -3,14 +3,9 @@ import { Button, Card, Input, Pagination, Segmented, Space, Table, Tag, Typograp
 import type { ColumnsType } from 'antd/es/table'
 import { useMemo } from 'react'
 import type { StrategyManagementListItem } from './types'
+import { formatPct, marketClassByValue } from '../../lib/marketColors'
 
 const { Text } = Typography
-
-function fmtPct(value: unknown): string {
-  const num = Number(value)
-  if (!Number.isFinite(num)) return '-'
-  return `${(num * 100).toFixed(2)}%`
-}
 
 function fmtTime(value: string | null | undefined): string {
   if (!value) return '-'
@@ -50,7 +45,7 @@ function getColumns(): ColumnsType<StrategyManagementListItem> {
       render: (v: unknown) => {
         const num = Number(v)
         if (!Number.isFinite(num)) return '-'
-        return <span className={num >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{fmtPct(v)}</span>
+        return <span className={marketClassByValue(num)}>{formatPct(v)}</span>
       },
     },
     {
@@ -116,7 +111,7 @@ export function StrategyManagementPanel({
               <div>
                 年化：
                 {Number.isFinite(annual) ? (
-                  <span className={annual >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{fmtPct(annual)}</span>
+                  <span className={marketClassByValue(annual)}>{formatPct(annual)}</span>
                 ) : (
                   '-'
                 )}

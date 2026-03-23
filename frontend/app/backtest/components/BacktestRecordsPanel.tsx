@@ -2,14 +2,9 @@ import { Button, Card, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import Link from 'next/link'
 import type { RunItem } from './types'
+import { formatPct, marketClassByValue } from '../../lib/marketColors'
 
 const { Text } = Typography
-
-function fmtPct(value: unknown): string {
-  const num = Number(value)
-  if (!Number.isFinite(num)) return '-'
-  return `${(num * 100).toFixed(2)}%`
-}
 
 function getRecordColumns(onViewDetail: (runId: number) => void): ColumnsType<RunItem> {
   return [
@@ -28,7 +23,7 @@ function getRecordColumns(onViewDetail: (runId: number) => void): ColumnsType<Ru
       key: 'total_return',
       width: 100,
       align: 'right',
-      render: (v) => fmtPct(v),
+      render: (v) => <span className={marketClassByValue(v)}>{formatPct(v)}</span>,
     },
     {
       title: '最大回撤',
@@ -36,7 +31,7 @@ function getRecordColumns(onViewDetail: (runId: number) => void): ColumnsType<Ru
       key: 'max_drawdown',
       width: 100,
       align: 'right',
-      render: (v) => fmtPct(v),
+      render: (v) => <span className={marketClassByValue(v)}>{formatPct(v)}</span>,
     },
     { title: '状态', dataIndex: 'status', key: 'status', width: 90, render: (v) => <Tag>{v}</Tag> },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 180, render: (v) => new Date(v).toLocaleString() },
@@ -116,8 +111,8 @@ export function BacktestRecordsPanel({
               </div>
               <div><Text code>{r.strategy_id}</Text></div>
               <div>{r.start_date} ~ {r.end_date}</div>
-              <div>总收益：{fmtPct(r.summary?.total_return)}</div>
-              <div>最大回撤：{fmtPct(r.summary?.max_drawdown)}</div>
+              <div>总收益：<span className={marketClassByValue(r.summary?.total_return)}>{formatPct(r.summary?.total_return)}</span></div>
+              <div>最大回撤：<span className={marketClassByValue(r.summary?.max_drawdown)}>{formatPct(r.summary?.max_drawdown)}</span></div>
               <div className="text-gray-500">{new Date(r.created_at).toLocaleString()}</div>
               <Link href="#" onClick={(e) => { e.preventDefault(); onViewDetail(r.id) }} className="text-indigo-600">查看详情</Link>
             </div>
