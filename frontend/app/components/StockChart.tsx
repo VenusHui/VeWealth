@@ -293,9 +293,9 @@ export default function StockChart({ data, period, fitResult, cyqInfo }: StockCh
               占总成交量 {peakData.percentage.toFixed(2)}%
             </div>
           </div>
-          <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+          <div className="bg-sky-50 p-4 rounded-lg border border-sky-200">
             <div className="text-sm text-gray-600">加权平均价</div>
-            <div className="text-2xl font-bold text-green-600">
+            <div className="text-2xl font-bold text-sky-600">
               ¥{statistics.meanPrice.toFixed(2)}
             </div>
             <div className="text-xs text-gray-500 mt-1">
@@ -358,7 +358,7 @@ export default function StockChart({ data, period, fitResult, cyqInfo }: StockCh
                 onClick={() => setShowCyq(!showCyq)}
                 className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
                   showCyq
-                    ? 'bg-green-500 text-white hover:bg-green-600'
+                    ? 'bg-teal-500 text-white hover:bg-teal-600'
                     : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
                 }`}
               >
@@ -477,9 +477,9 @@ export default function StockChart({ data, period, fitResult, cyqInfo }: StockCh
               <ReferenceLine 
                 yAxisId="left"
                 x={statistics.meanPrice} 
-                stroke="#10b981" 
+                stroke="#0ea5e9" 
                 strokeDasharray="5 5"
-                label={{ value: '平均价', position: 'top', fill: '#10b981', fontSize: 12 }}
+                label={{ value: '平均价', position: 'top', fill: '#0ea5e9', fontSize: 12 }}
               />
             )}
             
@@ -501,13 +501,13 @@ export default function StockChart({ data, period, fitResult, cyqInfo }: StockCh
                 <ReferenceLine 
                   yAxisId="left"
                   x={cyqInfo.avg_cost} 
-                  stroke="#16a34a" 
+                  stroke="#0284c7" 
                   strokeWidth={2}
                   strokeDasharray="3 3"
                   label={{ 
                     value: `平均成本 ¥${cyqInfo.avg_cost.toFixed(2)}`, 
                     position: 'top', 
-                    fill: '#16a34a', 
+                    fill: '#0284c7', 
                     fontSize: 11,
                     fontWeight: 'bold'
                   }}
@@ -639,9 +639,9 @@ export default function StockChart({ data, period, fitResult, cyqInfo }: StockCh
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* 基本信息 */}
-            <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+            <div className="bg-sky-50 p-4 rounded-lg border border-sky-200">
               <div className="text-sm text-gray-600 mb-1">平均成本</div>
-              <div className="text-2xl font-bold text-green-600">
+              <div className="text-2xl font-bold text-sky-600">
                 ¥{cyqInfo.avg_cost.toFixed(2)}
               </div>
               <div className={`text-xs mt-1 ${marketClassByValue(cyqInfo.profit_ratio)}`}>
