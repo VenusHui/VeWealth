@@ -218,7 +218,7 @@ export default function WatchListPage() {
     <div className="app-page-shell">
       <div className="app-page-container-md app-section-stack">
         <Card>
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-3">
             <Typography.Title level={3} style={{ margin: 0 }}>👁️ 监控列表</Typography.Title>
             <Button type="primary" onClick={() => setShowAddForm((v) => !v)}>
               {showAddForm ? '取消' : '+ 添加股票'}
@@ -258,16 +258,57 @@ export default function WatchListPage() {
           {loading ? (
             <div className="py-16 text-center"><Spin /></div>
           ) : (
-            <Table<WatchListItem>
-              rowKey="id"
-              size="small"
-              bordered
-              columns={columns}
-              dataSource={watchlist}
-              pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100] }}
-              scroll={{ x: 1000 }}
-              locale={{ emptyText: '暂无监控股票' }}
-            />
+            <>
+              <div className="hidden md:block">
+                <Table<WatchListItem>
+                  rowKey="id"
+                  size="small"
+                  bordered
+                  columns={columns}
+                  dataSource={watchlist}
+                  pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100] }}
+                  scroll={{ x: 1000 }}
+                  locale={{ emptyText: '暂无监控股票' }}
+                />
+              </div>
+
+              <div className="md:hidden space-y-2">
+                {watchlist.map((item) => (
+                  <Card key={item.id} size="small">
+                    <div className="space-y-2 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-medium">{item.stock_name || item.stock_code}</div>
+                        <Tag>{item.stock_code}</Tag>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">预警开关</span>
+                        <Switch checked={item.alert_enabled} onChange={() => handleToggleAlert(item)} />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="text-gray-500">阈值</div>
+                          <div>{item.alert_threshold != null ? `${(Number(item.alert_threshold) * 100).toFixed(0)}%` : '-'}</div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">最近预警</div>
+                          <div>{item.last_alerted_at ? new Date(item.last_alerted_at).toLocaleString() : '未触发'}</div>
+                        </div>
+                      </div>
+
+                      <div className="text-gray-500">创建时间：{new Date(item.created_at).toLocaleString()}</div>
+
+                      <Popconfirm title={`确定要删除 ${item.stock_code} 吗？`} onConfirm={() => handleDelete(item.id)}>
+                        <Button danger type="link" className="p-0">删除</Button>
+                      </Popconfirm>
+                    </div>
+                  </Card>
+                ))}
+
+                {watchlist.length === 0 && <div className="text-sm text-gray-500">暂无监控股票</div>}
+              </div>
+            </>
           )}
         </Card>
       </div>
