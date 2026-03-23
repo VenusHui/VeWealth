@@ -7,6 +7,7 @@ import { MainTabSwitcher } from './components/MainTabSwitcher'
 import { BacktestRecordsPanel } from './components/BacktestRecordsPanel'
 import { BacktestDetailPanel } from './components/BacktestDetailPanel'
 import { BacktestCreatePanel } from './components/BacktestCreatePanel'
+import { StrategyManagementPanel } from './components/StrategyManagementPanel'
 import type {
   BacktestOverview,
   BacktestFacts,
@@ -19,6 +20,8 @@ import type {
   SnapshotRow,
   Strategy,
   StrategyConfig,
+  StrategyManagementDetail,
+  StrategyManagementListItem,
   TradeRow,
 } from './components/types'
 
@@ -87,6 +90,11 @@ export default function BacktestPage() {
     strategy: false,
   })
 
+  const [strategyManagementItems, setStrategyManagementItems] = useState<StrategyManagementListItem[]>([])
+  const [strategyManagementLoading, setStrategyManagementLoading] = useState(false)
+  const [strategyManagementDetailLoading, setStrategyManagementDetailLoading] = useState(false)
+  const [strategyManagementDetail, setStrategyManagementDetail] = useState<StrategyManagementDetail | null>(null)
+
   const selectedStrategy = useMemo(
     () => strategies.find((s) => s.strategy_id === strategyId),
     [strategies, strategyId]
@@ -121,6 +129,39 @@ export default function BacktestPage() {
       // ignore
     } finally {
       if (showLoading) setJobsLoading(false)
+    }
+  }, [])
+
+  const fetchStrategyManagementList = useCallback(async () => {
+    if (!isAuthenticated()) return
+    setStrategyManagementLoading(true)
+    try {
+      const resp = await axios.get(`${API_BASE_URL}/api/backtest/strategy-management/list`, {
+        headers: getAuthHeader(),
+      })
+      const list: StrategyManagementListItem[] = Array.isArray(resp.data?.data)
+        ? (resp.data.data as StrategyManagementListItem[])
+        : []
+      setStrategyManagementItems(list)
+    } catch {
+      // ignore
+    } finally {
+      setStrategyManagementLoading(false)
+    }
+  }, [])
+
+  const fetchStrategyManagementDetail = useCallback(async (targetStrategyId: string) => {
+    if (!isAuthenticated() || !targetStrategyId) return
+    setStrategyManagementDetailLoading(true)
+    try {
+      const resp = await axios.get(`${API_BASE_URL}/api/backtest/strategy-management/${targetStrategyId}`, {
+        headers: getAuthHeader(),
+      })
+      setStrategyManagementDetail((resp.data?.data || null) as StrategyManagementDetail | null)
+    } catch {
+      // ignore
+    } finally {
+      setStrategyManagementDetailLoading(false)
     }
   }, [])
 
@@ -260,7 +301,8 @@ export default function BacktestPage() {
 
     fetchStrategies()
     fetchJobs()
-  }, [fetchJobs, mounted])
+    fetchStrategyManagementList()
+  }, [fetchJobs, fetchStrategyManagementList, mounted])
 
   useEffect(() => {
     if (!mounted) return
@@ -275,6 +317,12 @@ export default function BacktestPage() {
     })
     setStrategyParams(defaults)
   }, [selectedStrategy])
+
+  useEffect(() => {
+    if (!strategyManagementItems.length) return
+    if (strategyManagementDetail) return
+    fetchStrategyManagementDetail(strategyManagementItems[0].strategy_id)
+  }, [fetchStrategyManagementDetail, strategyManagementDetail, strategyManagementItems])
 
   useEffect(() => {
     const hasActive = (job && ACTIVE_JOB_STATUSES.includes(job.status as (typeof ACTIVE_JOB_STATUSES)[number]))
@@ -537,6 +585,17 @@ export default function BacktestPage() {
           roundsPageSize={runRoundsPageSize}
           onRoundsPageChange={changeRoundsPage}
           onRoundsPageSizeChange={changeRoundsPageSize}
+        />
+      )}
+
+      {mainTab === 'strategies' && (
+        <StrategyManagementPanel
+          loading={strategyManagementLoading}
+          detailLoading={strategyManagementDetailLoading}
+          items={strategyManagementItems}
+          detail={strategyManagementDetail}
+          onRefresh={fetchStrategyManagementList}
+          onOpenDetail={fetchStrategyManagementDetail}
         />
       )}
 

@@ -4,6 +4,7 @@ const mainTabs: { key: MainTab; label: string }[] = [
   { key: 'create', label: '新建回测' },
   { key: 'records', label: '回测记录' },
   { key: 'detail', label: '回测详情' },
+  { key: 'strategies', label: '策略管理' },
 ]
 
 export function MainTabSwitcher({

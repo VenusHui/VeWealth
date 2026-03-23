@@ -26,7 +26,7 @@ export type RunItem = {
 }
 
 export type DetailTab = 'overview' | 'trades' | 'rounds' | 'snapshots' | 'strategy'
-export type MainTab = 'create' | 'records' | 'detail'
+export type MainTab = 'create' | 'records' | 'detail' | 'strategies'
 
 export type JobItem = {
   job_id: string
@@ -133,4 +133,37 @@ export type StrategyConfig = Record<string, unknown>
 export type BacktestResult = {
   run_id?: number
   trades?: unknown[]
+}
+
+export type StrategyLatestBacktest = {
+  run_id: number
+  run_name: string
+  created_at: string
+  annual_return?: number | null
+  total_return?: number | null
+  sharpe?: number | null
+  max_drawdown?: number | null
+}
+
+export type StrategyManagementListItem = {
+  strategy_id: string
+  name: string
+  description: string
+  usable: boolean
+  policy_profile?: string | null
+  last_modified_at?: string | null
+  latest_backtest?: StrategyLatestBacktest | null
+  has_code: boolean
+}
+
+export type StrategyManagementDetail = {
+  strategy_info: StrategyManagementListItem
+  latest_backtest?: StrategyLatestBacktest | null
+  code: {
+    language: string
+    source_path?: string | null
+    core_snippet?: string | null
+    full_source?: string | null
+    line_count: number
+  }
 }

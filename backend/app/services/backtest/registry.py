@@ -1,5 +1,7 @@
 """策略注册表"""
 
+from pathlib import Path
+
 from app.services.backtest.strategies.ma_cross_v1 import MACrossV1Strategy
 from app.services.backtest.strategies.volume_shrink_drop_v1 import (
     VolumeShrinkDropV1Strategy,
@@ -9,6 +11,15 @@ from app.services.backtest.validators.strategy_validator import validate_strateg
 STRATEGY_REGISTRY = {
     MACrossV1Strategy.strategy_id: MACrossV1Strategy,
     VolumeShrinkDropV1Strategy.strategy_id: VolumeShrinkDropV1Strategy,
+}
+
+STRATEGY_SOURCE_PATHS = {
+    MACrossV1Strategy.strategy_id: str(
+        Path(__file__).parent / "strategies" / "ma_cross_v1.py"
+    ),
+    VolumeShrinkDropV1Strategy.strategy_id: str(
+        Path(__file__).parent / "strategies" / "volume_shrink_drop_v1.py"
+    ),
 }
 
 
@@ -55,3 +66,7 @@ def get_strategy(strategy_id: str, require_usable: bool = False):
         raise ValueError(f"策略不可用({strategy_id}): {reason}")
 
     return strategy_cls()
+
+
+def get_strategy_source_path(strategy_id: str) -> str | None:
+    return STRATEGY_SOURCE_PATHS.get(strategy_id)

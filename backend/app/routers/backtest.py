@@ -25,8 +25,13 @@ from app.schemas.backtest import (
     BacktestRunStrategyConfigResponse,
     BacktestRunFactsResponse,
     BacktestUniverseStatsResponse,
+    BacktestStrategyManagementListResponse,
+    BacktestStrategyManagementDetailResponse,
 )
 from app.services.backtest import backtest_service, backtest_job_manager
+from app.services.backtest.strategy_management_service import (
+    backtest_strategy_management_service,
+)
 
 router = APIRouter(prefix="/backtest", tags=["backtest"])
 
@@ -64,6 +69,38 @@ async def get_strategies(
     current_user: User = Depends(get_current_active_user),
 ):
     return BacktestStrategiesResponse(data=backtest_service.list_strategies())
+
+
+@router.get(
+    "/strategy-management/list",
+    response_model=BacktestStrategyManagementListResponse,
+)
+async def get_strategy_management_list(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    _ = current_user
+    data = backtest_strategy_management_service.list_strategies(db=db)
+    return BacktestStrategyManagementListResponse(data=data)
+
+
+@router.get(
+    "/strategy-management/{strategy_id}",
+    response_model=BacktestStrategyManagementDetailResponse,
+)
+async def get_strategy_management_detail(
+    strategy_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    _ = current_user
+    try:
+        data = backtest_strategy_management_service.get_strategy_detail(
+            db=db, strategy_id=strategy_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    return BacktestStrategyManagementDetailResponse(data=data)
 
 
 @router.get("/universe/stats", response_model=BacktestUniverseStatsResponse)

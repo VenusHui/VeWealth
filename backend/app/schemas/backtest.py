@@ -200,3 +200,48 @@ class BacktestRunFactsResponse(BaseModel):
 class BacktestUniverseStatsResponse(BaseModel):
     success: bool = True
     data: dict[str, Any]
+
+
+class StrategyLatestBacktest(BaseModel):
+    run_id: int
+    run_name: str
+    created_at: datetime
+    annual_return: Optional[float] = None
+    total_return: Optional[float] = None
+    sharpe: Optional[float] = None
+    max_drawdown: Optional[float] = None
+
+
+class StrategyManagementListItem(BaseModel):
+    strategy_id: str
+    name: str
+    description: str
+    usable: bool = True
+    policy_profile: Optional[str] = None
+    last_modified_at: Optional[datetime] = None
+    latest_backtest: Optional[StrategyLatestBacktest] = None
+    has_code: bool = False
+
+
+class StrategyCodeDetail(BaseModel):
+    language: str = "python"
+    source_path: Optional[str] = None
+    core_snippet: Optional[str] = None
+    full_source: Optional[str] = None
+    line_count: int = 0
+
+
+class StrategyManagementDetail(BaseModel):
+    strategy_info: StrategyManagementListItem
+    latest_backtest: Optional[StrategyLatestBacktest] = None
+    code: StrategyCodeDetail
+
+
+class BacktestStrategyManagementListResponse(BaseModel):
+    success: bool = True
+    data: list[StrategyManagementListItem]
+
+
+class BacktestStrategyManagementDetailResponse(BaseModel):
+    success: bool = True
+    data: StrategyManagementDetail
