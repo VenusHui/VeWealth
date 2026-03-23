@@ -66,11 +66,15 @@ class MACrossV1Strategy(BaseStrategy, BaseStrategyV2):
         signal_df["sell_signal"] = cross_down.fillna(False)
         return signal_df
 
-    def generate_candidates(self, market_df: pd.DataFrame, params: dict) -> pd.DataFrame:
+    def generate_candidates(
+        self, market_df: pd.DataFrame, params: dict
+    ) -> pd.DataFrame:
         signal_df = self.generate_signals(market_df, params)
         buy_rows = signal_df[signal_df["buy_signal"]].copy()
         if buy_rows.empty:
-            return pd.DataFrame(columns=["trade_date", "symbol", "signal_strength", "reason"])
+            return pd.DataFrame(
+                columns=["trade_date", "symbol", "signal_strength", "reason"]
+            )
 
         buy_rows["trade_date"] = pd.to_datetime(buy_rows["datetime"])
         buy_rows["symbol"] = buy_rows.get("symbol", "")

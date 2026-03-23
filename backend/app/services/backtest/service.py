@@ -466,7 +466,9 @@ class BacktestService:
 
         candidates_df = pd.concat(candidate_frames, ignore_index=True)
 
-        policy_profile_id = str(params.get("policy_profile") or strategy.default_policy_profile())
+        policy_profile_id = str(
+            params.get("policy_profile") or strategy.default_policy_profile()
+        )
         pipeline = resolve_profile(policy_profile_id)
         context = PolicyContext(
             strategy_id=request.strategy_id,
@@ -475,14 +477,18 @@ class BacktestService:
         )
 
         ranked_df = pipeline["ranking"].rank(candidates_df, context)
-        selected_df = pipeline["selection"].select(ranked_df, portfolio_state={}, context=context)
+        selected_df = pipeline["selection"].select(
+            ranked_df, portfolio_state={}, context=context
+        )
         allocated_df = pipeline["allocation"].allocate(
             selected_df,
             equity=float(request.initial_cash),
             risk_state={},
             context=context,
         )
-        orders_df = pipeline["risk"].check_pre_trade(allocated_df, portfolio_state={}, context=context)
+        orders_df = pipeline["risk"].check_pre_trade(
+            allocated_df, portfolio_state={}, context=context
+        )
 
         events = pipeline["execution"].simulate_fill(
             orders_df,
@@ -540,7 +546,11 @@ class BacktestService:
         trades: list[dict[str, Any]] = []
 
         for ev in events:
-            position_size_pct = float(ev.get("position_size_pct") or params.get("position_size_pct", 0.1) or 0.1)
+            position_size_pct = float(
+                ev.get("position_size_pct")
+                or params.get("position_size_pct", 0.1)
+                or 0.1
+            )
             position_size_pct = max(0.0, min(1.0, position_size_pct))
             position_amount = equity * position_size_pct
             pnl = position_amount * float(ev["return"])
@@ -571,7 +581,9 @@ class BacktestService:
                     "reason": ev["reason"],
                 }
             )
-            equity_curve.append({"datetime": ev["sell_datetime"], "equity": round(equity, 4)})
+            equity_curve.append(
+                {"datetime": ev["sell_datetime"], "equity": round(equity, 4)}
+            )
 
         summary = calc_summary(equity_curve, trades, request.initial_cash)
         warnings.append(

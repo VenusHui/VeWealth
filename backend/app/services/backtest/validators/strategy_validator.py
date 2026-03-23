@@ -8,7 +8,6 @@ from typing import Any
 from app.services.backtest.policies.registry import get_profile, get_policy
 from app.services.backtest.strategies.contracts import BaseStrategyV2
 
-
 REQUIRED_V2_CLASS_METHODS = [
     "param_schema",
     "required_columns",

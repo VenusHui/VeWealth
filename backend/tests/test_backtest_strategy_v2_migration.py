@@ -54,7 +54,10 @@ class StrategyV2MigrationTests(unittest.TestCase):
                 msg=f"{strategy_cls.strategy_id} should be usable: {validation.unusable_reasons}",
             )
 
-    @patch("app.services.backtest.service.stock_service.get_all_stock_symbols", return_value=[])
+    @patch(
+        "app.services.backtest.service.stock_service.get_all_stock_symbols",
+        return_value=[],
+    )
     @patch("app.services.backtest.service.get_strategy")
     def test_strategy_select_enforces_require_usable(
         self,

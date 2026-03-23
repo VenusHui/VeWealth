@@ -71,10 +71,14 @@ class VolumeShrinkDropV1Strategy(BaseStrategy, BaseStrategyV2):
         # 保持 v1 手动回测链路兼容：该策略在 engine/manual 模式下不依赖买卖信号列。
         return df
 
-    def generate_candidates(self, market_df: pd.DataFrame, params: dict) -> pd.DataFrame:
+    def generate_candidates(
+        self, market_df: pd.DataFrame, params: dict
+    ) -> pd.DataFrame:
         """V2 候选生成：保持与 strategy_select 触发条件一致，仅输出买入候选日。"""
         if market_df.empty:
-            return pd.DataFrame(columns=["trade_date", "symbol", "signal_strength", "reason"])
+            return pd.DataFrame(
+                columns=["trade_date", "symbol", "signal_strength", "reason"]
+            )
 
         min_price_drop_pct = float(params.get("min_price_drop_pct", -1.0))
         min_volume_shrink_pct = float(params.get("min_volume_shrink_pct", 10.0))

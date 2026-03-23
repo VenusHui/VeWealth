@@ -112,7 +112,9 @@ class CnAT1OpenFill(ExecutionPolicy):
         if hold_days < 1:
             hold_days = 1
 
-        market_data_map: dict[str, pd.DataFrame] = context.extras.get("market_data_map") or {}
+        market_data_map: dict[str, pd.DataFrame] = (
+            context.extras.get("market_data_map") or {}
+        )
         events: list[dict[str, Any]] = []
 
         for _, row in orders_df.sort_values(by=["trade_date", "symbol"]).iterrows():
@@ -151,13 +153,21 @@ class CnAT1OpenFill(ExecutionPolicy):
             events.append(
                 {
                     "symbol": symbol,
-                    "buy_datetime": pd.to_datetime(buy_row["datetime"]).strftime("%Y-%m-%d %H:%M:%S"),
-                    "sell_datetime": pd.to_datetime(sell_row["datetime"]).strftime("%Y-%m-%d %H:%M:%S"),
+                    "buy_datetime": pd.to_datetime(buy_row["datetime"]).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    ),
+                    "sell_datetime": pd.to_datetime(sell_row["datetime"]).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    ),
                     "buy_price": round(buy_price, 4),
                     "sell_price": round(sell_price, 4),
                     "return": round(ret, 6),
                     "reason": row.get("reason") or "policy_select",
-                    "position_size_pct": float(row.get("position_size_pct") or context.params.get("position_size_pct", 0.1) or 0.1),
+                    "position_size_pct": float(
+                        row.get("position_size_pct")
+                        or context.params.get("position_size_pct", 0.1)
+                        or 0.1
+                    ),
                 }
             )
 
