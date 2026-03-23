@@ -309,7 +309,7 @@ export default function AnalysisPage() {
                 <Tag>粒度: 1分钟</Tag>
                 <Tag>请求范围: {startDate} 至 {endDate}</Tag>
                 {actualStartDate && actualEndDate ? (
-                  <Tag color="green">实际范围: {actualStartDate} 至 {actualEndDate}</Tag>
+                  <Tag color="blue">实际范围: {actualStartDate} 至 {actualEndDate}</Tag>
                 ) : null}
               </Space>
               <Spin spinning={loading}>

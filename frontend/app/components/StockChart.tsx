@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { formatPct, marketClassByValue } from '../lib/marketColors'
 import { 
   ComposedChart,
   Bar,
@@ -643,8 +644,8 @@ export default function StockChart({ data, period, fitResult, cyqInfo }: StockCh
               <div className="text-2xl font-bold text-green-600">
                 ¥{cyqInfo.avg_cost.toFixed(2)}
               </div>
-              <div className="text-xs text-gray-500 mt-1">
-                获利比例: {(cyqInfo.profit_ratio * 100).toFixed(2)}%
+              <div className={`text-xs mt-1 ${marketClassByValue(cyqInfo.profit_ratio)}`}>
+                获利比例: {formatPct(cyqInfo.profit_ratio)}
               </div>
             </div>
             
