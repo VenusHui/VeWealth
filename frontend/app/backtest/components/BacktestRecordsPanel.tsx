@@ -1,6 +1,9 @@
-import { Button, Card, Table, Tag } from 'antd'
+import { Button, Card, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
+import Link from 'next/link'
 import type { RunItem } from './types'
+
+const { Text } = Typography
 
 function fmtPct(value: unknown): string {
   const num = Number(value)
@@ -78,28 +81,50 @@ export function BacktestRecordsPanel({
         <Button type="link" onClick={onRefresh}>刷新</Button>
       )}
     >
-      <Table<RunItem>
-        rowKey="id"
-        bordered
-        size="small"
-        loading={runsLoading}
-        columns={getRecordColumns(onViewDetail)}
-        dataSource={runs}
-        scroll={{ x: 1100 }}
-        locale={{ emptyText: '暂无回测记录' }}
-        pagination={{
-          current: page,
-          pageSize,
-          total,
-          showSizeChanger: true,
-          pageSizeOptions: [20, 50, 100],
-          onChange: (nextPage, nextPageSize) => {
-            if (nextPageSize !== pageSize) onPageSizeChange(nextPageSize)
-            onPageChange(nextPage)
-          },
-          showTotal: (count) => `共 ${count} 条`,
-        }}
-      />
+      <div className="hidden md:block">
+        <Table<RunItem>
+          rowKey="id"
+          bordered
+          size="small"
+          loading={runsLoading}
+          columns={getRecordColumns(onViewDetail)}
+          dataSource={runs}
+          scroll={{ x: 1100 }}
+          locale={{ emptyText: '暂无回测记录' }}
+          pagination={{
+            current: page,
+            pageSize,
+            total,
+            showSizeChanger: true,
+            pageSizeOptions: [20, 50, 100],
+            onChange: (nextPage, nextPageSize) => {
+              if (nextPageSize !== pageSize) onPageSizeChange(nextPageSize)
+              onPageChange(nextPage)
+            },
+            showTotal: (count) => `共 ${count} 条`,
+          }}
+        />
+      </div>
+
+      <div className="md:hidden space-y-2">
+        {runs.map((r) => (
+          <Card key={r.id} size="small">
+            <div className="space-y-1 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium truncate">{r.name}</span>
+                <Tag>{r.status}</Tag>
+              </div>
+              <div><Text code>{r.strategy_id}</Text></div>
+              <div>{r.start_date} ~ {r.end_date}</div>
+              <div>总收益：{fmtPct(r.summary?.total_return)}</div>
+              <div>最大回撤：{fmtPct(r.summary?.max_drawdown)}</div>
+              <div className="text-gray-500">{new Date(r.created_at).toLocaleString()}</div>
+              <Link href="#" onClick={(e) => { e.preventDefault(); onViewDetail(r.id) }} className="text-indigo-600">查看详情</Link>
+            </div>
+          </Card>
+        ))}
+        {runs.length === 0 && <div className="text-sm text-gray-500">暂无回测记录</div>}
+      </div>
     </Card>
   )
 }
