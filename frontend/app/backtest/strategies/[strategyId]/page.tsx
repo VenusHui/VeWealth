@@ -8,7 +8,7 @@ import { Breadcrumb, Card, Segmented, Skeleton, Tag, Typography } from 'antd'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { getAuthHeader, isAuthenticated } from '../../../lib/auth'
-import { formatPct, marketClassByValue } from '../../../lib/marketColors'
+import { formatPct, formatDrawdownPct, marketClassByDrawdown, marketClassByValue } from '../../../lib/marketColors'
 import type { StrategyManagementDetail } from '../../components/types'
 
 const { Text } = Typography
@@ -55,7 +55,7 @@ export default function StrategyDetailPage() {
 
   return (
     <div className="app-page-shell">
-      <div className="app-page-container app-section-stack">
+      <div className="app-page-container h-full overflow-hidden flex flex-col">
         <Breadcrumb
           items={[
             { title: <Link href="/backtest">回测中心</Link> },
@@ -64,6 +64,7 @@ export default function StrategyDetailPage() {
           ]}
         />
 
+        <div className="mt-3 flex-1 min-h-0 overflow-y-auto space-y-3 md:space-y-4 pr-0 md:pr-1">
         {loading ? (
           <Card><Skeleton active paragraph={{ rows: 8 }} /></Card>
         ) : !detail ? (
@@ -85,7 +86,7 @@ export default function StrategyDetailPage() {
                   <div><Text strong>年化：</Text><span className={marketClassByValue(detail.latest_backtest.annual_return)}>{formatPct(detail.latest_backtest.annual_return)}</span></div>
                   <div><Text strong>总收益：</Text><span className={marketClassByValue(detail.latest_backtest.total_return)}>{formatPct(detail.latest_backtest.total_return)}</span></div>
                   <div><Text strong>夏普：</Text>{detail.latest_backtest.sharpe ?? '-'}</div>
-                  <div><Text strong>最大回撤：</Text><span className={marketClassByValue(detail.latest_backtest.max_drawdown)}>{formatPct(detail.latest_backtest.max_drawdown)}</span></div>
+                  <div><Text strong>最大回撤：</Text><span className={marketClassByDrawdown(detail.latest_backtest.max_drawdown)}>{formatDrawdownPct(detail.latest_backtest.max_drawdown)}</span></div>
                 </div>
               ) : (
                 <div className="text-sm text-gray-500">暂无回测</div>
@@ -117,6 +118,7 @@ export default function StrategyDetailPage() {
             </Card>
           </>
         )}
+        </div>
       </div>
     </div>
   )

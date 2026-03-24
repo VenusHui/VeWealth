@@ -25,7 +25,7 @@ import {
 } from 'recharts'
 import { LoadingHint } from './LoadingHint'
 import { BacktestTable } from './BacktestTable'
-import { formatPct, marketClassByValue } from '../../lib/marketColors'
+import { formatDrawdownPct, formatPct, marketClassByDrawdown, marketClassByValue } from '../../lib/marketColors'
 import type {
   BacktestOverview,
   DetailTab,
@@ -340,12 +340,15 @@ export function BacktestDetailPanel({
                     .filter(([k]) => !['positions_snapshot', 'final_positions'].includes(k))
                     .slice(0, 8)
                     .map(([k, v]) => {
+                      const isDrawdown = /drawdown/i.test(k)
                       const isPct = /return|drawdown|rate|ratio/i.test(k)
+                      const pctText = isDrawdown ? formatDrawdownPct(v) : formatPct(v)
+                      const pctClass = isDrawdown ? marketClassByDrawdown(v) : marketClassByValue(v)
                       return (
                         <Card key={k} size="small">
                           <div className="text-xs text-gray-500">{k}</div>
-                          <div className={`font-semibold ${isPct ? marketClassByValue(v) : ''}`}>
-                            {isPct ? formatPct(v) : String(v)}
+                          <div className={`font-semibold ${isPct ? pctClass : ''}`}>
+                            {isPct ? pctText : String(v)}
                           </div>
                         </Card>
                       )

@@ -17,3 +17,18 @@ export function formatPct(value: unknown, digits = 2): string {
   if (!Number.isFinite(num)) return '-'
   return `${(num * 100).toFixed(digits)}%`
 }
+
+
+export function marketClassByDrawdown(value: unknown): string {
+  const num = Number(value)
+  if (!Number.isFinite(num) || num === 0) return 'text-gray-500'
+  // 回撤按A股红涨绿跌语义展示：回撤(亏损)为绿色
+  return 'text-green-600'
+}
+
+export function formatDrawdownPct(value: unknown, digits = 2): string {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return '-'
+  const absVal = Math.abs(num)
+  return `-${(absVal * 100).toFixed(digits)}%`
+}

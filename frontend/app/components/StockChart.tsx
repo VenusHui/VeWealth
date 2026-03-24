@@ -316,11 +316,11 @@ export default function StockChart({ data, period, fitResult, cyqInfo }: StockCh
 
       {/* 价格分布图 */}
       <div className="bg-white rounded-lg p-4 border border-gray-200">
-        <div className="flex justify-between items-center mb-2">
+        <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
           <h3 className="text-lg font-semibold text-gray-700">
             价格-成交量分布图
           </h3>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setShowBar(!showBar)}
               className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
@@ -371,7 +371,7 @@ export default function StockChart({ data, period, fitResult, cyqInfo }: StockCh
         {/* 拟合参数信息和阈值控制 */}
         {fitResult && showFitCurve && (
           <div className="mb-3 p-3 bg-purple-50 rounded-lg border border-purple-200">
-            <div className="flex justify-between items-center mb-2">
+            <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
               <div className="text-sm">
                 <span className="font-semibold text-purple-700">
                   多峰拟合：
@@ -408,13 +408,13 @@ export default function StockChart({ data, period, fitResult, cyqInfo }: StockCh
           </div>
         )}
 
-        <div className="h-[500px]">
-        <ResponsiveContainer width="100%" height="90%">
+        <div className="h-[560px] md:h-[620px]">
+        <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={aggregatedData}
             margin={{
               top: 20,
-              right: 30,
+              right: 56,
               left: 60,
               bottom: 60,
             }}
