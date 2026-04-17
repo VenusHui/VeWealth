@@ -23,9 +23,9 @@ import type {
   StrategyManagementListItem,
   TradeRow,
 } from './components/types'
+import { AppPage, InfoPill, MetricCard, PageHeader } from '../components/ui-shell'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
-
 const ACTIVE_JOB_STATUSES = ['pending', 'running'] as const
 
 export default function BacktestPage() {
@@ -97,10 +97,7 @@ export default function BacktestPage() {
   const [strategyManagementPageSize, setStrategyManagementPageSize] = useState(20)
   const [strategyManagementTotal, setStrategyManagementTotal] = useState(0)
 
-  const selectedStrategy = useMemo(
-    () => strategies.find((s) => s.strategy_id === strategyId),
-    [strategies, strategyId]
-  )
+  const selectedStrategy = useMemo(() => strategies.find((s) => s.strategy_id === strategyId), [strategies, strategyId])
 
   const fetchRuns = useCallback(async (page = runsPage, pageSize = runsPageSize) => {
     if (!isAuthenticated()) return
@@ -179,21 +176,8 @@ export default function BacktestPage() {
     setSnapshotBenchmarkCode(undefined)
     setSnapshotCompareRunId(undefined)
     setRunStrategyConfig(null)
-    setDetailLoading({
-      overview: false,
-      trades: false,
-      rounds: false,
-      snapshots: false,
-      strategy: false,
-    })
-    setDetailLoaded({
-      overview: false,
-      trades: false,
-      rounds: false,
-      snapshots: false,
-      strategy: false,
-    })
-
+    setDetailLoading({ overview: false, trades: false, rounds: false, snapshots: false, strategy: false })
+    setDetailLoaded({ overview: false, trades: false, rounds: false, snapshots: false, strategy: false })
     setSelectedRunId(runId)
     setMainTab('detail')
     setDetailTab('overview')
@@ -277,23 +261,17 @@ export default function BacktestPage() {
   useEffect(() => {
     if (typeof window === 'undefined') return
     const tab = new URLSearchParams(window.location.search).get('tab')
-    if (tab === 'strategies') {
-      setMainTab('strategies')
-    }
+    if (tab === 'strategies') setMainTab('strategies')
   }, [])
 
   useEffect(() => {
-    if (!mounted) return
-    if (!isAuthenticated()) return
-
+    if (!mounted || !isAuthenticated()) return
     const fetchStrategies = async () => {
       try {
         const resp = await axios.get(`${API_BASE_URL}/api/backtest/strategies`, {
           headers: getAuthHeader(),
         })
-        const list: Strategy[] = Array.isArray(resp.data?.data)
-          ? (resp.data.data as Strategy[])
-          : []
+        const list: Strategy[] = Array.isArray(resp.data?.data) ? (resp.data.data as Strategy[]) : []
         setStrategies(list)
         if (list.length > 0) {
           setStrategyId(list[0].strategy_id)
@@ -319,20 +297,8 @@ export default function BacktestPage() {
 
   useEffect(() => {
     if (!mounted) return
-    fetchStrategyManagementList(
-      strategyManagementPage,
-      strategyManagementPageSize,
-      strategyManagementQuery,
-      strategyManagementUsable,
-    )
-  }, [
-    mounted,
-    fetchStrategyManagementList,
-    strategyManagementPage,
-    strategyManagementPageSize,
-    strategyManagementQuery,
-    strategyManagementUsable,
-  ])
+    fetchStrategyManagementList(strategyManagementPage, strategyManagementPageSize, strategyManagementQuery, strategyManagementUsable)
+  }, [mounted, fetchStrategyManagementList, strategyManagementPage, strategyManagementPageSize, strategyManagementQuery, strategyManagementUsable])
 
   useEffect(() => {
     if (!selectedStrategy) return
@@ -343,13 +309,9 @@ export default function BacktestPage() {
     setStrategyParams(defaults)
   }, [selectedStrategy])
 
-
   useEffect(() => {
-    const hasActive = (job && ACTIVE_JOB_STATUSES.includes(job.status as (typeof ACTIVE_JOB_STATUSES)[number]))
-      || jobs.some((j) => ACTIVE_JOB_STATUSES.includes(j.status as (typeof ACTIVE_JOB_STATUSES)[number]))
-
+    const hasActive = (job && ACTIVE_JOB_STATUSES.includes(job.status as (typeof ACTIVE_JOB_STATUSES)[number])) || jobs.some((j) => ACTIVE_JOB_STATUSES.includes(j.status as (typeof ACTIVE_JOB_STATUSES)[number]))
     if (mainTab !== 'create' || !hasActive) return
-
     const timer = setInterval(() => fetchJobs(false), 10000)
     return () => clearInterval(timer)
   }, [fetchJobs, mainTab, jobs, job])
@@ -369,9 +331,7 @@ export default function BacktestPage() {
           fetchJobs()
           fetchRuns()
         }
-        if (detail?.status === 'failed' || detail?.status === 'cancelled') {
-          clearInterval(timer)
-        }
+        if (detail?.status === 'failed' || detail?.status === 'cancelled') clearInterval(timer)
       } catch {
         clearInterval(timer)
       }
@@ -381,29 +341,13 @@ export default function BacktestPage() {
 
   useEffect(() => {
     if (mainTab !== 'detail' || !selectedRunId) return
-
-    if (detailTab === 'overview' && !detailLoaded.overview && !detailLoading.overview) {
-      loadDetailTabData(selectedRunId, 'overview')
-      return
-    }
-    if (detailTab === 'trades' && !detailLoaded.trades && !detailLoading.trades) {
-      loadDetailTabData(selectedRunId, 'trades')
-      return
-    }
-    if (detailTab === 'rounds' && !detailLoaded.rounds && !detailLoading.rounds) {
-      loadDetailTabData(selectedRunId, 'rounds')
-      return
-    }
+    if (detailTab === 'overview' && !detailLoaded.overview && !detailLoading.overview) return void loadDetailTabData(selectedRunId, 'overview')
+    if (detailTab === 'trades' && !detailLoaded.trades && !detailLoading.trades) return void loadDetailTabData(selectedRunId, 'trades')
+    if (detailTab === 'rounds' && !detailLoaded.rounds && !detailLoading.rounds) return void loadDetailTabData(selectedRunId, 'rounds')
     if (detailTab === 'snapshots' && !detailLoaded.snapshots && !detailLoading.snapshots) {
-      loadDetailTabData(selectedRunId, 'snapshots', undefined, undefined, {
-        benchmarkCode: snapshotBenchmarkCode,
-        compareRunId: snapshotCompareRunId,
-      })
-      return
+      return void loadDetailTabData(selectedRunId, 'snapshots', undefined, undefined, { benchmarkCode: snapshotBenchmarkCode, compareRunId: snapshotCompareRunId })
     }
-    if (detailTab === 'strategy' && !detailLoaded.strategy && !detailLoading.strategy) {
-      loadDetailTabData(selectedRunId, 'strategy')
-    }
+    if (detailTab === 'strategy' && !detailLoaded.strategy && !detailLoading.strategy) return void loadDetailTabData(selectedRunId, 'strategy')
   }, [mainTab, selectedRunId, detailTab, detailLoaded, detailLoading, loadDetailTabData, snapshotBenchmarkCode, snapshotCompareRunId])
 
   const handleRun = async () => {
@@ -411,28 +355,23 @@ export default function BacktestPage() {
       setError('请先登录')
       return
     }
-
     try {
       setLoading(true)
       setError('')
       setResult(null)
-
       const castParams: Record<string, unknown> = {}
       Object.keys(strategyParams).forEach((k) => {
         const val = strategyParams[k]
         castParams[k] = /^-?\d+(\.\d+)?$/.test(val) ? Number(val) : val
       })
-
       if (mode === 'strategy_select' && boardFilters.length === 0) {
         setError('请至少选择一个板块')
         return
       }
-
       if (mode === 'strategy_select') {
         castParams.boards = boardFilters
         castParams.exclude_st = excludeSt
       }
-
       const payload = {
         name,
         strategy_id: strategyId,
@@ -440,17 +379,12 @@ export default function BacktestPage() {
         mode,
         universe_type: universeType,
         symbols: mode === 'manual_symbols' ? symbols.split(',').map((s) => s.trim()).filter(Boolean) : [],
-        pool_symbols: mode === 'strategy_select' && universeType === 'custom'
-          ? poolSymbols.split(',').map((s) => s.trim()).filter(Boolean)
-          : [],
+        pool_symbols: mode === 'strategy_select' && universeType === 'custom' ? poolSymbols.split(',').map((s) => s.trim()).filter(Boolean) : [],
         start_date: startDate,
         end_date: endDate,
         initial_cash: Number(initialCash),
       }
-
-      const resp = await axios.post(`${API_BASE_URL}/api/backtest/jobs`, payload, {
-        headers: getAuthHeader(),
-      })
+      const resp = await axios.post(`${API_BASE_URL}/api/backtest/jobs`, payload, { headers: getAuthHeader() })
       setJob(resp.data?.data)
       setMainTab('create')
       fetchJobs()
@@ -466,56 +400,62 @@ export default function BacktestPage() {
     setRunTradesPage(page)
     loadDetailTabData(selectedRunId, 'trades', page, runTradesPageSize)
   }
-
   const changeTradesPageSize = (size: number) => {
     if (!selectedRunId) return
     setRunTradesPageSize(size)
     setRunTradesPage(1)
     loadDetailTabData(selectedRunId, 'trades', 1, size)
   }
-
   const changeRoundsPage = (page: number) => {
     if (!selectedRunId) return
     setRunRoundsPage(page)
     loadDetailTabData(selectedRunId, 'rounds', page, runRoundsPageSize)
   }
-
   const changeRoundsPageSize = (size: number) => {
     if (!selectedRunId) return
     setRunRoundsPageSize(size)
     setRunRoundsPage(1)
     loadDetailTabData(selectedRunId, 'rounds', 1, size)
   }
-
   const changeSnapshotComparison = (benchmarkCode?: string, compareRunId?: number) => {
     if (!selectedRunId) return
     setSnapshotBenchmarkCode(benchmarkCode)
     setSnapshotCompareRunId(compareRunId)
-    loadDetailTabData(selectedRunId, 'snapshots', undefined, undefined, {
-      benchmarkCode,
-      compareRunId,
-    })
+    loadDetailTabData(selectedRunId, 'snapshots', undefined, undefined, { benchmarkCode, compareRunId })
   }
 
-  if (!mounted) {
-    return <div className="max-w-3xl mx-auto py-10 px-4">加载中...</div>
-  }
+  const runningJobs = useMemo(
+    () => jobs.filter((item) => ACTIVE_JOB_STATUSES.includes(item.status as (typeof ACTIVE_JOB_STATUSES)[number])).length,
+    [jobs],
+  )
 
-  if (!isAuthenticated()) {
-    return <div className="max-w-3xl mx-auto py-10 px-4">请先登录后使用回测功能。</div>
-  }
+  if (!mounted) return <div className="mx-auto max-w-3xl px-4 py-10">加载中...</div>
+  if (!isAuthenticated()) return <div className="mx-auto max-w-3xl px-4 py-10">请先登录后使用回测功能。</div>
 
   return (
-    <div className="app-page-shell">
-      <div className="app-page-container app-section-stack">
-      <div className="rounded-2xl bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 p-6 text-white shadow-lg">
-        <h1 className="text-3xl font-bold">策略回测中心</h1>
-        <p className="text-indigo-100 mt-1">三段式结构：新建任务 → 记录列表 → 详情钻取</p>
+    <AppPage>
+      <PageHeader
+        eyebrow="Backtest workspace"
+        title="从任务创建到结果钻取，统一在一个回测工作台完成。"
+        description="新的回测中心把新建任务、队列状态、历史记录、详情钻取和策略管理统一进同一套布局与设计语言中。"
+        badges={(
+          <>
+            <InfoPill>{strategies.length} 个策略</InfoPill>
+            <InfoPill>{runsTotal} 条历史记录</InfoPill>
+            <InfoPill>{runningJobs} 个进行中任务</InfoPill>
+          </>
+        )}
+      />
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <MetricCard label="策略目录" value={strategies.length.toLocaleString()} meta="可直接选择策略并自动带出默认参数。" tone="brand" icon="◎" />
+        <MetricCard label="历史回测" value={runsTotal.toLocaleString()} meta="从记录页快速进入详情钻取。" icon="▤" />
+        <MetricCard label="活动任务" value={runningJobs.toLocaleString()} meta={job ? `当前任务 ${job.name || job.job_id}` : '当前没有活跃任务'} tone="warning" icon="↻" />
       </div>
 
       <MainTabSwitcher activeTab={mainTab} onChange={setMainTab} />
 
-      {mainTab === 'create' && (
+      {mainTab === 'create' ? (
         <BacktestCreatePanel
           name={name}
           strategyId={strategyId}
@@ -558,9 +498,9 @@ export default function BacktestPage() {
           onStrategyParamChange={(k, v) => setStrategyParams((prev) => ({ ...prev, [k]: v }))}
           onSubmit={handleRun}
         />
-      )}
+      ) : null}
 
-      {mainTab === 'records' && (
+      {mainTab === 'records' ? (
         <BacktestRecordsPanel
           runs={runs}
           runsLoading={runsLoading}
@@ -575,9 +515,9 @@ export default function BacktestPage() {
             setRunsPage(1)
           }}
         />
-      )}
+      ) : null}
 
-      {mainTab === 'detail' && (
+      {mainTab === 'detail' ? (
         <BacktestDetailPanel
           selectedRunId={selectedRunId}
           detailTab={detailTab}
@@ -606,9 +546,9 @@ export default function BacktestPage() {
           onRoundsPageChange={changeRoundsPage}
           onRoundsPageSizeChange={changeRoundsPageSize}
         />
-      )}
+      ) : null}
 
-      {mainTab === 'strategies' && (
+      {mainTab === 'strategies' ? (
         <StrategyManagementPanel
           loading={strategyManagementLoading}
           items={strategyManagementItems}
@@ -632,15 +572,14 @@ export default function BacktestPage() {
             setStrategyManagementPage(1)
           }}
         />
-      )}
+      ) : null}
 
-      {result && (
-        <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl px-4 py-3 text-sm">
+      {result ? (
+        <div className="rounded-[24px] border border-[rgba(21,128,61,0.16)] bg-[rgba(240,253,244,0.92)] px-5 py-4 text-sm text-green-800">
           最新任务完成：Run #{result.run_id}，交易笔数 {result.trades?.length || 0}。
-          <button className="ml-3 text-emerald-800 underline" onClick={() => mainTab !== 'records' && setMainTab('records')}>去记录页查看</button>
+          <button className="ml-3 font-semibold underline" onClick={() => mainTab !== 'records' && setMainTab('records')}>去记录页查看</button>
         </div>
-      )}
-      </div>
-    </div>
+      ) : null}
+    </AppPage>
   )
 }

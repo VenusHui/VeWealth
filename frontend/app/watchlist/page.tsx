@@ -1,26 +1,23 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import axios from 'axios'
 import {
   Alert,
   Button,
-  Card,
-  Form,
   Input,
   InputNumber,
   Popconfirm,
-  Space,
   Spin,
   Switch,
   Table,
   Tag,
-  Typography,
   message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { getAuthHeader, isAuthenticated, getUser } from '../lib/auth'
+import { getAuthHeader, getUser, isAuthenticated } from '../lib/auth'
+import { AppPage, EmptyState, InfoPill, MetricCard, PageHeader, SurfaceCard } from '../components/ui-shell'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
 
@@ -52,11 +49,9 @@ export default function WatchListPage() {
     try {
       setLoading(true)
       setError('')
-
       const response = await axios.get(`${API_BASE_URL}/api/watchlist`, {
         headers: getAuthHeader(),
       })
-
       if (response.data.success) {
         setWatchlist(response.data.data)
       }
@@ -77,13 +72,11 @@ export default function WatchListPage() {
       router.push('/login')
       return
     }
-
     const user = getUser()
     if (user) {
       setUserThreshold(user.alert_threshold)
       setAlertThreshold(user.alert_threshold)
     }
-
     fetchWatchList()
   }, [fetchWatchList, router])
 
@@ -92,15 +85,12 @@ export default function WatchListPage() {
       message.warning('请输入股票代码')
       return
     }
-
     if (!/^\d{6}$/.test(stockCode.trim())) {
-      message.warning('股票代码格式错误，应为6位数字')
+      message.warning('股票代码格式错误，应为 6 位数字')
       return
     }
-
     try {
       setAddLoading(true)
-
       const response = await axios.post(
         `${API_BASE_URL}/api/watchlist`,
         {
@@ -109,11 +99,8 @@ export default function WatchListPage() {
           alert_enabled: alertEnabled,
           alert_threshold: alertThreshold || null,
         },
-        {
-          headers: getAuthHeader(),
-        }
+        { headers: getAuthHeader() },
       )
-
       if (response.data.success) {
         setStockCode('')
         setStockName('')
@@ -124,8 +111,7 @@ export default function WatchListPage() {
         fetchWatchList()
       }
     } catch (err: any) {
-      const errorMsg = err.response?.data?.detail || '添加失败'
-      message.error(errorMsg)
+      message.error(err.response?.data?.detail || '添加失败')
     } finally {
       setAddLoading(false)
     }
@@ -139,8 +125,7 @@ export default function WatchListPage() {
       message.success('删除成功')
       fetchWatchList()
     } catch (err: any) {
-      const errorMsg = err.response?.data?.detail || '删除失败'
-      message.error(errorMsg)
+      message.error(err.response?.data?.detail || '删除失败')
     }
   }
 
@@ -148,17 +133,12 @@ export default function WatchListPage() {
     try {
       await axios.put(
         `${API_BASE_URL}/api/watchlist/${item.id}`,
-        {
-          alert_enabled: !item.alert_enabled,
-        },
-        {
-          headers: getAuthHeader(),
-        }
+        { alert_enabled: !item.alert_enabled },
+        { headers: getAuthHeader() },
       )
       fetchWatchList()
     } catch (err: any) {
-      const errorMsg = err.response?.data?.detail || '更新失败'
-      message.error(errorMsg)
+      message.error(err.response?.data?.detail || '更新失败')
     }
   }
 
@@ -176,9 +156,7 @@ export default function WatchListPage() {
       dataIndex: 'alert_enabled',
       key: 'alert_enabled',
       width: 120,
-      render: (_, row) => (
-        <Switch checked={row.alert_enabled} onChange={() => handleToggleAlert(row)} />
-      ),
+      render: (_, row) => <Switch checked={row.alert_enabled} onChange={() => handleToggleAlert(row)} />,
     },
     {
       title: '阈值',
@@ -214,104 +192,147 @@ export default function WatchListPage() {
     },
   ]
 
+  const enabledCount = useMemo(() => watchlist.filter((item) => item.alert_enabled).length, [watchlist])
+  const triggeredCount = useMemo(() => watchlist.filter((item) => item.last_alerted_at).length, [watchlist])
+
   return (
-    <div className="app-page-shell">
-      <div className="app-page-container-md app-section-stack">
-        <Card>
-          <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-3">
-            <Typography.Title level={3} style={{ margin: 0 }}>👁️ 监控列表</Typography.Title>
-            <Button type="primary" onClick={() => setShowAddForm((v) => !v)}>
-              {showAddForm ? '取消' : '+ 添加股票'}
-            </Button>
-          </div>
-          <Typography.Text type="secondary">
-            默认预警阈值：<Typography.Text strong>{(userThreshold * 100).toFixed(0)}%</Typography.Text>
-            <span className="ml-2">（可为每个股票单独设置）</span>
-          </Typography.Text>
-        </Card>
-
-        {showAddForm && (
-          <Card title="添加股票到监控列表">
-            <Form layout="vertical" onFinish={handleAddStock}>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Form.Item label="股票代码" required>
-                  <Input value={stockCode} onChange={(e) => setStockCode(e.target.value)} placeholder="如：000001" maxLength={6} />
-                </Form.Item>
-                <Form.Item label="股票名称（可选）">
-                  <Input value={stockName} onChange={(e) => setStockName(e.target.value)} placeholder="如：平安银行" />
-                </Form.Item>
-                <Form.Item label="启用预警">
-                  <Switch checked={alertEnabled} onChange={setAlertEnabled} />
-                </Form.Item>
-                <Form.Item label="预警阈值">
-                  <InputNumber min={0.1} max={1} step={0.05} precision={2} value={alertThreshold} onChange={(v) => setAlertThreshold(Number(v || 0.7))} />
-                </Form.Item>
-              </div>
-              <Button type="primary" htmlType="submit" loading={addLoading}>添加</Button>
-            </Form>
-          </Card>
+    <AppPage>
+      <PageHeader
+        eyebrow="Watchlist console"
+        title="把关注标的收敛成一个可执行的监控面板。"
+        description="新的监控台把总览、添加动作和列表状态分层组织：先看规模与告警，再决定是否增删标的或调整阈值。"
+        badges={(
+          <>
+            <InfoPill>默认阈值 {(userThreshold * 100).toFixed(0)}%</InfoPill>
+            <InfoPill>登录后可用</InfoPill>
+            <InfoPill>支持单股单独阈值</InfoPill>
+          </>
         )}
+        actions={(
+          <button type="button" className="ve-button-primary" onClick={() => setShowAddForm((v) => !v)}>
+            {showAddForm ? '收起添加面板' : '添加监控股票'}
+          </button>
+        )}
+      />
 
-        {error && <Alert type="error" message={error} />}
-
-        <Card>
-          {loading ? (
-            <div className="py-16 text-center"><Spin /></div>
-          ) : (
-            <>
-              <div className="hidden md:block">
-                <Table<WatchListItem>
-                  rowKey="id"
-                  size="small"
-                  bordered
-                  columns={columns}
-                  dataSource={watchlist}
-                  pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100] }}
-                  scroll={{ x: 1000 }}
-                  locale={{ emptyText: '暂无监控股票' }}
-                />
-              </div>
-
-              <div className="md:hidden space-y-2">
-                {watchlist.map((item) => (
-                  <Card key={item.id} size="small">
-                    <div className="space-y-2 text-sm">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="font-medium">{item.stock_name || item.stock_code}</div>
-                        <Tag>{item.stock_code}</Tag>
-                      </div>
-
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-500">预警开关</span>
-                        <Switch checked={item.alert_enabled} onChange={() => handleToggleAlert(item)} />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <div className="text-gray-500">阈值</div>
-                          <div>{item.alert_threshold != null ? `${(Number(item.alert_threshold) * 100).toFixed(0)}%` : '-'}</div>
-                        </div>
-                        <div>
-                          <div className="text-gray-500">最近预警</div>
-                          <div>{item.last_alerted_at ? new Date(item.last_alerted_at).toLocaleString() : '未触发'}</div>
-                        </div>
-                      </div>
-
-                      <div className="text-gray-500">创建时间：{new Date(item.created_at).toLocaleString()}</div>
-
-                      <Popconfirm title={`确定要删除 ${item.stock_code} 吗？`} onConfirm={() => handleDelete(item.id)}>
-                        <Button danger type="link" className="p-0">删除</Button>
-                      </Popconfirm>
-                    </div>
-                  </Card>
-                ))}
-
-                {watchlist.length === 0 && <div className="text-sm text-gray-500">暂无监控股票</div>}
-              </div>
-            </>
-          )}
-        </Card>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <MetricCard label="监控股票" value={watchlist.length.toLocaleString()} meta="当前账户下的监控池规模" tone="brand" icon="◌" />
+        <MetricCard label="启用预警" value={enabledCount.toLocaleString()} meta="当前仍在主动监控的标的数量" icon="⦿" />
+        <MetricCard label="历史触发" value={triggeredCount.toLocaleString()} meta="至少触发过一次预警的标的数量" tone="warning" icon="!" />
       </div>
-    </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+        <SurfaceCard title="添加与维护" description="在这里添加新股票、设置默认预警状态，并查看当前工作流说明。">
+          <div className="space-y-4">
+            <div className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.72)] p-4 text-sm leading-7 text-[var(--text-muted)]">
+              默认预警阈值为 <span className="font-semibold text-[var(--text-strong)]">{(userThreshold * 100).toFixed(0)}%</span>；
+              添加时可为单个股票覆盖该值，并在列表中随时查看最近预警时间。
+            </div>
+
+            {showAddForm ? (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label htmlFor="watch-stock-code" className="ve-field-label">股票代码</label>
+                  <Input id="watch-stock-code" value={stockCode} onChange={(e) => setStockCode(e.target.value)} placeholder="如：000001" maxLength={6} />
+                </div>
+                <div>
+                  <label htmlFor="watch-stock-name" className="ve-field-label">股票名称（可选）</label>
+                  <Input id="watch-stock-name" value={stockName} onChange={(e) => setStockName(e.target.value)} placeholder="如：平安银行" />
+                </div>
+                <div className="space-y-2">
+                  <label className="ve-field-label">启用预警</label>
+                  <div className="flex h-[42px] items-center rounded-2xl border border-[var(--border)] bg-[rgba(255,255,255,0.88)] px-4">
+                    <Switch checked={alertEnabled} onChange={setAlertEnabled} />
+                  </div>
+                </div>
+                <div>
+                  <label className="ve-field-label">预警阈值</label>
+                  <InputNumber
+                    min={0.1}
+                    max={1}
+                    step={0.05}
+                    precision={2}
+                    value={alertThreshold}
+                    onChange={(v) => setAlertThreshold(Number(v || 0.7))}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+                <div className="md:col-span-2 flex flex-wrap gap-2">
+                  <Button type="primary" loading={addLoading} onClick={handleAddStock}>添加到监控列表</Button>
+                  <Button onClick={() => setShowAddForm(false)}>取消</Button>
+                </div>
+              </div>
+            ) : (
+              <EmptyState title="添加面板已折叠" description="展开后可快速输入股票代码并为该标的设置单独的预警阈值。" action={<button type="button" className="ve-button-secondary" onClick={() => setShowAddForm(true)}>展开添加面板</button>} />
+            )}
+          </div>
+        </SurfaceCard>
+
+        <SurfaceCard title="监控说明" description="列表右侧操作保持轻量，只保留最常见的开关与删除动作。">
+          <div className="space-y-4 text-sm leading-7 text-[var(--text-muted)]">
+            <p>• 预警开关用于控制该标的是否纳入自动检查。</p>
+            <p>• “最近预警”可以帮助你快速判断哪些标的已被系统命中。</p>
+            <p>• 小屏设备自动切换为卡片列表，以避免表格横向滚动。</p>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <MetricCard label="默认策略" value="阈值优先" meta="默认阈值来自当前用户配置，可单股覆盖。" tone="brand" icon="◎" />
+            <MetricCard label="列表视图" value="表格 / 卡片" meta="桌面端适合批量操作，移动端适合快速查看。" icon="▤" />
+          </div>
+        </SurfaceCard>
+      </div>
+
+      {error ? <Alert type="error" message={error} /> : null}
+
+      <SurfaceCard title="监控列表" description="这里汇总当前账户下的全部监控标的与最近状态。">
+        {loading ? (
+          <div className="py-16 text-center"><Spin /></div>
+        ) : watchlist.length > 0 ? (
+          <>
+            <div className="hidden md:block">
+              <Table<WatchListItem>
+                rowKey="id"
+                size="small"
+                columns={columns}
+                dataSource={watchlist}
+                pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100] }}
+                scroll={{ x: 1000 }}
+              />
+            </div>
+
+            <div className="space-y-3 md:hidden">
+              {watchlist.map((item) => (
+                <div key={item.id} className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.75)] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-semibold text-[var(--text-strong)]">{item.stock_name || item.stock_code}</div>
+                      <div className="text-sm text-[var(--text-dim)]">{item.stock_code}</div>
+                    </div>
+                    <Tag>{item.alert_enabled ? '启用中' : '已关闭'}</Tag>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <div className="text-[var(--text-dim)]">阈值</div>
+                      <div className="font-medium text-[var(--text-strong)]">{item.alert_threshold != null ? `${(Number(item.alert_threshold) * 100).toFixed(0)}%` : '-'}</div>
+                    </div>
+                    <div>
+                      <div className="text-[var(--text-dim)]">最近预警</div>
+                      <div className="font-medium text-[var(--text-strong)]">{item.last_alerted_at ? new Date(item.last_alerted_at).toLocaleString() : '未触发'}</div>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex items-center justify-between">
+                    <Switch checked={item.alert_enabled} onChange={() => handleToggleAlert(item)} />
+                    <Popconfirm title={`确定要删除 ${item.stock_code} 吗？`} onConfirm={() => handleDelete(item.id)}>
+                      <Button danger type="link" className="p-0">删除</Button>
+                    </Popconfirm>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <EmptyState title="还没有监控股票" description="先添加你关注的标的，再按阈值管理告警和最近触发状态。" action={<button type="button" className="ve-button-primary" onClick={() => setShowAddForm(true)}>添加第一只股票</button>} />
+        )}
+      </SurfaceCard>
+    </AppPage>
   )
 }

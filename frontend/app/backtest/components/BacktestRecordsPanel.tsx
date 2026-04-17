@@ -1,16 +1,14 @@
-import { Button, Card, Table, Tag, Typography } from 'antd'
+import { Button, Table, Tag } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import Link from 'next/link'
 import type { RunItem } from './types'
 import { formatDrawdownPct, formatPct, marketClassByDrawdown, marketClassByValue } from '../../lib/marketColors'
 
-const { Text } = Typography
-
 function getRecordColumns(onViewDetail: (runId: number) => void): ColumnsType<RunItem> {
   return [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 80, render: (v) => `#${v}` },
-    { title: '名称', dataIndex: 'name', key: 'name', width: 140, ellipsis: true },
-    { title: '策略', dataIndex: 'strategy_id', key: 'strategy_id', width: 160, ellipsis: true },
+    { title: '名称', dataIndex: 'name', key: 'name', width: 160, ellipsis: true },
+    { title: '策略', dataIndex: 'strategy_id', key: 'strategy_id', width: 170, ellipsis: true },
     {
       title: '区间',
       key: 'range',
@@ -70,16 +68,18 @@ export function BacktestRecordsPanel({
   onPageSizeChange: (size: number) => void
 }) {
   return (
-    <Card
-      title="回测记录"
-      extra={(
-        <Button type="link" onClick={onRefresh}>刷新</Button>
-      )}
-    >
+    <section className="ve-panel">
+      <div className="mb-5 flex flex-col gap-4 border-b border-[var(--border-subtle)] pb-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">回测记录</h2>
+          <p className="text-sm leading-6 text-[var(--text-muted)]">按总收益、回撤和状态快速筛选要继续下钻的运行记录。</p>
+        </div>
+        <Button type="default" onClick={onRefresh}>刷新</Button>
+      </div>
+
       <div className="hidden md:block">
         <Table<RunItem>
           rowKey="id"
-          bordered
           size="small"
           loading={runsLoading}
           columns={getRecordColumns(onViewDetail)}
@@ -101,25 +101,31 @@ export function BacktestRecordsPanel({
         />
       </div>
 
-      <div className="md:hidden space-y-2">
+      <div className="space-y-3 md:hidden">
         {runs.map((r) => (
-          <Card key={r.id} size="small">
-            <div className="space-y-1 text-sm">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-medium truncate">{r.name}</span>
-                <Tag>{r.status}</Tag>
+          <div key={r.id} className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.75)] p-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="truncate font-semibold text-[var(--text-strong)]">{r.name}</div>
+                <div className="truncate text-sm text-[var(--text-dim)]">{r.strategy_id}</div>
               </div>
-              <div><Text code>{r.strategy_id}</Text></div>
+              <Tag>{r.status}</Tag>
+            </div>
+            <div className="mt-3 space-y-1 text-sm text-[var(--text-muted)]">
               <div>{r.start_date} ~ {r.end_date}</div>
               <div>总收益：<span className={marketClassByValue(r.summary?.total_return)}>{formatPct(r.summary?.total_return)}</span></div>
               <div>最大回撤：<span className={marketClassByDrawdown(r.summary?.max_drawdown)}>{formatDrawdownPct(r.summary?.max_drawdown)}</span></div>
-              <div className="text-gray-500">{new Date(r.created_at).toLocaleString()}</div>
-              <Link href="#" onClick={(e) => { e.preventDefault(); onViewDetail(r.id) }} className="text-indigo-600">查看详情</Link>
+              <div>{new Date(r.created_at).toLocaleString()}</div>
             </div>
-          </Card>
+            <div className="mt-3">
+              <Link href="#" onClick={(e) => { e.preventDefault(); onViewDetail(r.id) }} className="text-sm font-medium text-[var(--brand-strong)]">
+                查看详情 →
+              </Link>
+            </div>
+          </div>
         ))}
-        {runs.length === 0 && <div className="text-sm text-gray-500">暂无回测记录</div>}
+        {runs.length === 0 ? <div className="rounded-[20px] border border-dashed border-[var(--border)] px-4 py-8 text-sm text-[var(--text-dim)]">暂无回测记录</div> : null}
       </div>
-    </Card>
+    </section>
   )
 }

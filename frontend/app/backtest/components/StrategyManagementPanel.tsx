@@ -1,11 +1,9 @@
 import Link from 'next/link'
-import { Button, Card, Input, Pagination, Segmented, Space, Table, Tag, Typography } from 'antd'
+import { Button, Input, Pagination, Segmented, Table, Tag } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { useMemo } from 'react'
 import type { StrategyManagementListItem } from './types'
 import { formatPct, marketClassByValue } from '../../lib/marketColors'
-
-const { Text } = Typography
 
 function fmtTime(value: string | null | undefined): string {
   if (!value) return '-'
@@ -27,7 +25,7 @@ function getColumns(): ColumnsType<StrategyManagementListItem> {
       key: 'strategy_id',
       width: 220,
       ellipsis: true,
-      render: (v: string) => <Text code>{v}</Text>,
+      render: (v: string) => <code className="rounded bg-slate-100 px-1.5 py-1 text-xs">{v}</code>,
     },
     {
       title: '最近修改',
@@ -60,7 +58,7 @@ function getColumns(): ColumnsType<StrategyManagementListItem> {
       key: 'action',
       width: 120,
       render: (_, row) => (
-        <Link href={`/backtest/strategies/${row.strategy_id}`} className="text-indigo-600 hover:text-indigo-800">
+        <Link href={`/backtest/strategies/${row.strategy_id}`} className="text-[var(--brand-strong)] hover:text-[var(--brand)]">
           查看详情
         </Link>
       ),
@@ -100,43 +98,44 @@ export function StrategyManagementPanel({
       items.map((item) => {
         const annual = Number(item.latest_backtest?.annual_return)
         return (
-          <Card key={item.strategy_id} size="small" className="mb-2">
-            <div className="space-y-1 text-sm">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-medium truncate">{item.name}</span>
-                <Tag color={item.usable ? 'green' : 'red'}>{item.usable ? '可用' : '不可用'}</Tag>
-              </div>
-              <div><Text code>{item.strategy_id}</Text></div>
-              <div>最近修改：{fmtTime(item.last_modified_at || undefined)}</div>
-              <div>
-                年化：
-                {Number.isFinite(annual) ? (
-                  <span className={marketClassByValue(annual)}>{formatPct(annual)}</span>
-                ) : (
-                  '-'
-                )}
-              </div>
-              <div>
-                <Link href={`/backtest/strategies/${item.strategy_id}`} className="text-indigo-600 hover:text-indigo-800">
-                  查看详情
-                </Link>
-              </div>
+          <div key={item.strategy_id} className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.75)] p-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate font-semibold text-[var(--text-strong)]">{item.name}</span>
+              <Tag color={item.usable ? 'green' : 'red'}>{item.usable ? '可用' : '不可用'}</Tag>
             </div>
-          </Card>
+            <div className="mt-2 text-sm text-[var(--text-dim)]"><code>{item.strategy_id}</code></div>
+            <div className="mt-3 space-y-1 text-sm text-[var(--text-muted)]">
+              <div>最近修改：{fmtTime(item.last_modified_at || undefined)}</div>
+              <div>年化：{Number.isFinite(annual) ? <span className={marketClassByValue(annual)}>{formatPct(annual)}</span> : '-'}</div>
+            </div>
+            <div className="mt-3">
+              <Link href={`/backtest/strategies/${item.strategy_id}`} className="text-sm font-medium text-[var(--brand-strong)] hover:text-[var(--brand)]">
+                查看详情 →
+              </Link>
+            </div>
+          </div>
         )
       }),
     [items],
   )
 
   return (
-    <Card title="策略管理" extra={<Button type="link" onClick={onRefresh}>刷新</Button>}>
-      <Space className="mb-3 w-full" wrap>
+    <section className="ve-panel">
+      <div className="mb-5 flex flex-col gap-4 border-b border-[var(--border-subtle)] pb-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">策略管理</h2>
+          <p className="text-sm leading-6 text-[var(--text-muted)]">按可用性和关键字筛选策略，再进入详情页查看回测成绩和源码。</p>
+        </div>
+        <Button type="default" onClick={onRefresh}>刷新</Button>
+      </div>
+
+      <div className="mb-4 flex flex-wrap gap-3">
         <Input.Search
           allowClear
-          placeholder="按策略名/strategy_id 搜索"
+          placeholder="按策略名 / strategy_id 搜索"
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}
-          style={{ width: 280, maxWidth: '100%' }}
+          style={{ width: 300, maxWidth: '100%' }}
         />
         <Segmented
           value={usableFilter}
@@ -147,12 +146,11 @@ export function StrategyManagementPanel({
           ]}
           onChange={(v) => onUsableFilterChange(v as 'all' | 'true' | 'false')}
         />
-      </Space>
+      </div>
 
       <div className="hidden md:block">
         <Table<StrategyManagementListItem>
           rowKey="strategy_id"
-          bordered
           size="small"
           loading={loading}
           columns={getColumns()}
@@ -163,9 +161,9 @@ export function StrategyManagementPanel({
         />
       </div>
 
-      <div className="md:hidden">{mobileCards.length ? mobileCards : <div className="text-sm text-gray-500">暂无策略</div>}</div>
+      <div className="space-y-3 md:hidden">{mobileCards.length ? mobileCards : <div className="rounded-[20px] border border-dashed border-[var(--border)] px-4 py-8 text-sm text-[var(--text-dim)]">暂无策略</div>}</div>
 
-      <div className="mt-3 flex justify-end">
+      <div className="mt-4 flex justify-end">
         <Pagination
           current={page}
           pageSize={pageSize}
@@ -179,6 +177,6 @@ export function StrategyManagementPanel({
           showTotal={(count) => `共 ${count} 条`}
         />
       </div>
-    </Card>
+    </section>
   )
 }

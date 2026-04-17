@@ -7,7 +7,6 @@ export function BacktestTable<T extends object>(props: Props<T>) {
   return (
     <Table<T>
       size="small"
-      bordered
       {...props}
     />
   )

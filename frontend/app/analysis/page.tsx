@@ -1,23 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import axios from 'axios'
 import { format } from 'date-fns'
-import {
-  Alert,
-  Button,
-  Card,
-  DatePicker,
-  Form,
-  Input,
-  List,
-  Space,
-  Spin,
-  Tag,
-  Typography,
-} from 'antd'
+import { Alert, Button, DatePicker, Input, Spin } from 'antd'
 import dayjs from 'dayjs'
 import StockChart from '../components/StockChart'
+import { AppPage, EmptyState, InfoPill, MetricCard, PageHeader, SurfaceCard } from '../components/ui-shell'
+import { formatPct, marketClassByValue } from '../lib/marketColors'
 
 interface StockSearchResult {
   code: string
@@ -67,6 +57,12 @@ interface CyqInfo {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
 
+function formatCompactNumber(value: number): string {
+  if (value >= 100000000) return `${(value / 100000000).toFixed(2)} 亿`
+  if (value >= 10000) return `${(value / 10000).toFixed(0)} 万`
+  return value.toLocaleString()
+}
+
 export default function AnalysisPage() {
   const [stockCode, setStockCode] = useState('')
   const [stockName, setStockName] = useState('')
@@ -106,7 +102,6 @@ export default function AnalysisPage() {
       const response = await axios.get(`${API_BASE_URL}/api/stock/search`, {
         params: { keyword: searchKeyword.trim() },
       })
-
       if (response.data.success) {
         setSearchResults(response.data.results)
         setShowSearchResults(true)
@@ -132,7 +127,7 @@ export default function AnalysisPage() {
       return
     }
     if (!/^\d{6}$/.test(stockCode.trim())) {
-      setError('股票代码格式错误，应为6位数字（如：000001）')
+      setError('股票代码格式错误，应为 6 位数字（如：000001）')
       return
     }
     if (!startDate || !endDate) {
@@ -161,10 +156,7 @@ export default function AnalysisPage() {
         }),
       ])
 
-      if (
-        stockDataResponse.status === 'fulfilled' &&
-        stockDataResponse.value.data.success
-      ) {
+      if (stockDataResponse.status === 'fulfilled' && stockDataResponse.value.data.success) {
         setChartData(stockDataResponse.value.data.chart_data)
         setFitResult(stockDataResponse.value.data.fit_result || null)
         setActualStartDate(stockDataResponse.value.data.actual_start_date || startDate)
@@ -210,26 +202,82 @@ export default function AnalysisPage() {
     }
   }
 
+  const totalVolume = useMemo(
+    () => chartData.reduce((sum, item) => sum + Number(item.volume || 0), 0),
+    [chartData],
+  )
+
+  const latestPrice = useMemo(() => {
+    if (!chartData.length) return null
+    return chartData[chartData.length - 1]?.price ?? null
+  }, [chartData])
+
+  const summaryCards = useMemo<Array<{
+    label: string
+    value: string
+    meta: string
+    tone?: 'default' | 'brand' | 'positive' | 'warning'
+    icon: string
+  }>>(
+    () => [
+      {
+        label: '分析标的',
+        value: stockName || stockCode || '未选择',
+        meta: stockName && stockCode && stockName !== stockCode ? `代码 ${stockCode}` : '搜索或输入 6 位股票代码',
+        tone: 'brand' as const,
+        icon: '⌕',
+      },
+      {
+        label: '数据点数',
+        value: chartData.length ? chartData.length.toLocaleString() : '—',
+        meta: actualStartDate && actualEndDate ? `实际范围 ${actualStartDate} → ${actualEndDate}` : '等待查询结果',
+        icon: '◫',
+      },
+      {
+        label: '最新价格',
+        value: latestPrice != null ? `¥${Number(latestPrice).toFixed(2)}` : '—',
+        meta: cyqInfo ? `获利比例 ${formatPct(cyqInfo.profit_ratio)}` : '支持筹码信息联动查看',
+        tone: latestPrice != null ? 'positive' : 'default',
+        icon: '¥',
+      },
+      {
+        label: '成交量汇总',
+        value: chartData.length ? formatCompactNumber(totalVolume) : '—',
+        meta: fitResult ? `${fitResult.n_components} 个高斯分量` : '查询后展示拟合结果',
+        tone: fitResult ? 'warning' : 'default',
+        icon: '∿',
+      },
+    ],
+    [actualEndDate, actualStartDate, chartData.length, cyqInfo, fitResult, latestPrice, stockCode, stockName, totalVolume],
+  )
+
   return (
-    <div className="app-page-shell">
-      <div className="app-page-container app-section-stack">
-        <Typography.Title level={2} style={{ textAlign: 'center' }}>
-          股票分析
-        </Typography.Title>
+    <AppPage>
+      <PageHeader
+        eyebrow="Analysis workspace"
+        title="把检索、过滤、拟合与图表，收拢到一个判断界面。"
+        description="新版分析台把输入区、候选结果、关键指标和图表分成更明确的层级，先完成筛选，再进入图表判断。"
+        badges={(
+          <>
+            <InfoPill>1 分钟粒度</InfoPill>
+            <InfoPill>价格分布</InfoPill>
+            <InfoPill>GMM 拟合</InfoPill>
+            <InfoPill>筹码分布</InfoPill>
+          </>
+        )}
+      />
 
-        <Card>
-          <Alert
-            type="info"
-            showIcon
-            message="1分钟级数据分析"
-            description="系统使用1分钟粒度数据进行价格分布分析"
-            style={{ marginBottom: 16 }}
-          />
-
-          <Form layout="vertical" onFinish={handleFetchData}>
-            <Form.Item label="🔍 搜索股票">
-              <Space.Compact style={{ width: '100%' }}>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+        <SurfaceCard
+          title="分析条件"
+          description="先搜索标的，再确认时间范围，最后执行查询。结果会自动填充到右侧图表工作区。"
+        >
+          <div className="space-y-4">
+            <div>
+              <label htmlFor="stock-search" className="ve-field-label">搜索股票</label>
+              <div className="flex gap-2">
                 <Input
+                  id="stock-search"
                   value={searchKeyword}
                   onChange={(e) => setSearchKeyword(e.target.value)}
                   onPressEnter={handleSearch}
@@ -238,87 +286,134 @@ export default function AnalysisPage() {
                 <Button onClick={handleSearch} loading={searchLoading} disabled={!searchKeyword.trim()}>
                   搜索
                 </Button>
-              </Space.Compact>
-            </Form.Item>
+              </div>
+            </div>
 
-            {showSearchResults && (
-              <Card size="small" style={{ marginBottom: 16 }}>
-                <List
-                  dataSource={searchResults}
-                  locale={{ emptyText: '未找到相关股票' }}
-                  renderItem={(stock) => (
-                    <List.Item onClick={() => handleSelectStock(stock)} style={{ cursor: 'pointer' }}>
-                      <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+            {showSearchResults ? (
+              <div className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.78)] p-3">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-dim)]">候选结果</div>
+                <div className="space-y-2">
+                  {searchResults.length > 0 ? (
+                    searchResults.map((stock) => (
+                      <button
+                        key={stock.code}
+                        type="button"
+                        onClick={() => handleSelectStock(stock)}
+                        className="flex w-full items-center justify-between rounded-2xl border border-transparent bg-[rgba(248,250,252,0.88)] px-4 py-3 text-left transition hover:border-[var(--brand-line)] hover:bg-white"
+                      >
                         <div>
-                          <Typography.Text strong>{stock.name}</Typography.Text>
-                          <div>代码: {stock.code}</div>
+                          <div className="font-medium text-[var(--text-strong)]">{stock.name}</div>
+                          <div className="text-sm text-[var(--text-dim)]">代码 {stock.code}</div>
                         </div>
-                        <Tag color="blue">¥{stock.current_price.toFixed(2)}</Tag>
-                      </Space>
-                    </List.Item>
+                        <div className="text-sm font-semibold text-[var(--text-strong)]">¥{stock.current_price.toFixed(2)}</div>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-[var(--border)] px-4 py-6 text-sm text-[var(--text-dim)]">
+                      未找到相关股票
+                    </div>
                   )}
-                />
-              </Card>
-            )}
+                </div>
+              </div>
+            ) : null}
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Form.Item label={stockName ? `股票代码（${stockName}）` : '股票代码'} required>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div>
+                <label htmlFor="stock-code" className="ve-field-label">{stockName ? `股票代码（${stockName}）` : '股票代码'}</label>
                 <Input
+                  id="stock-code"
                   value={stockCode}
                   onChange={(e) => setStockCode(e.target.value)}
                   onPressEnter={handleFetchData}
                   maxLength={6}
-                  placeholder="输入6位股票代码，如：000001"
+                  placeholder="输入 6 位股票代码"
                 />
-              </Form.Item>
-              <Form.Item label="开始日期" required>
+              </div>
+              <div>
+                <label className="ve-field-label">开始日期</label>
                 <DatePicker
                   value={startDate ? dayjs(startDate) : null}
                   onChange={(d) => setStartDate(d ? d.format('YYYY-MM-DD') : '')}
                   style={{ width: '100%' }}
                 />
-              </Form.Item>
-              <Form.Item label="结束日期" required>
+              </div>
+              <div>
+                <label className="ve-field-label">结束日期</label>
                 <DatePicker
                   value={endDate ? dayjs(endDate) : null}
                   onChange={(d) => setEndDate(d ? d.format('YYYY-MM-DD') : '')}
                   style={{ width: '100%' }}
                 />
-              </Form.Item>
+              </div>
             </div>
 
-            <Button type="primary" htmlType="submit" loading={loading} block>
-              查询股票数据
-            </Button>
-          </Form>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="primary" onClick={handleFetchData} loading={loading}>
+                查询股票数据
+              </Button>
+              <InfoPill>请求范围 {startDate || '—'} → {endDate || '—'}</InfoPill>
+            </div>
 
-          {error && <Alert style={{ marginTop: 16 }} type="error" showIcon message={error} />}
-        </Card>
+            {error ? <Alert type="error" showIcon message={error} /> : null}
+          </div>
+        </SurfaceCard>
 
-        {chartData.length > 0 && (
-          <Card>
-            <Space direction="vertical" size={8}>
-              <Typography.Title level={4} style={{ margin: 0 }}>
-                {stockName || stockCode}
-                {stockName && stockCode !== stockName ? (
-                  <Typography.Text type="secondary">（{stockCode}）</Typography.Text>
-                ) : null}
-              </Typography.Title>
-              <Space wrap>
-                <Tag>数据点数: {chartData.length}</Tag>
-                <Tag>粒度: 1分钟</Tag>
-                <Tag>请求范围: {startDate} 至 {endDate}</Tag>
-                {actualStartDate && actualEndDate ? (
-                  <Tag color="blue">实际范围: {actualStartDate} 至 {actualEndDate}</Tag>
-                ) : null}
-              </Space>
-              <Spin spinning={loading}>
-                <StockChart data={chartData} period="1min" fitResult={fitResult} cyqInfo={cyqInfo} />
-              </Spin>
-            </Space>
-          </Card>
-        )}
+        <SurfaceCard
+          title="分析说明"
+          description="使用建议是先查一只标的的区间价格结构，再结合筹码分布判断主成本区和高密度成交区。"
+        >
+          <div className="space-y-3 text-sm leading-7 text-[var(--text-muted)]">
+            <p>• 输入区与结果区分离，避免查询前后视觉跳跃。</p>
+            <p>• 图表会同时展示价格成交量、区间趋势、拟合曲线与筹码区间。</p>
+            <p>• 若接口返回实际日期范围与请求不一致，以右侧“实际范围”为准。</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 pt-2 sm:grid-cols-2">
+            <MetricCard label="默认粒度" value="1 分钟" meta="适合盘中分布结构分析" icon="◌" />
+            <MetricCard label="拟合输出" value={fitResult ? `${fitResult.n_components} 峰` : '等待结果'} meta="用于识别高密度成交区" tone="warning" icon="∿" />
+          </div>
+        </SurfaceCard>
       </div>
-    </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {summaryCards.map((item) => (
+          <MetricCard key={item.label} {...item} />
+        ))}
+      </div>
+
+      {chartData.length > 0 ? (
+        <SurfaceCard
+          title={
+            <div className="flex flex-wrap items-center gap-2">
+              <span>{stockName || stockCode}</span>
+              {stockName && stockCode !== stockName ? <InfoPill>{stockCode}</InfoPill> : null}
+            </div>
+          }
+          description="图表区现在是页面主舞台：顶部是分析上下文，主体是价格分布与筹码联动图。"
+          actions={(
+            <div className="flex flex-wrap gap-2">
+              <InfoPill>数据点数 {chartData.length}</InfoPill>
+              <InfoPill>粒度 1 分钟</InfoPill>
+              {actualStartDate && actualEndDate ? <InfoPill>实际范围 {actualStartDate} → {actualEndDate}</InfoPill> : null}
+            </div>
+          )}
+        >
+          <Spin spinning={loading}>
+            <StockChart data={chartData} period="1min" fitResult={fitResult} cyqInfo={cyqInfo} />
+          </Spin>
+        </SurfaceCard>
+      ) : (
+        <SurfaceCard title="图表工作区" description="查询完成后，这里会出现价格分布图、拟合曲线和筹码信息。">
+          <EmptyState title="还没有分析结果" description="输入股票代码并选择日期范围后执行查询，即可进入图表分析。" />
+        </SurfaceCard>
+      )}
+
+      {cyqInfo ? (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <MetricCard label="平均成本" value={`¥${cyqInfo.avg_cost.toFixed(2)}`} meta={<span className={marketClassByValue(cyqInfo.profit_ratio)}>获利比例 {formatPct(cyqInfo.profit_ratio)}</span>} tone="brand" icon="¥" />
+          <MetricCard label="90% 成本区" value={`¥${cyqInfo.cost_90_low.toFixed(2)} - ¥${cyqInfo.cost_90_high.toFixed(2)}`} meta={`集中度 ${(cyqInfo.concentration_90 * 100).toFixed(2)}%`} icon="▥" />
+          <MetricCard label="70% 成本区" value={`¥${cyqInfo.cost_70_low.toFixed(2)} - ¥${cyqInfo.cost_70_high.toFixed(2)}`} meta={`集中度 ${(cyqInfo.concentration_70 * 100).toFixed(2)}%`} tone="warning" icon="◫" />
+        </div>
+      ) : null}
+    </AppPage>
   )
 }

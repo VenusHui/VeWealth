@@ -37,3 +37,4 @@ backend/logs/
 
 # For test
 test.py
+.omx/

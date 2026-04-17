@@ -16,10 +16,10 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body>
+        <a href="#main-content" className="skip-link">跳到主要内容</a>
         <Navbar />
-        {children}
+        <main id="main-content">{children}</main>
       </body>
     </html>
   )
 }
-

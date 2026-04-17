@@ -1,6 +1,13 @@
 import { LoadingHint } from './LoadingHint'
 import type { JobItem, Strategy } from './types'
 
+const BOARD_LABELS: Record<'main' | 'gem' | 'star' | 'bse', string> = {
+  main: '主板',
+  gem: '创业板',
+  star: '科创板',
+  bse: '北交所',
+}
+
 export function BacktestCreatePanel({
   name,
   strategyId,
@@ -69,87 +76,156 @@ export function BacktestCreatePanel({
   onSubmit: () => void
 }) {
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-      <div className="xl:col-span-2 bg-white rounded-2xl shadow p-5 space-y-4">
-        <div className="font-semibold text-gray-800">新建回测任务</div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <label className="text-sm">任务名称<input className="mt-1 w-full border rounded-lg px-3 py-2" value={name} onChange={(e) => onNameChange(e.target.value)} /></label>
-          <label className="text-sm">策略<select className="mt-1 w-full border rounded-lg px-3 py-2" value={strategyId} onChange={(e) => onStrategyChange(e.target.value)}>{strategies.map((s) => <option key={s.strategy_id} value={s.strategy_id}>{s.name}</option>)}</select></label>
-          <label className="text-sm">回测模式<select className="mt-1 w-full border rounded-lg px-3 py-2" value={mode} onChange={(e) => onModeChange(e.target.value as 'manual_symbols' | 'strategy_select')}><option value="manual_symbols">手工股票池</option><option value="strategy_select">策略自动选股</option></select></label>
-          {mode === 'manual_symbols' ? (
-            <label className="text-sm">股票代码（逗号分隔）<input className="mt-1 w-full border rounded-lg px-3 py-2" value={symbols} onChange={(e) => onSymbolsChange(e.target.value)} /></label>
-          ) : (
-            <label className="text-sm">选股范围<select className="mt-1 w-full border rounded-lg px-3 py-2" value={universeType} onChange={(e) => onUniverseTypeChange(e.target.value as 'all' | 'custom')}><option value="all">全市场</option><option value="custom">自定义池</option></select></label>
-          )}
-          {mode === 'strategy_select' && universeType === 'custom' && <label className="text-sm">自定义池<input className="mt-1 w-full border rounded-lg px-3 py-2" value={poolSymbols} onChange={(e) => onPoolSymbolsChange(e.target.value)} /></label>}
-          <label className="text-sm">初始资金<input className="mt-1 w-full border rounded-lg px-3 py-2" value={initialCash} onChange={(e) => onInitialCashChange(e.target.value)} /></label>
-          <label className="text-sm">开始日期<input type="date" className="mt-1 w-full border rounded-lg px-3 py-2" value={startDate} onChange={(e) => onStartDateChange(e.target.value)} /></label>
-          <label className="text-sm">结束日期<input type="date" className="mt-1 w-full border rounded-lg px-3 py-2" value={endDate} onChange={(e) => onEndDateChange(e.target.value)} /></label>
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.35fr_0.65fr]">
+      <section className="ve-panel space-y-5">
+        <div className="space-y-1">
+          <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">新建回测任务</h2>
+          <p className="text-sm leading-6 text-[var(--text-muted)]">先确定策略与回测模式，再补充股票池、日期区间和初始资金。提交后会自动进入任务队列。</p>
         </div>
 
-        {selectedStrategy && (
-          <div className="rounded-xl border bg-gray-50 p-4 space-y-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div>
+            <label className="ve-field-label">任务名称</label>
+            <input className="ve-input" value={name} onChange={(e) => onNameChange(e.target.value)} placeholder="例如：2025 主板趋势轮动" />
+          </div>
+          <div>
+            <label className="ve-field-label">策略</label>
+            <select className="ve-select" value={strategyId} onChange={(e) => onStrategyChange(e.target.value)}>
+              {strategies.map((s) => (
+                <option key={s.strategy_id} value={s.strategy_id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="ve-field-label">回测模式</label>
+            <select className="ve-select" value={mode} onChange={(e) => onModeChange(e.target.value as 'manual_symbols' | 'strategy_select')}>
+              <option value="manual_symbols">手工股票池</option>
+              <option value="strategy_select">策略自动选股</option>
+            </select>
+          </div>
+          {mode === 'manual_symbols' ? (
             <div>
-              <div className="font-medium mb-3">策略参数</div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {selectedStrategy.param_schema.map((p) => (
-                  <label key={p.key} className="text-sm">{p.label}<input className="mt-1 w-full border rounded-lg px-3 py-2" value={strategyParams[p.key] ?? ''} onChange={(e) => onStrategyParamChange(p.key, e.target.value)} /></label>
-                ))}
+              <label className="ve-field-label">股票代码（逗号分隔）</label>
+              <input className="ve-input" value={symbols} onChange={(e) => onSymbolsChange(e.target.value)} placeholder="000001, 600519, 300750" />
+            </div>
+          ) : (
+            <div>
+              <label className="ve-field-label">选股范围</label>
+              <select className="ve-select" value={universeType} onChange={(e) => onUniverseTypeChange(e.target.value as 'all' | 'custom')}>
+                <option value="all">全市场</option>
+                <option value="custom">自定义股票池</option>
+              </select>
+            </div>
+          )}
+          {mode === 'strategy_select' && universeType === 'custom' ? (
+            <div>
+              <label className="ve-field-label">自定义股票池</label>
+              <input className="ve-input" value={poolSymbols} onChange={(e) => onPoolSymbolsChange(e.target.value)} placeholder="用逗号分隔自定义股票池" />
+            </div>
+          ) : null}
+          <div>
+            <label className="ve-field-label">初始资金</label>
+            <input className="ve-input" value={initialCash} onChange={(e) => onInitialCashChange(e.target.value)} placeholder="100000" inputMode="decimal" />
+          </div>
+          <div>
+            <label className="ve-field-label">开始日期</label>
+            <input type="date" className="ve-date-input" value={startDate} onChange={(e) => onStartDateChange(e.target.value)} />
+          </div>
+          <div>
+            <label className="ve-field-label">结束日期</label>
+            <input type="date" className="ve-date-input" value={endDate} onChange={(e) => onEndDateChange(e.target.value)} />
+          </div>
+        </div>
+
+        {selectedStrategy ? (
+          <div className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.68)] p-5">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-[var(--text-strong)]">策略参数</div>
+                <div className="text-sm text-[var(--text-dim)]">当前策略：{selectedStrategy.name}</div>
               </div>
+              <div className="ve-info-pill">{selectedStrategy.strategy_id}</div>
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {selectedStrategy.param_schema.map((p) => (
+                <div key={p.key}>
+                  <label className="ve-field-label">{p.label}</label>
+                  <input className="ve-input" value={strategyParams[p.key] ?? ''} onChange={(e) => onStrategyParamChange(p.key, e.target.value)} placeholder={String(p.default ?? '')} />
+                </div>
+              ))}
             </div>
 
-            {mode === 'strategy_select' && (
-              <div className="rounded-lg border bg-white p-3">
-                <div className="font-medium text-sm mb-2">股票范围过滤</div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                  {([
-                    ['main', '主板'],
-                    ['gem', '创业板'],
-                    ['star', '科创板'],
-                    ['bse', '北交所'],
-                  ] as const).map(([key, label]) => (
-                    <label key={key} className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={boardFilters.includes(key)}
-                        onChange={(e) => onBoardFilterChange(key, e.target.checked)}
-                      />
-                      <span>{label}</span>
+            {mode === 'strategy_select' ? (
+              <div className="mt-5 rounded-[20px] border border-[var(--border-subtle)] bg-[rgba(248,250,252,0.84)] p-4">
+                <div className="text-sm font-semibold text-[var(--text-strong)]">股票范围过滤</div>
+                <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+                  {(['main', 'gem', 'star', 'bse'] as const).map((key) => (
+                    <label key={key} className="flex items-center gap-2 rounded-2xl border border-[var(--border-subtle)] bg-white px-3 py-3 text-sm text-[var(--text-muted)]">
+                      <input type="checkbox" checked={boardFilters.includes(key)} onChange={(e) => onBoardFilterChange(key, e.target.checked)} />
+                      <span>{BOARD_LABELS[key]}</span>
                     </label>
                   ))}
                 </div>
-                <label className="mt-3 flex items-center gap-2 text-sm">
+                <label className="mt-4 flex items-center gap-2 text-sm text-[var(--text-muted)]">
                   <input type="checkbox" checked={excludeSt} onChange={(e) => onExcludeStChange(e.target.checked)} />
-                  <span>排除 ST/*ST</span>
+                  <span>排除 ST / *ST</span>
                 </label>
               </div>
-            )}
+            ) : null}
           </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <button type="button" onClick={onSubmit} disabled={loading} className="ve-button-primary">
+            {loading ? '提交中…' : '提交回测任务'}
+          </button>
+          <span className="text-sm text-[var(--text-dim)]">提交后会进入任务队列，成功完成后会自动出现在记录列表中。</span>
+        </div>
+
+        {error ? <div className="rounded-2xl border border-[rgba(220,38,38,0.16)] bg-[rgba(254,242,242,0.86)] px-4 py-3 text-sm text-red-700">{error}</div> : null}
+      </section>
+
+      <section className="ve-panel space-y-4">
+        <div className="space-y-1">
+          <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">任务状态</h2>
+          <p className="text-sm leading-6 text-[var(--text-muted)]">侧栏保留最重要的运行反馈：当前任务、进度和最近队列。</p>
+        </div>
+
+        {job ? (
+          <div className="ve-metric-card ve-metric-card--brand">
+            <div>
+              <div className="text-xs uppercase tracking-[0.16em] text-[var(--text-dim)]">当前任务</div>
+              <div className="mt-2 text-lg font-semibold text-[var(--text-strong)]">{job.name || job.job_id}</div>
+            </div>
+            <div className="space-y-1 text-sm text-[var(--text-muted)]">
+              <div>状态：{job.status}</div>
+              <div>进度：{Number(job.progress_pct || 0).toFixed(1)}%</div>
+              {job.created_at ? <div>创建：{new Date(job.created_at).toLocaleString()}</div> : null}
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-[22px] border border-dashed border-[var(--border)] px-4 py-8 text-center text-sm text-[var(--text-dim)]">当前没有活跃任务</div>
         )}
 
-        <button onClick={onSubmit} disabled={loading} className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:bg-gray-400">{loading ? '提交中...' : '提交回测任务'}</button>
-        {error && <div className="text-red-600 text-sm">{error}</div>}
-      </div>
-
-      <div className="bg-white rounded-2xl shadow p-5 space-y-3">
-        <div className="font-semibold text-gray-800">任务状态</div>
-        {job && <div className="text-sm rounded-lg bg-indigo-50 p-3">当前任务：{job.name || job.job_id}<br/>状态：{job.status} · 进度：{Number(job.progress_pct || 0).toFixed(1)}%</div>}
-        <div className="text-sm text-gray-500">最近任务</div>
-        <div className="max-h-96 overflow-auto space-y-2">
-          {jobsLoading ? (
-            <LoadingHint text="任务列表加载中..." />
-          ) : jobs.length > 0 ? (
-            jobs.map((j) => (
-              <div key={j.job_id} className="border rounded-lg px-3 py-2 text-sm">
-                <div className="font-medium text-gray-700">{j.name || j.job_id}</div>
-                <div className="text-gray-500">{j.status} · {Number(j.progress_pct || 0).toFixed(1)}%{j.created_at ? ` · ${new Date(j.created_at).toLocaleString()}` : ''}</div>
-              </div>
-            ))
-          ) : (
-            <div className="text-sm text-gray-400">暂无任务</div>
-          )}
+        <div className="space-y-2">
+          <div className="text-sm font-semibold text-[var(--text-strong)]">最近任务</div>
+          <div className="space-y-2">
+            {jobsLoading ? (
+              <LoadingHint text="任务列表加载中..." />
+            ) : jobs.length > 0 ? (
+              jobs.map((j) => (
+                <div key={j.job_id} className="rounded-[20px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.72)] px-4 py-3 text-sm">
+                  <div className="font-medium text-[var(--text-strong)]">{j.name || j.job_id}</div>
+                  <div className="text-[var(--text-dim)]">{j.status} · {Number(j.progress_pct || 0).toFixed(1)}%</div>
+                  {j.created_at ? <div className="text-[var(--text-dim)]">{new Date(j.created_at).toLocaleString()}</div> : null}
+                </div>
+              ))
+            ) : (
+              <div className="rounded-[20px] border border-dashed border-[var(--border)] px-4 py-6 text-sm text-[var(--text-dim)]">暂无任务</div>
+            )}
+          </div>
         </div>
-      </div>
+      </section>
     </div>
   )
 }
