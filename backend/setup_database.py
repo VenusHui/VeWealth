@@ -4,7 +4,6 @@
 
 import sys
 from app.core.database import init_db, engine
-from app.models import User, WatchList, StockMinuteData
 from sqlalchemy import text
 
 

@@ -6,8 +6,6 @@
 import logging
 import sys
 from pathlib import Path
-from logging.handlers import RotatingFileHandler
-from datetime import datetime
 
 # 日志格式
 LOG_FORMAT = (
@@ -51,26 +49,6 @@ def setup_logger(name: str = "vewealth", level: int = logging.INFO) -> logging.L
     logger.addHandler(console_handler)
 
     return logger
-
-
-def get_logger(name: str = None) -> logging.Logger:
-    """
-    获取logger实例
-
-    Args:
-        name: logger名称，如果为None则使用调用者的模块名
-
-    Returns:
-        logger实例
-    """
-    if name is None:
-        # 获取调用者的模块名
-        import inspect
-
-        frame = inspect.currentframe().f_back
-        name = frame.f_globals.get("__name__", "vewealth")
-
-    return logging.getLogger(name)
 
 
 # 创建全局logger实例

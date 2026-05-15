@@ -2,7 +2,7 @@
 股票相关的数据模型
 """
 
-from typing import List, Optional, Literal
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -30,14 +30,6 @@ class ChartDataPoint(BaseModel):
     open: Optional[float] = Field(None, description="开盘价")
     high: Optional[float] = Field(None, description="最高价")
     low: Optional[float] = Field(None, description="最低价")
-
-
-class StockDataRequest(BaseModel):
-    """股票数据查询请求"""
-
-    symbol: str = Field(..., description="股票代码")
-    start_date: str = Field(..., description="开始日期，格式：YYYY-MM-DD")
-    end_date: str = Field(..., description="结束日期，格式：YYYY-MM-DD")
 
 
 class GaussianComponent(BaseModel):

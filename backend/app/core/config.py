@@ -71,21 +71,13 @@ class Settings(BaseSettings):
     WECHAT_ENCODING_AES_KEY: str = ""
 
     # AKShare配置
-    AKSHARE_TIMEOUT: int = 30
     MAX_SEARCH_RESULTS: int = 20
-    AKSHARE_DATA_RETENTION_DAYS: int = 5
 
     # Tushare 备源配置
     TUSHARE_ENABLED: bool = True
     TUSHARE_TOKEN: str = ""
     TUSHARE_TIMEOUT: int = 30
     TUSHARE_RETRY_TIMES: int = 2
-
-    # 数据查询限制（1分钟数据）
-    MAX_MINUTE_QUERY_DAYS: int = 999999
-
-    # 多线程配置
-    MAX_WORKERS: int = 4
 
     # 定时任务配置
     SCHEDULER_ENABLED: bool = True

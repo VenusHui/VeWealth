@@ -2,14 +2,12 @@
 数据采集服务
 """
 
-import pandas as pd
-from datetime import datetime, date
-from typing import List, Optional
+from datetime import date
+from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from app.models.stock_data import StockMinuteData
 from app.models.watchlist import WatchList
-from app.core.config import settings
 from app.core.logger import get_module_logger
 from app.utils.stock_data_fetcher import stock_data_fetcher
 
@@ -136,32 +134,3 @@ class DataCollector:
                 )
 
         return results
-
-    def get_historical_data(
-        self, stock_code: str, start_date: date, end_date: date
-    ) -> List[StockMinuteData]:
-        """
-        获取历史分时数据
-
-        Args:
-            stock_code: 股票代码
-            start_date: 开始日期
-            end_date: 结束日期
-
-        Returns:
-            分时数据列表
-        """
-        data = (
-            self.db.query(StockMinuteData)
-            .filter(
-                and_(
-                    StockMinuteData.stock_code == stock_code,
-                    StockMinuteData.trade_date >= start_date,
-                    StockMinuteData.trade_date <= end_date,
-                )
-            )
-            .order_by(StockMinuteData.trade_time)
-            .all()
-        )
-
-        return data
