@@ -71,6 +71,8 @@ class Settings(BaseSettings):
     WECHAT_ENCODING_AES_KEY: str = ""
 
     # AKShare配置
+    AKSHARE_TIMEOUT: int = 30
+    AKSHARE_DATA_RETENTION_DAYS: int = 5
     MAX_SEARCH_RESULTS: int = 20
 
     # Tushare 备源配置
@@ -78,6 +80,12 @@ class Settings(BaseSettings):
     TUSHARE_TOKEN: str = ""
     TUSHARE_TIMEOUT: int = 30
     TUSHARE_RETRY_TIMES: int = 2
+
+    # 数据查询限制
+    MAX_MINUTE_QUERY_DAYS: int = 999999
+
+    # 多线程配置
+    MAX_WORKERS: int = 4
 
     # 定时任务配置
     SCHEDULER_ENABLED: bool = True
@@ -91,6 +99,7 @@ class Settings(BaseSettings):
         case_sensitive = True
         env_file = get_env_file()
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
