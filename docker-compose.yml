@@ -10,7 +10,7 @@ services:
     environment:
       # 环境标识：local 或 prod
       ENV: ${ENV:-local}
-      DATABASE_URL: postgresql://postgres:password@postgresql-db:5432/vewealth
+      DATABASE_URL: postgresql://postgres:password@db:5432/vewealth
     ports:
       - "8001:8001"
     networks:
