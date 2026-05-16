@@ -72,7 +72,6 @@ export function BacktestRecordsPanel({
       <div className="mb-5 flex flex-col gap-4 border-b border-[var(--border-subtle)] pb-4 md:flex-row md:items-start md:justify-between">
         <div>
           <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">回测记录</h2>
-          <p className="text-sm leading-6 text-[var(--text-muted)]">按总收益、回撤和状态快速筛选要继续下钻的运行记录。</p>
         </div>
         <Button type="default" onClick={onRefresh}>刷新</Button>
       </div>

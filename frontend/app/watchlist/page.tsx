@@ -198,13 +198,11 @@ export default function WatchListPage() {
   return (
     <AppPage>
       <PageHeader
-        eyebrow="Watchlist console"
-        title="把关注标的收敛成一个可执行的监控面板。"
-        description="新的监控台把总览、添加动作和列表状态分层组织：先看规模与告警，再决定是否增删标的或调整阈值。"
+        eyebrow="Watchlist"
+        title="监控列表"
         badges={(
           <>
             <InfoPill>默认阈值 {(userThreshold * 100).toFixed(0)}%</InfoPill>
-            <InfoPill>登录后可用</InfoPill>
             <InfoPill>支持单股单独阈值</InfoPill>
           </>
         )}
@@ -216,19 +214,14 @@ export default function WatchListPage() {
       />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <MetricCard label="监控股票" value={watchlist.length.toLocaleString()} meta="当前账户下的监控池规模" tone="brand" icon="◌" />
-        <MetricCard label="启用预警" value={enabledCount.toLocaleString()} meta="当前仍在主动监控的标的数量" icon="⦿" />
-        <MetricCard label="历史触发" value={triggeredCount.toLocaleString()} meta="至少触发过一次预警的标的数量" tone="warning" icon="!" />
+        <MetricCard label="监控股票" value={watchlist.length.toLocaleString()} meta="当前监控池" tone="brand" icon="◌" />
+        <MetricCard label="启用预警" value={enabledCount.toLocaleString()} meta="启用中的标的" icon="⦿" />
+        <MetricCard label="历史触发" value={triggeredCount.toLocaleString()} meta="触发过预警的标的" tone="warning" icon="!" />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-        <SurfaceCard title="添加与维护" description="在这里添加新股票、设置默认预警状态，并查看当前工作流说明。">
+      <div className="grid grid-cols-1 gap-4">
+        <SurfaceCard title="添加监控" description="添加新股票并为该标的设置预警阈值。">
           <div className="space-y-4">
-            <div className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.72)] p-4 text-sm leading-7 text-[var(--text-muted)]">
-              默认预警阈值为 <span className="font-semibold text-[var(--text-strong)]">{(userThreshold * 100).toFixed(0)}%</span>；
-              添加时可为单个股票覆盖该值，并在列表中随时查看最近预警时间。
-            </div>
-
             {showAddForm ? (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
@@ -263,27 +256,15 @@ export default function WatchListPage() {
                 </div>
               </div>
             ) : (
-              <EmptyState title="添加面板已折叠" description="展开后可快速输入股票代码并为该标的设置单独的预警阈值。" action={<button type="button" className="ve-button-secondary" onClick={() => setShowAddForm(true)}>展开添加面板</button>} />
+              <EmptyState title="添加面板已折叠" description="展开后可输入股票代码并设置预警阈值。" action={<button type="button" className="ve-button-secondary" onClick={() => setShowAddForm(true)}>展开添加面板</button>} />
             )}
-          </div>
-        </SurfaceCard>
-
-        <SurfaceCard title="监控说明" description="列表右侧操作保持轻量，只保留最常见的开关与删除动作。">
-          <div className="space-y-4 text-sm leading-7 text-[var(--text-muted)]">
-            <p>• 预警开关用于控制该标的是否纳入自动检查。</p>
-            <p>• “最近预警”可以帮助你快速判断哪些标的已被系统命中。</p>
-            <p>• 小屏设备自动切换为卡片列表，以避免表格横向滚动。</p>
-          </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <MetricCard label="默认策略" value="阈值优先" meta="默认阈值来自当前用户配置，可单股覆盖。" tone="brand" icon="◎" />
-            <MetricCard label="列表视图" value="表格 / 卡片" meta="桌面端适合批量操作，移动端适合快速查看。" icon="▤" />
           </div>
         </SurfaceCard>
       </div>
 
       {error ? <Alert type="error" message={error} /> : null}
 
-      <SurfaceCard title="监控列表" description="这里汇总当前账户下的全部监控标的与最近状态。">
+      <SurfaceCard title="监控列表">
         {loading ? (
           <div className="py-16 text-center"><Spin /></div>
         ) : watchlist.length > 0 ? (

@@ -435,9 +435,8 @@ export default function BacktestPage() {
   return (
     <AppPage>
       <PageHeader
-        eyebrow="Backtest workspace"
-        title="从任务创建到结果钻取，统一在一个回测工作台完成。"
-        description="新的回测中心把新建任务、队列状态、历史记录、详情钻取和策略管理统一进同一套布局与设计语言中。"
+        eyebrow="Backtest"
+        title="策略回测工作台"
         badges={(
           <>
             <InfoPill>{strategies.length} 个策略</InfoPill>
@@ -448,9 +447,9 @@ export default function BacktestPage() {
       />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <MetricCard label="策略目录" value={strategies.length.toLocaleString()} meta="可直接选择策略并自动带出默认参数。" tone="brand" icon="◎" />
-        <MetricCard label="历史回测" value={runsTotal.toLocaleString()} meta="从记录页快速进入详情钻取。" icon="▤" />
-        <MetricCard label="活动任务" value={runningJobs.toLocaleString()} meta={job ? `当前任务 ${job.name || job.job_id}` : '当前没有活跃任务'} tone="warning" icon="↻" />
+        <MetricCard label="策略" value={strategies.length.toLocaleString()} meta="可选策略数" tone="brand" icon="◎" />
+        <MetricCard label="历史记录" value={runsTotal.toLocaleString()} meta="已完成回测" icon="▤" />
+        <MetricCard label="进行中" value={runningJobs.toLocaleString()} meta={job ? job.name || job.job_id : '无活跃任务'} tone="warning" icon="↻" />
       </div>
 
       <MainTabSwitcher activeTab={mainTab} onChange={setMainTab} />
@@ -576,8 +575,8 @@ export default function BacktestPage() {
 
       {result ? (
         <div className="rounded-[24px] border border-[rgba(21,128,61,0.16)] bg-[rgba(240,253,244,0.92)] px-5 py-4 text-sm text-green-800">
-          最新任务完成：Run #{result.run_id}，交易笔数 {result.trades?.length || 0}。
-          <button className="ml-3 font-semibold underline" onClick={() => mainTab !== 'records' && setMainTab('records')}>去记录页查看</button>
+          最新任务：Run #{result.run_id}，交易 {result.trades?.length || 0} 笔。
+          <button className="ml-3 font-semibold underline" onClick={() => mainTab !== 'records' && setMainTab('records')}>查看记录</button>
         </div>
       ) : null}
     </AppPage>

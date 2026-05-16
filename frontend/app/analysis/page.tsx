@@ -254,9 +254,8 @@ export default function AnalysisPage() {
   return (
     <AppPage>
       <PageHeader
-        eyebrow="Analysis workspace"
-        title="把检索、过滤、拟合与图表，收拢到一个判断界面。"
-        description="新版分析台把输入区、候选结果、关键指标和图表分成更明确的层级，先完成筛选，再进入图表判断。"
+        eyebrow="Analysis"
+        title="价格分布与筹码结构分析"
         badges={(
           <>
             <InfoPill>1 分钟粒度</InfoPill>
@@ -267,11 +266,8 @@ export default function AnalysisPage() {
         )}
       />
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-        <SurfaceCard
-          title="分析条件"
-          description="先搜索标的，再确认时间范围，最后执行查询。结果会自动填充到右侧图表工作区。"
-        >
+      <div className="grid grid-cols-1 gap-4">
+        <SurfaceCard title="分析条件">
           <div className="space-y-4">
             <div>
               <label htmlFor="stock-search" className="ve-field-label">搜索股票</label>
@@ -357,21 +353,6 @@ export default function AnalysisPage() {
             {error ? <Alert type="error" showIcon message={error} /> : null}
           </div>
         </SurfaceCard>
-
-        <SurfaceCard
-          title="分析说明"
-          description="使用建议是先查一只标的的区间价格结构，再结合筹码分布判断主成本区和高密度成交区。"
-        >
-          <div className="space-y-3 text-sm leading-7 text-[var(--text-muted)]">
-            <p>• 输入区与结果区分离，避免查询前后视觉跳跃。</p>
-            <p>• 图表会同时展示价格成交量、区间趋势、拟合曲线与筹码区间。</p>
-            <p>• 若接口返回实际日期范围与请求不一致，以右侧“实际范围”为准。</p>
-          </div>
-          <div className="grid grid-cols-1 gap-3 pt-2 sm:grid-cols-2">
-            <MetricCard label="默认粒度" value="1 分钟" meta="适合盘中分布结构分析" icon="◌" />
-            <MetricCard label="拟合输出" value={fitResult ? `${fitResult.n_components} 峰` : '等待结果'} meta="用于识别高密度成交区" tone="warning" icon="∿" />
-          </div>
-        </SurfaceCard>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -388,7 +369,7 @@ export default function AnalysisPage() {
               {stockName && stockCode !== stockName ? <InfoPill>{stockCode}</InfoPill> : null}
             </div>
           }
-          description="图表区现在是页面主舞台：顶部是分析上下文，主体是价格分布与筹码联动图。"
+          description="价格分布 · 拟合曲线 · 筹码分布"
           actions={(
             <div className="flex flex-wrap gap-2">
               <InfoPill>数据点数 {chartData.length}</InfoPill>

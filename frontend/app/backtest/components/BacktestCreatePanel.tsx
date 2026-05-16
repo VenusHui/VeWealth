@@ -80,7 +80,6 @@ export function BacktestCreatePanel({
       <section className="ve-panel space-y-5">
         <div className="space-y-1">
           <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">新建回测任务</h2>
-          <p className="text-sm leading-6 text-[var(--text-muted)]">先确定策略与回测模式，再补充股票池、日期区间和初始资金。提交后会自动进入任务队列。</p>
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -179,7 +178,7 @@ export function BacktestCreatePanel({
           <button type="button" onClick={onSubmit} disabled={loading} className="ve-button-primary">
             {loading ? '提交中…' : '提交回测任务'}
           </button>
-          <span className="text-sm text-[var(--text-dim)]">提交后会进入任务队列，成功完成后会自动出现在记录列表中。</span>
+          <span className="text-sm text-[var(--text-dim)]">提交后进入任务队列，完成后出现在记录列表。</span>
         </div>
 
         {error ? <div className="rounded-2xl border border-[rgba(220,38,38,0.16)] bg-[rgba(254,242,242,0.86)] px-4 py-3 text-sm text-red-700">{error}</div> : null}
@@ -188,7 +187,6 @@ export function BacktestCreatePanel({
       <section className="ve-panel space-y-4">
         <div className="space-y-1">
           <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">任务状态</h2>
-          <p className="text-sm leading-6 text-[var(--text-muted)]">侧栏保留最重要的运行反馈：当前任务、进度和最近队列。</p>
         </div>
 
         {job ? (

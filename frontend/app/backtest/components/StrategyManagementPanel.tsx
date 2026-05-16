@@ -124,7 +124,6 @@ export function StrategyManagementPanel({
       <div className="mb-5 flex flex-col gap-4 border-b border-[var(--border-subtle)] pb-4 md:flex-row md:items-start md:justify-between">
         <div>
           <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">策略管理</h2>
-          <p className="text-sm leading-6 text-[var(--text-muted)]">按可用性和关键字筛选策略，再进入详情页查看回测成绩和源码。</p>
         </div>
         <Button type="default" onClick={onRefresh}>刷新</Button>
       </div>

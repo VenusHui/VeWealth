@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import axios from 'axios'
 import { Alert } from 'antd'
 import { saveAuth } from '../lib/auth'
-import { AppPage, InfoPill } from '../components/ui-shell'
+import { AppPage } from '../components/ui-shell'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
 
@@ -89,33 +89,10 @@ export default function LoginPage() {
           <div className="space-y-6">
             <div className="ve-eyebrow">Workspace access</div>
             <div className="space-y-4">
-              <h1 className="ve-page-title max-w-2xl">进入你的 A 股研究席位。</h1>
+              <h1 className="ve-page-title max-w-2xl">登录 A 股研究席位</h1>
               <p className="ve-page-description max-w-2xl">
-                登录后可使用监控列表、策略回测与策略管理详情页；注册仍保留主密钥门槛，用于保护部署环境和共享数据面板。
+                登录后可使用监控列表、策略回测与策略管理；注册需管理员主密钥。
               </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <InfoPill>JWT 登录</InfoPill>
-              <InfoPill>监控与回测权限</InfoPill>
-              <InfoPill>主密钥注册门槛</InfoPill>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div className="ve-metric-card ve-metric-card--brand">
-              <div className="text-xs uppercase tracking-[0.18em] text-[var(--text-dim)]">监控</div>
-              <div className="text-2xl font-semibold text-[var(--text-strong)]">实时预警</div>
-              <p className="text-sm text-[var(--text-muted)]">统一管理股票、开关和阈值，不再散落在多个入口。</p>
-            </div>
-            <div className="ve-metric-card">
-              <div className="text-xs uppercase tracking-[0.18em] text-[var(--text-dim)]">回测</div>
-              <div className="text-2xl font-semibold text-[var(--text-strong)]">任务闭环</div>
-              <p className="text-sm text-[var(--text-muted)]">从创建任务到查看快照、策略代码，流程更连续。</p>
-            </div>
-            <div className="ve-metric-card ve-metric-card--warning">
-              <div className="text-xs uppercase tracking-[0.18em] text-[var(--text-dim)]">权限</div>
-              <div className="text-2xl font-semibold text-[var(--text-strong)]">受控注册</div>
-              <p className="text-sm text-[var(--text-muted)]">首次开通仍需要管理员主密钥，适合私有部署场景。</p>
             </div>
           </div>
         </section>
@@ -147,15 +124,10 @@ export default function LoginPage() {
             </button>
           </div>
 
-          <div className="space-y-2 pb-6">
+          <div className="pb-6">
             <h2 className="text-2xl font-semibold tracking-tight text-[var(--text-strong)]">
-              {isRegisterMode ? '创建新的研究席位' : '登录研究席位'}
+              {isRegisterMode ? '注册' : '登录'}
             </h2>
-            <p className="text-sm leading-6 text-[var(--text-muted)]">
-              {isRegisterMode
-                ? '注册成功后自动登录，并沿用默认预警阈值。'
-                : '使用现有账号进入分析、监控和回测工作台。'}
-            </p>
           </div>
 
           <form
@@ -225,28 +197,10 @@ export default function LoginPage() {
                 (isRegisterMode && !masterKey.trim())
               }
             >
-              {loading ? '处理中…' : isRegisterMode ? '注册并进入工作台' : '登录并进入工作台'}
+              {loading ? '处理中…' : isRegisterMode ? '注册' : '登录'}
             </button>
           </form>
 
-          <div className="mt-6 rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.72)] p-5">
-            <div className="text-sm font-semibold text-[var(--text-strong)]">使用提示</div>
-            <ul className="mt-3 space-y-2 text-sm leading-6 text-[var(--text-muted)]">
-              {isRegisterMode ? (
-                <>
-                  <li>• 用户名唯一，建议与研究员身份保持一致。</li>
-                  <li>• 密码建议使用强密码，避免与主密钥相同。</li>
-                  <li>• 注册成功后会直接落到首页，可继续进入监控与回测。</li>
-                </>
-              ) : (
-                <>
-                  <li>• 登录后导航会解锁监控台和回测中心。</li>
-                  <li>• 当前登录令牌保存在本地浏览器，适合个人工作站使用。</li>
-                  <li>• 如账号失效或忘记密码，请联系管理员处理。</li>
-                </>
-              )}
-            </ul>
-          </div>
         </section>
       </div>
     </AppPage>
