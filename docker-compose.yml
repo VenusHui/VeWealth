@@ -10,10 +10,12 @@ services:
     environment:
       # 环境标识：local 或 prod
       ENV: ${ENV:-local}
+      DATABASE_URL: postgresql://postgres:password@postgresql-db:5432/vewealth
     ports:
       - "8001:8001"
     networks:
       - vewealth-network
+      - postgresql
     volumes:
       - ./backend/logs:/app/logs
       - ./backend/settings:/app/settings:ro  # 挂载环境配置文件（只读）
@@ -49,5 +51,8 @@ services:
 networks:
   vewealth-network:
     driver: bridge
+  postgresql:
+    external: true
+    name: postgresql_default
 
 
