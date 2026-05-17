@@ -20,7 +20,7 @@ import { getAuthHeader, getUser, isAuthenticated } from '../lib/auth'
 import { getApiBaseUrl } from '../lib/api'
 import { AppPage, EmptyState, InfoPill, MetricCard, PageHeader, SurfaceCard } from '../components/ui-shell'
 
-const API_BASE_URL = typeof window !== 'undefined' ? getApiBaseUrl() : 'http://localhost:8001'
+const API_BASE_URL = getApiBaseUrl()
 
 interface WatchListItem {
   id: number

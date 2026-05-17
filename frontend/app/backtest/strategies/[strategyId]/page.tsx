@@ -13,7 +13,7 @@ import { formatDrawdownPct, formatPct, marketClassByDrawdown, marketClassByValue
 import type { StrategyManagementDetail } from '../../components/types'
 import { AppPage, InfoPill, MetricCard, SurfaceCard } from '../../../components/ui-shell'
 
-const API_BASE_URL = typeof window !== 'undefined' ? getApiBaseUrl() : 'http://localhost:8001'
+const API_BASE_URL = getApiBaseUrl()
 
 function fmtTime(value: string | null | undefined): string {
   if (!value) return '-'

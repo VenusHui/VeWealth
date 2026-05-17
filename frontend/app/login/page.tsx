@@ -8,7 +8,7 @@ import { saveAuth } from '../lib/auth'
 import { getApiBaseUrl } from '../lib/api'
 import { AppPage } from '../components/ui-shell'
 
-const API_BASE_URL = typeof window !== 'undefined' ? getApiBaseUrl() : 'http://localhost:8001'
+const API_BASE_URL = getApiBaseUrl()
 
 export default function LoginPage() {
   const router = useRouter()

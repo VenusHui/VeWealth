@@ -26,7 +26,7 @@ import type {
 } from './components/types'
 import { AppPage, InfoPill, MetricCard, PageHeader } from '../components/ui-shell'
 
-const API_BASE_URL = typeof window !== 'undefined' ? getApiBaseUrl() : 'http://localhost:8001'
+const API_BASE_URL = getApiBaseUrl()
 const ACTIVE_JOB_STATUSES = ['pending', 'running'] as const
 
 export default function BacktestPage() {
