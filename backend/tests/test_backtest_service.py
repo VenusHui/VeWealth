@@ -235,33 +235,14 @@ class BacktestServiceUnitTests(unittest.TestCase):
         result = self.service._normalize_curve_to_base_one(values, base_dates)
         self.assertEqual(len(result), 1)
 
-    # run_backtest validation tests
-    def test_run_backtest_rejects_inverted_dates(self):
-        request = SimpleNamespace(
+    @staticmethod
+    def _make_request(**overrides) -> SimpleNamespace:
+        defaults = dict(
             name="test",
             strategy_id="ma_cross_v1",
             strategy_params={},
             mode="manual_symbols",
             symbols=["000001"],
-            start_date=date(2026, 2, 1),
-            end_date=date(2026, 1, 1),
-            initial_cash=100000,
-            cost_config=CostModel(),
-            universe_type="all",
-            pool_symbols=[],
-            benchmark=None,
-        )
-        with self.assertRaises(ValueError) as ctx:
-            self.service.run_backtest(request, MagicMock(), MagicMock())
-        self.assertIn("start_date", str(ctx.exception))
-
-    def test_run_backtest_rejects_empty_symbols_in_manual_mode(self):
-        request = SimpleNamespace(
-            name="test",
-            strategy_id="ma_cross_v1",
-            strategy_params={},
-            mode="manual_symbols",
-            symbols=[],
             start_date=date(2026, 1, 1),
             end_date=date(2026, 1, 31),
             initial_cash=100000,
@@ -270,6 +251,20 @@ class BacktestServiceUnitTests(unittest.TestCase):
             pool_symbols=[],
             benchmark=None,
         )
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    # run_backtest validation tests
+    def test_run_backtest_rejects_inverted_dates(self):
+        request = self._make_request(
+            start_date=date(2026, 2, 1), end_date=date(2026, 1, 1)
+        )
+        with self.assertRaises(ValueError) as ctx:
+            self.service.run_backtest(request, MagicMock(), MagicMock())
+        self.assertIn("start_date", str(ctx.exception))
+
+    def test_run_backtest_rejects_empty_symbols_in_manual_mode(self):
+        request = self._make_request(symbols=[])
         with self.assertRaises(ValueError) as ctx:
             self.service._run_manual_symbols_mode(request)
         self.assertIn("symbols 不能为空", str(ctx.exception))
@@ -320,17 +315,7 @@ class BacktestServiceUnitTests(unittest.TestCase):
             "slippage_rate": 0.0005,
         }
 
-        request = SimpleNamespace(
-            name="test",
-            strategy_id="ma_cross_v1",
-            strategy_params={},
-            mode="manual_symbols",
-            symbols=["000001"],
-            start_date=date(2026, 1, 1),
-            end_date=date(2026, 1, 31),
-            initial_cash=100000,
-            cost_config=mock_cost_config,
-        )
+        request = self._make_request(cost_config=mock_cost_config)
 
         result = self.service._run_manual_symbols_mode(request)
         self.assertIn("summary", result)

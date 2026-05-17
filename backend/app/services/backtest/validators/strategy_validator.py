@@ -43,10 +43,10 @@ def _check_policy_profile(profile_id: str, reasons: list[str]):
     for field, policy_id in checks.items():
         try:
             policy = get_policy(policy_id)
-            if field == "selection_policy" and "同日多标的" not in (
-                policy.__class__.__mro__[1].__doc__ or ""
+            if field == "selection_policy" and not getattr(
+                policy, "allow_same_day_multi", False
             ):
-                reasons.append("selection_policy 缺少同日多标的冲突规则声明")
+                reasons.append("selection_policy 缺少 allow_same_day_multi 声明")
         except Exception as e:
             reasons.append(f"{field} 不可用({policy_id}): {e}")
 

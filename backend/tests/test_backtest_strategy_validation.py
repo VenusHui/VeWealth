@@ -216,11 +216,9 @@ class StrategyValidatorTests(unittest.TestCase):
     @patch("app.services.backtest.validators.strategy_validator.get_profile")
     @patch("app.services.backtest.validators.strategy_validator.get_policy")
     def test_check_policy_profile_valid(self, mock_get_policy, mock_get_profile):
-        # Use the real TopKSelection policy which has SelectionPolicy with
-        # the "同日多标的" docstring as its parent class.
-        from app.services.backtest.policies.registry import TopKSelection
-
-        mock_get_policy.return_value = TopKSelection()
+        mock_policy = MagicMock()
+        mock_policy.allow_same_day_multi = True
+        mock_get_policy.return_value = mock_policy
         mock_get_profile.return_value = MagicMock(
             ranking_policy="r1",
             selection_policy="s1",

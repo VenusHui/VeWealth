@@ -30,6 +30,7 @@ class SelectionPolicy(ABC):
     """必须定义同日多标的冲突解决规则（如 Top-K/阈值）。"""
 
     policy_id: str = "base_selection"
+    allow_same_day_multi: bool = True
 
     @abstractmethod
     def select(

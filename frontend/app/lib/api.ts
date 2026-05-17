@@ -9,6 +9,5 @@ export function getApiBaseUrl(): string {
     const { protocol, hostname } = window.location
     return `${protocol}//${hostname}:8001`
   }
-  // SSR fallback — API calls only happen in useEffect on the client anyway
   return 'http://localhost:8001'
 }

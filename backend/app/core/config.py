@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     TUSHARE_TIMEOUT: int = 30
     TUSHARE_RETRY_TIMES: int = 2
 
-    # 数据查询限制
+    # 数据查询限制（999999 表示不限制）
     MAX_MINUTE_QUERY_DAYS: int = 999999
 
     # 多线程配置
