@@ -5,9 +5,10 @@ import { useRouter } from 'next/navigation'
 import axios from 'axios'
 import { Alert } from 'antd'
 import { saveAuth } from '../lib/auth'
+import { getApiBaseUrl } from '../lib/api'
 import { AppPage } from '../components/ui-shell'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
+const API_BASE_URL = typeof window !== 'undefined' ? getApiBaseUrl() : 'http://localhost:8001'
 
 export default function LoginPage() {
   const router = useRouter()

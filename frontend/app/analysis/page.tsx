@@ -8,6 +8,7 @@ import dayjs from 'dayjs'
 import StockChart from '../components/StockChart'
 import { AppPage, EmptyState, InfoPill, MetricCard, PageHeader, SurfaceCard } from '../components/ui-shell'
 import { formatPct, marketClassByValue } from '../lib/marketColors'
+import { getApiBaseUrl } from '../lib/api'
 
 interface StockSearchResult {
   code: string
@@ -55,7 +56,7 @@ interface CyqInfo {
   concentration_70: number
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
+const API_BASE_URL = typeof window !== 'undefined' ? getApiBaseUrl() : 'http://localhost:8001'
 
 function formatCompactNumber(value: number): string {
   if (value >= 100000000) return `${(value / 100000000).toFixed(2)} 亿`

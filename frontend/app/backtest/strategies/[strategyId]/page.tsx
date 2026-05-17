@@ -8,11 +8,12 @@ import { Breadcrumb, Segmented, Skeleton, Tag } from 'antd'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { getAuthHeader, isAuthenticated } from '../../../lib/auth'
+import { getApiBaseUrl } from '../../../lib/api'
 import { formatDrawdownPct, formatPct, marketClassByDrawdown, marketClassByValue } from '../../../lib/marketColors'
 import type { StrategyManagementDetail } from '../../components/types'
 import { AppPage, InfoPill, MetricCard, SurfaceCard } from '../../../components/ui-shell'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
+const API_BASE_URL = typeof window !== 'undefined' ? getApiBaseUrl() : 'http://localhost:8001'
 
 function fmtTime(value: string | null | undefined): string {
   if (!value) return '-'
