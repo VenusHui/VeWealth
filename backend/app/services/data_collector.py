@@ -4,12 +4,14 @@
 
 from datetime import date
 from typing import Optional
+
+import pandas as pd
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from app.models.stock_data import StockMinuteData
 from app.models.watchlist import WatchList
 from app.core.logger import get_module_logger
-from app.utils.stock_data_fetcher import stock_data_fetcher
+from app.providers import get_data_provider
 
 # 获取logger
 logger = get_module_logger("data_collector")
@@ -20,6 +22,7 @@ class DataCollector:
 
     def __init__(self, db: Session):
         self.db = db
+        self.provider = get_data_provider()
 
     def collect_minute_data(self, stock_code: str, trade_date: date) -> int:
         """
@@ -37,8 +40,8 @@ class DataCollector:
             start_datetime_str = trade_date.strftime("%Y-%m-%d 09:00:00")
             end_datetime_str = trade_date.strftime("%Y-%m-%d 16:00:00")
 
-            # 使用统一的数据获取工具获取分时数据（不复权）
-            df = stock_data_fetcher.fetch_minute_data(
+            # 使用统一的数据源接口获取分时数据（不复权）
+            df = self.provider.fetch_minute_data(
                 stock_code=stock_code,
                 start_datetime=start_datetime_str,
                 end_datetime=end_datetime_str,
@@ -49,12 +52,20 @@ class DataCollector:
             if df is None or df.empty:
                 return 0
 
-            # 使用统一的数据清洗方法
-            df = stock_data_fetcher.clean_minute_data_for_storage(
-                df=df,
-                stock_code=stock_code,
-                trade_date=trade_date,
+            # 映射到数据库列名
+            df = df.rename(
+                columns={
+                    "datetime": "trade_time",
+                    "open": "open_price",
+                    "close": "close_price",
+                    "high": "high_price",
+                    "low": "low_price",
+                    "volume": "volume",
+                }
             )
+            df["trade_time"] = pd.to_datetime(df["trade_time"])
+            df["trade_date"] = trade_date
+            df["stock_code"] = stock_code
 
             # 批量插入数据库
             count = 0

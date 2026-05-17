@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, date
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
-import akshare as ak
 import numpy as np
+from app.providers import get_data_provider
 from app.models.user import User
 from app.models.watchlist import WatchList
 from app.models.stock_data import StockMinuteData
@@ -227,12 +227,14 @@ class AlertService:
                 if latest_data.trade_date == date.today():
                     return latest_data.close_price
 
-            # 否则从akshare实时获取
-            df = ak.stock_zh_a_spot_em()
-            stock_data = df[df["代码"] == stock_code]
+            # 否则从数据源实时获取
+            df = get_data_provider().fetch_realtime_data()
+            if df is None or df.empty:
+                return None
+            stock_data = df[df["code"] == stock_code]
 
             if not stock_data.empty:
-                return float(stock_data.iloc[0]["最新价"])
+                return float(stock_data.iloc[0]["price"])
 
             return None
 

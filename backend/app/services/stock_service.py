@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.schemas.stock import StockSearchResult
 from app.utils.data_processor import DataProcessor
-from app.utils.stock_data_fetcher import stock_data_fetcher
+from app.providers import get_data_provider
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.stock_data import StockMinuteData
@@ -26,6 +26,7 @@ class StockService:
 
     def __init__(self):
         self.data_processor = DataProcessor()
+        self.provider = get_data_provider()
 
     def get_all_stock_symbols(
         self,
@@ -168,15 +169,15 @@ class StockService:
             Exception: 搜索失败时抛出异常
         """
         try:
-            # 使用统一的数据获取工具获取实时行情
-            df = stock_data_fetcher.fetch_realtime_data()
+            # 使用统一的数据源接口获取实时行情
+            df = self.provider.fetch_realtime_data()
 
             if df is None or df.empty:
                 return []
 
             # 筛选包含关键词的股票
-            mask = df["代码"].str.contains(keyword, case=False, na=False) | df[
-                "名称"
+            mask = df["code"].str.contains(keyword, case=False, na=False) | df[
+                "name"
             ].str.contains(keyword, case=False, na=False)
 
             filtered_df = df[mask].head(settings.MAX_SEARCH_RESULTS)
@@ -185,10 +186,10 @@ class StockService:
             for _, row in filtered_df.iterrows():
                 results.append(
                     StockSearchResult(
-                        code=str(row["代码"]),
-                        name=str(row["名称"]),
+                        code=str(row["code"]),
+                        name=str(row["name"]),
                         current_price=(
-                            float(row["最新价"]) if pd.notna(row["最新价"]) else 0.0
+                            float(row["price"]) if pd.notna(row["price"]) else 0.0
                         ),
                     )
                 )
@@ -219,7 +220,7 @@ class StockService:
             start_dt = datetime.strptime(start_date, "%Y-%m-%d")
             end_dt = datetime.strptime(end_date, "%Y-%m-%d")
 
-            api_df = stock_data_fetcher.fetch_daily_data(
+            api_df = self.provider.fetch_daily_data(
                 stock_code=symbol,
                 start_date=start_dt.strftime("%Y%m%d"),
                 end_date=end_dt.strftime("%Y%m%d"),
@@ -235,7 +236,7 @@ class StockService:
                     end_date,
                 )
 
-            result_df = stock_data_fetcher.clean_daily_data_for_analysis(api_df)
+            result_df = api_df
             if result_df.empty or "datetime" not in result_df.columns:
                 return (
                     pd.DataFrame(
@@ -329,8 +330,8 @@ class StockService:
             finally:
                 db.close()
 
-            # 2. 使用统一的数据获取工具获取分时数据（前复权）- 最近5个交易日
-            api_df = stock_data_fetcher.fetch_minute_data(
+            # 2. 使用统一的数据源接口获取分时数据（前复权）
+            api_df = self.provider.fetch_minute_data(
                 stock_code=symbol,
                 start_datetime=start_datetime_str,
                 end_datetime=end_datetime_str,
@@ -339,8 +340,6 @@ class StockService:
             )
 
             if api_df is not None and not api_df.empty:
-                # 使用统一的数据清洗方法（用于分析）
-                api_df = stock_data_fetcher.clean_minute_data_for_analysis(api_df)
                 logger.info(f"从API获取到 {len(api_df)} 条数据，股票: {symbol}")
             else:
                 api_df = pd.DataFrame()
@@ -454,30 +453,12 @@ class StockService:
             Exception: 数据获取失败
         """
         try:
-            # 使用统一的数据获取工具获取筹码分布数据
-            df = stock_data_fetcher.fetch_cyq_data(stock_code=symbol, adjust=adjust)
+            df = self.provider.fetch_cyq_data(stock_code=symbol, adjust=adjust)
 
             if df is None or df.empty:
                 raise Exception(f"未找到股票 {symbol} 的筹码分布数据")
 
-            # akshare返回的是按日期的时间序列数据
-            # 列名：日期, 获利比例, 平均成本, 90成本-低, 90成本-高, 90集中度, 70成本-低, 70成本-高, 70集中度
-
-            # 获取最新的一条数据（最后一行）
-            latest_data = df.iloc[-1]
-
-            # 提取关键信息
-            cyq_info = {
-                "date": str(latest_data.get("日期", "")),
-                "profit_ratio": float(latest_data.get("获利比例", 0)),
-                "avg_cost": float(latest_data.get("平均成本", 0)),
-                "cost_90_low": float(latest_data.get("90成本-低", 0)),
-                "cost_90_high": float(latest_data.get("90成本-高", 0)),
-                "concentration_90": float(latest_data.get("90集中度", 0)),
-                "cost_70_low": float(latest_data.get("70成本-低", 0)),
-                "cost_70_high": float(latest_data.get("70成本-高", 0)),
-                "concentration_70": float(latest_data.get("70集中度", 0)),
-            }
+            cyq_info = self.provider.normalize_cyq_data(df)
 
             return {
                 "success": True,

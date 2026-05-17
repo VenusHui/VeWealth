@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     WECHAT_TOKEN: str = ""
     WECHAT_ENCODING_AES_KEY: str = ""
 
+    # 数据源配置
+    DATA_PROVIDER: str = "akshare"
+
     # AKShare配置
     AKSHARE_TIMEOUT: int = 30
     AKSHARE_DATA_RETENTION_DAYS: int = 5
