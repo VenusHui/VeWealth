@@ -11,13 +11,12 @@ from datetime import datetime
 from pathlib import Path
 import sys
 
-import akshare as ak
-
 # 允许从仓库根目录直接执行: python backend/scripts/refresh_a_share_symbols.py
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.core.database import SessionLocal
 from app.models.security_universe import SecurityUniverse
+from app.providers.astock_data import fetch_all_stock_codes
 
 
 def detect_market(code: str) -> str:
@@ -46,21 +45,7 @@ def is_st_name(name: str) -> bool:
 
 
 def main() -> None:
-    df = ak.stock_info_a_code_name()
-    if df is None or df.empty or "code" not in df.columns:
-        raise RuntimeError("未获取到有效的A股代码列表")
-
-    name_col = (
-        "name" if "name" in df.columns else ("名称" if "名称" in df.columns else None)
-    )
-    records = []
-    for _, row in df.iterrows():
-        code = str(row["code"]).strip()
-        if not code:
-            continue
-        code = code.zfill(6)
-        name = str(row[name_col]).strip() if name_col else ""
-        records.append((code, name))
+    records = fetch_all_stock_codes()
 
     # 1) 继续维护静态 txt（兜底/排障）
     codes = sorted({code for code, _ in records})
@@ -70,7 +55,7 @@ def main() -> None:
     with target.open("w", encoding="utf-8") as f:
         f.write("# 静态A股代码清单（兜底用途）\n")
         f.write(f"# 自动生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write("# 数据源: akshare.stock_info_a_code_name\n")
+        f.write("# 数据源: 东方财富网 Eastmoney HTTP API (via a-stock-data patterns)\n")
         f.write("# 格式：每行一个6位股票代码，支持注释行(#)\n\n")
         for code in codes:
             f.write(f"{code}\n")

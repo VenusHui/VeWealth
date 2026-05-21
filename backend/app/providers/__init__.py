@@ -27,6 +27,8 @@ def get_data_provider(name: str | None = None) -> MarketDataProvider:
 
 
 # 自动注册内置数据源
-from app.providers.akshare_provider import AKShareProvider  # noqa: E402
+from app.providers.astock_provider import AStockDataProvider  # noqa: E402
 
-register_provider("akshare", AKShareProvider)
+register_provider("astock", AStockDataProvider)
+# 兼容旧配置
+register_provider("akshare", AStockDataProvider)

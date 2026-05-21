@@ -71,11 +71,9 @@ class Settings(BaseSettings):
     WECHAT_ENCODING_AES_KEY: str = ""
 
     # 数据源配置
-    DATA_PROVIDER: str = "akshare"
+    DATA_PROVIDER: str = "astock"
 
-    # AKShare配置
-    AKSHARE_TIMEOUT: int = 30
-    AKSHARE_DATA_RETENTION_DAYS: int = 5
+    # 搜索配置
     MAX_SEARCH_RESULTS: int = 20
 
     # Tushare 备源配置
