@@ -10,6 +10,19 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# 使用阿里云 Debian 镜像加速（国内网络环境）
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources
+
+# 清除代理环境变量（容器内直连更快）
+ENV HTTP_PROXY="" \
+    HTTPS_PROXY="" \
+    http_proxy="" \
+    https_proxy="" \
+    ALL_PROXY="" \
+    all_proxy="" \
+    NO_PROXY="" \
+    no_proxy=""
+
 # 安装系统依赖（PostgreSQL 客户端库）
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
