@@ -336,7 +336,7 @@ export default function DepthChart({
 
         {/* Volume Profile overlay — semi-transparent bars extending from right price axis */}
         {showVPOverlay && (
-          <div className="absolute inset-0 pointer-events-none z-10" style={{ right: 60, left: 0 }}>
+          <div className="absolute inset-0 pointer-events-none z-10" style={{ right: 60 }}>
             {profileBars.map((bar, i) => (
               <div
                 key={i}

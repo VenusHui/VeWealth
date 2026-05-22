@@ -74,12 +74,6 @@ interface CandlestickData {
   close: number
 }
 
-interface VolumeBarData {
-  time: string
-  value: number
-  color: string
-}
-
 export function ohlcvToCandlestickData(klines: KlineDataPoint[]): CandlestickData[] {
   return klines.map((k) => ({
     time: k.datetime,
@@ -87,14 +81,6 @@ export function ohlcvToCandlestickData(klines: KlineDataPoint[]): CandlestickDat
     high: k.high,
     low: k.low,
     close: k.close,
-  }))
-}
-
-export function ohlcvToVolumeData(klines: KlineDataPoint[]): VolumeBarData[] {
-  return klines.map((k) => ({
-    time: k.datetime,
-    value: k.volume,
-    color: k.close >= k.open ? UP_COLOR : DOWN_COLOR,
   }))
 }
 
