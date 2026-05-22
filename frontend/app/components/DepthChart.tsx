@@ -4,13 +4,11 @@ import { useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   createChart,
   CandlestickSeries,
-  HistogramSeries,
   LineSeries,
   type IChartApi,
   type ISeriesApi,
   type CandlestickData,
   type LineData,
-  type HistogramData,
   type Time,
 } from 'lightweight-charts'
 import {
@@ -22,7 +20,6 @@ import {
   UP_BORDER,
   DOWN_BORDER,
   ohlcvToCandlestickData,
-  ohlcvToVolumeData,
   computeMALine,
   computeVWAPLine,
   getMaxProfileVolume,
@@ -32,7 +29,6 @@ interface DepthChartProps {
   klines: KlineDataPoint[]
   volumeProfile: VolumeProfileData | null
   cyqInfo: CyqInfo | null
-  period: string
   showMA: boolean
   showVWAP: boolean
   showGMM: boolean
@@ -46,7 +42,6 @@ export default function DepthChart({
   klines,
   volumeProfile,
   cyqInfo,
-  period,
   showMA,
   showVWAP,
   showGMM,
@@ -55,15 +50,15 @@ export default function DepthChart({
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
-  const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const maSeriesRefs = useRef<ISeriesApi<'Line'>[]>([])
   const vwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
   const cyqPriceLinesRef = useRef<ReturnType<ISeriesApi<'Candlestick'>['createPriceLine']>[]>([])
 
   const candlestickData = useMemo(() => ohlcvToCandlestickData(klines), [klines])
-  const volumeData = useMemo(() => ohlcvToVolumeData(klines), [klines])
 
-  const createChartInstance = useCallback(() => {
+  // Create chart ONCE on mount — never recreate on data change.
+  // Data updates are handled by setData effects below.
+  const initChart = useCallback(() => {
     if (!chartContainerRef.current) return
 
     const container = chartContainerRef.current
@@ -85,7 +80,7 @@ export default function DepthChart({
       },
       rightPriceScale: {
         borderColor: 'rgba(226,232,240,0.8)',
-        scaleMargins: { top: 0.05, bottom: 0.25 },
+        scaleMargins: { top: 0.08, bottom: 0.08 },
       },
       timeScale: {
         borderColor: 'rgba(226,232,240,0.8)',
@@ -97,7 +92,7 @@ export default function DepthChart({
       },
     })
 
-    // Pane 1: Candlestick (main price chart)
+    // Single pane: Candlestick only (no volume histogram pane)
     const cds = chart.addSeries(CandlestickSeries, {
       upColor: UP_COLOR,
       downColor: DOWN_COLOR,
@@ -106,54 +101,50 @@ export default function DepthChart({
       wickUpColor: UP_COLOR,
       wickDownColor: DOWN_COLOR,
     })
-    cds.setData(candlestickData as CandlestickData<Time>[])
-
-    // Pane 2: Volume histogram (below)
-    const vs = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: 'volume' },
-      priceScaleId: 'volume',
-    })
-    vs.setData(volumeData as HistogramData<Time>[])
-    chart.priceScale('volume').applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0.0 },
-    })
+    cds.setData([])
 
     chartRef.current = chart
     candlestickSeriesRef.current = cds
-    volumeSeriesRef.current = vs
-    maSeriesRefs.current = []
-    vwapSeriesRef.current = null
-    cyqPriceLinesRef.current = []
-  }, [candlestickData, volumeData])
+  }, [])
 
-  // Create chart on mount and when klines change
+  // Mount/unmount
   useEffect(() => {
-    createChartInstance()
-
+    initChart()
     return () => {
       if (chartRef.current) {
         chartRef.current.remove()
         chartRef.current = null
+        candlestickSeriesRef.current = null
       }
     }
-  }, [createChartInstance])
+  }, [initChart])
 
-  // Update candlestick/volume data when it changes
+  // Update candlestick data when klines change
   useEffect(() => {
     if (candlestickSeriesRef.current) {
       candlestickSeriesRef.current.setData(candlestickData as CandlestickData<Time>[])
     }
-    if (volumeSeriesRef.current) {
-      volumeSeriesRef.current.setData(volumeData as HistogramData<Time>[])
+  }, [candlestickData])
+
+  // Resize handler
+  useEffect(() => {
+    const handleResize = () => {
+      if (chartRef.current && chartContainerRef.current) {
+        chartRef.current.applyOptions({
+          width: chartContainerRef.current.clientWidth,
+          height: chartContainerRef.current.clientHeight,
+        })
+      }
     }
-  }, [candlestickData, volumeData])
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
 
   // MA lines
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
 
-    // Remove existing MA series
     for (const s of maSeriesRefs.current) {
       chart.removeSeries(s)
     }
@@ -208,7 +199,6 @@ export default function DepthChart({
     const cds = candlestickSeriesRef.current
     if (!cds) return
 
-    // Clean up previously created price lines
     for (const pl of cyqPriceLinesRef.current) {
       cds.removePriceLine(pl)
     }
@@ -218,64 +208,34 @@ export default function DepthChart({
       const newLines: typeof cyqPriceLinesRef.current = []
 
       if (cyqInfo.avg_cost > 0) {
-        newLines.push(
-          cds.createPriceLine({
-            price: cyqInfo.avg_cost,
-            color: '#38bdf8',
-            lineWidth: 2,
-            lineStyle: 2,
-            axisLabelVisible: true,
-            title: 'AVG',
-          }),
-        )
+        newLines.push(cds.createPriceLine({
+          price: cyqInfo.avg_cost, color: '#38bdf8', lineWidth: 2,
+          lineStyle: 2, axisLabelVisible: true, title: 'AVG',
+        }))
       }
       if (cyqInfo.cost_90_low > 0) {
-        newLines.push(
-          cds.createPriceLine({
-            price: cyqInfo.cost_90_low,
-            color: '#f59e0b',
-            lineWidth: 1,
-            lineStyle: 2,
-            axisLabelVisible: true,
-            title: '90L',
-          }),
-        )
+        newLines.push(cds.createPriceLine({
+          price: cyqInfo.cost_90_low, color: '#f59e0b', lineWidth: 1,
+          lineStyle: 2, axisLabelVisible: true, title: '90L',
+        }))
       }
       if (cyqInfo.cost_90_high > 0) {
-        newLines.push(
-          cds.createPriceLine({
-            price: cyqInfo.cost_90_high,
-            color: '#f59e0b',
-            lineWidth: 1,
-            lineStyle: 2,
-            axisLabelVisible: true,
-            title: '90H',
-          }),
-        )
+        newLines.push(cds.createPriceLine({
+          price: cyqInfo.cost_90_high, color: '#f59e0b', lineWidth: 1,
+          lineStyle: 2, axisLabelVisible: true, title: '90H',
+        }))
       }
       if (cyqInfo.cost_70_low > 0) {
-        newLines.push(
-          cds.createPriceLine({
-            price: cyqInfo.cost_70_low,
-            color: '#06b6d4',
-            lineWidth: 1,
-            lineStyle: 2,
-            axisLabelVisible: true,
-            title: '70L',
-          }),
-        )
+        newLines.push(cds.createPriceLine({
+          price: cyqInfo.cost_70_low, color: '#06b6d4', lineWidth: 1,
+          lineStyle: 2, axisLabelVisible: true, title: '70L',
+        }))
       }
       if (cyqInfo.cost_70_high > 0) {
-        newLines.push(
-          cds.createPriceLine({
-            price: cyqInfo.cost_70_high,
-            color: '#06b6d4',
-            lineWidth: 1,
-            lineStyle: 2,
-            axisLabelVisible: true,
-            title: '70H',
-          }),
-        )
+        newLines.push(cds.createPriceLine({
+          price: cyqInfo.cost_70_high, color: '#06b6d4', lineWidth: 1,
+          lineStyle: 2, axisLabelVisible: true, title: '70H',
+        }))
       }
 
       cyqPriceLinesRef.current = newLines
@@ -292,20 +252,6 @@ export default function DepthChart({
     }
   }, [showCYQ, cyqInfo])
 
-  // Resize handler
-  useEffect(() => {
-    const handleResize = () => {
-      if (chartRef.current && chartContainerRef.current) {
-        chartRef.current.applyOptions({
-          width: chartContainerRef.current.clientWidth,
-          height: chartContainerRef.current.clientHeight,
-        })
-      }
-    }
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
-  }, [])
-
   // Volume Profile panel data
   const profileBars = useMemo(() => {
     if (!volumeProfile || !volumeProfile.profile.length) return []
@@ -313,66 +259,45 @@ export default function DepthChart({
     if (maxVol === 0) return []
     const priceMin = volumeProfile.price_min
     const priceMax = volumeProfile.price_max
-    const priceRange = priceMax - priceMin
+    const priceRange = priceMax - priceMin || 1
     return volumeProfile.profile.map((p) => ({
       ...p,
       barWidth: (p.volume / maxVol) * 100,
-      yPct: ((p.price - priceMin) / (priceRange || 1)) * 100,
+      yPct: ((p.price - priceMin) / priceRange) * 100,
     }))
   }, [volumeProfile])
 
-  const pocYPos = useMemo(() => {
-    if (!volumeProfile || !volumeProfile.poc || volumeProfile.poc.price === 0) return -1
-    const priceRange = volumeProfile.price_max - volumeProfile.price_min
-    if (priceRange <= 0) return -1
-    return ((volumeProfile.poc.price - volumeProfile.price_min) / priceRange) * 100
-  }, [volumeProfile])
+  const calcYPos = useCallback(
+    (price: number) => {
+      if (!volumeProfile) return -1
+      const priceRange = volumeProfile.price_max - volumeProfile.price_min
+      if (priceRange <= 0) return -1
+      return ((price - volumeProfile.price_min) / priceRange) * 100
+    },
+    [volumeProfile],
+  )
 
-  const vahYPos = useMemo(() => {
-    if (!volumeProfile) return -1
-    const priceRange = volumeProfile.price_max - volumeProfile.price_min
-    if (priceRange <= 0) return -1
-    return ((volumeProfile.value_area.vah - volumeProfile.price_min) / priceRange) * 100
-  }, [volumeProfile])
+  const pocYPos = useMemo(() => volumeProfile?.poc ? calcYPos(volumeProfile.poc.price) : -1, [volumeProfile, calcYPos])
+  const vahYPos = useMemo(() => volumeProfile ? calcYPos(volumeProfile.value_area.vah) : -1, [volumeProfile, calcYPos])
+  const valYPos = useMemo(() => volumeProfile ? calcYPos(volumeProfile.value_area.val) : -1, [volumeProfile, calcYPos])
+  const vwapYPos = useMemo(() => volumeProfile?.vwap ? calcYPos(volumeProfile.vwap) : -1, [volumeProfile, calcYPos])
 
-  const valYPos = useMemo(() => {
-    if (!volumeProfile) return -1
-    const priceRange = volumeProfile.price_max - volumeProfile.price_min
-    if (priceRange <= 0) return -1
-    return ((volumeProfile.value_area.val - volumeProfile.price_min) / priceRange) * 100
-  }, [volumeProfile])
+  const hvnYPositions = useMemo(() => {
+    if (!volumeProfile?.hvn_levels?.length) return []
+    return volumeProfile.hvn_levels
+      .filter((p) => p >= volumeProfile.price_min && p <= volumeProfile.price_max)
+      .map(calcYPos)
+      .filter((y) => y >= 0)
+  }, [volumeProfile, calcYPos])
 
-  const vwapYPos = useMemo(() => {
-    if (!volumeProfile || volumeProfile.vwap <= 0) return -1
-    const priceRange = volumeProfile.price_max - volumeProfile.price_min
-    if (priceRange <= 0) return -1
-    return ((volumeProfile.vwap - volumeProfile.price_min) / priceRange) * 100
-  }, [volumeProfile])
+  const lvnYPositions = useMemo(() => {
+    if (!volumeProfile?.lvn_levels?.length) return []
+    return volumeProfile.lvn_levels
+      .filter((p) => p >= volumeProfile.price_min && p <= volumeProfile.price_max)
+      .map(calcYPos)
+      .filter((y) => y >= 0)
+  }, [volumeProfile, calcYPos])
 
-  const cyqYPositions = useMemo(() => {
-    if (!volumeProfile || !cyqInfo || volumeProfile.price_min === volumeProfile.price_max) return {}
-    const priceRange = volumeProfile.price_max - volumeProfile.price_min
-    const calcY = (price: number) => ((price - volumeProfile.price_min) / priceRange) * 100
-    const result: Record<string, { y: number; label: string; color: string }> = {}
-    if (cyqInfo.avg_cost > 0) {
-      result.avg = { y: calcY(cyqInfo.avg_cost), label: 'AVG', color: '#38bdf8' }
-    }
-    if (cyqInfo.cost_90_high > 0) {
-      result.c90h = { y: calcY(cyqInfo.cost_90_high), label: '90H', color: '#f59e0b' }
-    }
-    if (cyqInfo.cost_90_low > 0) {
-      result.c90l = { y: calcY(cyqInfo.cost_90_low), label: '90L', color: '#f59e0b' }
-    }
-    if (cyqInfo.cost_70_high > 0) {
-      result.c70h = { y: calcY(cyqInfo.cost_70_high), label: '70H', color: '#06b6d4' }
-    }
-    if (cyqInfo.cost_70_low > 0) {
-      result.c70l = { y: calcY(cyqInfo.cost_70_low), label: '70L', color: '#06b6d4' }
-    }
-    return result
-  }, [volumeProfile, cyqInfo])
-
-  // GMM fit curve positions on Volume Profile panel
   const gmmCurvePoints = useMemo(() => {
     if (!volumeProfile?.fit_result?.fit_curve || !volumeProfile.profile.length) return []
     const fitCurve = volumeProfile.fit_result.fit_curve
@@ -382,49 +307,68 @@ export default function DepthChart({
     return fitCurve.map((p) => ({
       price: p.price,
       yPct: ((p.price - volumeProfile.price_min) / priceRange) * 100,
-      widthPct: (p.fitVolume / maxFitVol) * 70, // scale relative to profile width
+      widthPct: (p.fitVolume / maxFitVol) * 70,
     }))
   }, [volumeProfile])
 
   const gmmComponents = useMemo(() => {
-    if (!volumeProfile?.fit_result?.components) return []
-    return volumeProfile.fit_result.components
+    return volumeProfile?.fit_result?.components || []
   }, [volumeProfile])
 
-  // HVN/LVN Y positions on Volume Profile panel
-  const hvnYPositions = useMemo(() => {
-    if (!volumeProfile || !volumeProfile.hvn_levels.length) return []
-    const priceRange = volumeProfile.price_max - volumeProfile.price_min
-    if (priceRange <= 0) return []
-    return volumeProfile.hvn_levels
-      .filter((p) => p >= volumeProfile.price_min && p <= volumeProfile.price_max)
-      .map((p) => ((p - volumeProfile.price_min) / priceRange) * 100)
-  }, [volumeProfile])
+  const cyqYPositions = useMemo(() => {
+    if (!volumeProfile || !cyqInfo || volumeProfile.price_min === volumeProfile.price_max) return {}
+    const result: Record<string, { y: number; label: string; color: string }> = {}
+    if (cyqInfo.avg_cost > 0) result.avg = { y: calcYPos(cyqInfo.avg_cost), label: 'AVG', color: '#38bdf8' }
+    if (cyqInfo.cost_90_high > 0) result.c90h = { y: calcYPos(cyqInfo.cost_90_high), label: '90H', color: '#f59e0b' }
+    if (cyqInfo.cost_90_low > 0) result.c90l = { y: calcYPos(cyqInfo.cost_90_low), label: '90L', color: '#f59e0b' }
+    if (cyqInfo.cost_70_high > 0) result.c70h = { y: calcYPos(cyqInfo.cost_70_high), label: '70H', color: '#06b6d4' }
+    if (cyqInfo.cost_70_low > 0) result.c70l = { y: calcYPos(cyqInfo.cost_70_low), label: '70L', color: '#06b6d4' }
+    return result
+  }, [volumeProfile, cyqInfo, calcYPos])
 
-  const lvnYPositions = useMemo(() => {
-    if (!volumeProfile || !volumeProfile.lvn_levels.length) return []
-    const priceRange = volumeProfile.price_max - volumeProfile.price_min
-    if (priceRange <= 0) return []
-    return volumeProfile.lvn_levels
-      .filter((p) => p >= volumeProfile.price_min && p <= volumeProfile.price_max)
-      .map((p) => ((p - volumeProfile.price_min) / priceRange) * 100)
-  }, [volumeProfile])
+  const showVPOverlay = volumeProfile && volumeProfile.profile.length > 0
 
   return (
-    <div className="flex flex-col lg:flex-row gap-0 rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.78)] overflow-hidden" style={{ minHeight: 420 }}>
-      {/* Candlestick + Volume chart */}
-      <div ref={chartContainerRef} className="flex-1 min-w-0" style={{ height: 480 }} />
+    <div className="relative flex gap-0 rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.78)] overflow-hidden" style={{ minHeight: 480 }}>
+      {/* Candlestick chart + Volume Profile overlay */}
+      <div className="relative flex-1 min-w-0">
+        <div ref={chartContainerRef} className="absolute inset-0" />
 
-      {/* Volume Profile panel (right side on desktop, bottom on mobile) */}
-      {volumeProfile && volumeProfile.profile.length > 0 && (
-        <div className="relative flex lg:w-32 w-full lg:flex-col flex-row border-t lg:border-t-0 lg:border-l border-[var(--border-subtle)] bg-[rgba(248,250,252,0.7)]" style={{ height: 480 }}>
+        {/* Volume Profile overlay — semi-transparent bars extending from right price axis */}
+        {showVPOverlay && (
+          <div className="absolute inset-0 pointer-events-none z-10" style={{ right: 60, left: 0 }}>
+            {profileBars.map((bar, i) => (
+              <div
+                key={i}
+                className="absolute right-0 bg-blue-400/15 hover:bg-blue-400/25"
+                style={{
+                  bottom: `${bar.yPct}%`,
+                  height: `${Math.max(100 / profileBars.length, 0.8)}%`,
+                  width: `${Math.min(bar.barWidth, 85)}%`,
+                }}
+              />
+            ))}
+
+            {/* POC overlay marker */}
+            {pocYPos >= 0 && (
+              <div
+                className="absolute left-0 right-0 border-t-2 border-dashed border-red-400/60"
+                style={{ bottom: `${pocYPos}%` }}
+              />
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Volume Profile panel (right side) */}
+      {showVPOverlay && (
+        <div className="relative flex w-32 flex-col border-l border-[var(--border-subtle)] bg-[rgba(248,250,252,0.7)] shrink-0">
           <div className="flex-none border-b border-[var(--border-subtle)] px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">
             筹码峰
           </div>
 
-          {/* Profile bars container */}
           <div className="relative flex-1 overflow-hidden">
-            {/* Blue-tinted background */}
+            {/* Volume bars */}
             <div className="absolute inset-0">
               {profileBars.map((bar, i) => (
                 <div
@@ -441,115 +385,71 @@ export default function DepthChart({
 
             {/* Overlay markers */}
             <div className="absolute inset-0 pointer-events-none">
-              {/* Value Area shading */}
-              {valYPos > 0 && vahYPos > 0 && (
+              {valYPos >= 0 && vahYPos >= 0 && (
                 <div
                   className="absolute left-2 right-0 bg-blue-400/10 border-l-2 border-blue-400/30"
                   style={{ bottom: `${valYPos}%`, top: `${100 - vahYPos}%` }}
                 />
               )}
 
-              {/* POC line */}
-              {pocYPos > 0 && (
+              {pocYPos >= 0 && (
                 <>
-                  <div
-                    className="absolute left-0 right-0 border-t-2 border-dashed border-red-500 z-10"
-                    style={{ bottom: `${pocYPos}%` }}
-                  />
-                  <div
-                    className="absolute right-1 z-10 -translate-y-1/2 rounded bg-red-500 px-1 text-[9px] font-bold text-white"
-                    style={{ bottom: `${pocYPos}%` }}
-                  >
+                  <div className="absolute left-0 right-0 border-t-2 border-dashed border-red-500 z-10" style={{ bottom: `${pocYPos}%` }} />
+                  <div className="absolute right-1 z-10 -translate-y-1/2 rounded bg-red-500 px-1 text-[9px] font-bold text-white" style={{ bottom: `${pocYPos}%` }}>
                     POC
                   </div>
                 </>
               )}
 
-              {/* VAH line */}
-              {vahYPos > 0 && (
-                <div
-                  className="absolute left-0 right-0 border-t border-dashed border-blue-400/50 z-10"
-                  style={{ bottom: `${vahYPos}%` }}
-                />
+              {vahYPos >= 0 && (
+                <div className="absolute left-0 right-0 border-t border-dashed border-blue-400/50 z-10" style={{ bottom: `${vahYPos}%` }} />
+              )}
+              {valYPos >= 0 && (
+                <div className="absolute left-0 right-0 border-t border-dashed border-blue-400/50 z-10" style={{ bottom: `${valYPos}%` }} />
               )}
 
-              {/* VAL line */}
-              {valYPos > 0 && (
-                <div
-                  className="absolute left-0 right-0 border-t border-dashed border-blue-400/50 z-10"
-                  style={{ bottom: `${valYPos}%` }}
-                />
-              )}
-
-              {/* HVN markers */}
               {hvnYPositions.map((y, i) => (
-                <div
-                  key={`hvn-${i}`}
-                  className="absolute z-10 flex items-center"
-                  style={{ bottom: `${y}%` }}
-                >
+                <div key={`hvn-${i}`} className="absolute z-10 flex items-center" style={{ bottom: `${y}%` }}>
                   <div className="h-1.5 w-1.5 rounded-full bg-blue-600" />
                   <span className="ml-0.5 text-[7px] text-blue-600 font-medium">HVN</span>
                 </div>
               ))}
 
-              {/* LVN markers */}
               {lvnYPositions.map((y, i) => (
-                <div
-                  key={`lvn-${i}`}
-                  className="absolute z-10 flex items-center"
-                  style={{ bottom: `${y}%` }}
-                >
+                <div key={`lvn-${i}`} className="absolute z-10 flex items-center" style={{ bottom: `${y}%` }}>
                   <div className="h-1.5 w-1.5 rounded-full border border-gray-400 bg-gray-300" />
                   <span className="ml-0.5 text-[7px] text-gray-500 font-medium">LVN</span>
                 </div>
               ))}
 
-              {/* CYQ lines */}
               {showCYQ && Object.values(cyqYPositions).map((item, i) => (
-                <div key={i} className="relative z-10" style={{ bottom: `${item.y}%`, position: 'absolute', left: 0, right: 0 }}>
+                <div key={i} className="absolute left-0 right-0 z-10" style={{ bottom: `${item.y}%` }}>
                   <div className="border-t border-dashed" style={{ borderColor: item.color }} />
-                  <span
-                    className="absolute right-0.5 -translate-y-1/2 text-[8px] font-medium"
-                    style={{ color: item.color }}
-                  >
+                  <span className="absolute right-0.5 -translate-y-1/2 text-[8px] font-medium" style={{ color: item.color }}>
                     {item.label}
                   </span>
                 </div>
               ))}
 
-              {/* VWAP marker on profile */}
-              {showVWAP && vwapYPos > 0 && (
-                <div
-                  className="absolute left-0 right-0 z-10 border-t-2 border-dashed"
-                  style={{ borderColor: VWAP_COLOR, bottom: `${vwapYPos}%` }}
-                />
+              {showVWAP && vwapYPos >= 0 && (
+                <div className="absolute left-0 right-0 z-10 border-t-2 border-dashed" style={{ borderColor: VWAP_COLOR, bottom: `${vwapYPos}%` }} />
               )}
 
-              {/* GMM fit curve overlay */}
+              {/* GMM fit curve */}
               {showGMM && gmmCurvePoints.length > 0 && (
-                <svg className="absolute inset-0 z-20 pointer-events-none" preserveAspectRatio="none">
+                <svg className="absolute inset-0 z-20" preserveAspectRatio="none">
                   <polyline
-                    points={gmmCurvePoints
-                      .map((p) => `${70 - p.widthPct},${100 - p.yPct}`)
-                      .join(' ')}
-                    fill="none"
-                    stroke="#9333ea"
-                    strokeWidth="1.5"
-                    strokeDasharray="4,2"
-                    opacity="0.8"
+                    points={gmmCurvePoints.map((p) => `${70 - p.widthPct},${100 - p.yPct}`).join(' ')}
+                    fill="none" stroke="#9333ea" strokeWidth="1.5" strokeDasharray="4,2" opacity="0.8"
                   />
-                  {/* GMM component mean lines */}
                   {gmmComponents.map((c, i) => {
-                    const priceRange = volumeProfile ? volumeProfile.price_max - volumeProfile.price_min : 1
-                    const y = ((c.mean - (volumeProfile?.price_min || 0)) / (priceRange || 1)) * 100
+                    const y = calcYPos(c.mean)
                     if (y < 0 || y > 100) return null
                     return (
                       <g key={i}>
-                        <line x1="0" y1={`${100 - y}%`} x2="70" y2={`${100 - y}%`}
-                          stroke="#9333ea" strokeWidth="1" strokeDasharray="2,2" opacity="0.5" />
+                        <line x1="0" y1={`${100 - y}%`} x2="70" y2={`${100 - y}%`} stroke="#9333ea" strokeWidth="1" strokeDasharray="2,2" opacity="0.5" />
                         <text x="72" y={`${100 - y}%`} fill="#9333ea" fontSize="8" dominantBaseline="middle">
-                          μ{(c.mean).toFixed(1)}
+                          μ{c.mean.toFixed(1)}
                         </text>
                       </g>
                     )
@@ -559,7 +459,7 @@ export default function DepthChart({
             </div>
           </div>
 
-          {/* Price labels at bottom and top */}
+          {/* Price labels */}
           <div className="flex-none border-t border-[var(--border-subtle)] px-1 py-1 text-center text-[9px] text-[var(--text-dim)]">
             <div>¥{volumeProfile.price_max.toFixed(2)}</div>
             <div className="flex justify-between">

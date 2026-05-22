@@ -400,7 +400,6 @@ export default function DepthPage() {
               klines={klines}
               volumeProfile={volumeProfile}
               cyqInfo={cyqInfo}
-              period={period}
               showMA={showMA}
               showVWAP={showVWAP}
               showGMM={showGMM}
