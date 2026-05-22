@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.schemas.stock import StockSearchResult
 from app.utils.data_processor import DataProcessor
 from app.providers import get_data_provider
+from app.providers.astock_data import tencent_quote, eastmoney_stock_info
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.stock_data import StockMinuteData
@@ -386,58 +387,6 @@ class StockService:
                 end_date,
             )
 
-    def get_stock_data(
-        self, symbol: str, start_date: str, end_date: str
-    ) -> Dict[str, Any]:
-        """
-        获取股票1分钟数据
-
-        Args:
-            symbol: 股票代码
-            start_date: 开始日期
-            end_date: 结束日期
-
-        Returns:
-            包含图表数据的字典
-
-        Raises:
-            ValueError: 参数验证失败
-            Exception: 数据获取失败
-        """
-        # 验证日期格式
-        try:
-            datetime.strptime(start_date, "%Y-%m-%d")
-            datetime.strptime(end_date, "%Y-%m-%d")
-        except ValueError as e:
-            raise ValueError(f"日期格式错误: {str(e)}")
-
-        df, actual_start_date, actual_end_date = self.get_minute_data(
-            symbol, start_date, end_date
-        )
-
-        # 确保datetime列是字符串格式
-        if not df.empty:
-            df["datetime"] = df["datetime"].astype(str)
-
-        # 转换为图表数据
-        chart_data = self.data_processor.to_chart_data(df)
-
-        # 进行高斯混合模型拟合（多峰正态分布拟合）
-        fit_result = self.data_processor.fit_gaussian_mixture(chart_data)
-
-        return {
-            "success": True,
-            "symbol": symbol,
-            "start_date": start_date,
-            "end_date": end_date,
-            "actual_start_date": actual_start_date,
-            "actual_end_date": actual_end_date,
-            "period": "1min",
-            "chart_data": chart_data,
-            "count": len(chart_data),
-            "fit_result": fit_result,  # 添加拟合结果
-        }
-
     def get_cyq_data(self, symbol: str, adjust: str = "") -> Dict[str, Any]:
         """
         获取股票筹码分布数据
@@ -470,6 +419,321 @@ class StockService:
         except Exception as e:
             logger.error(f"获取筹码分布数据失败: {str(e)}")
             raise Exception(f"获取筹码分布数据失败: {str(e)}")
+
+    # ------------------------------------------------------------------
+    # Period label mapping (shared across K-line / stock-data endpoints)
+    # ------------------------------------------------------------------
+
+    _PERIOD_LABEL_MAP: Dict[str, str] = {
+        "1": "1min",
+        "5": "5min",
+        "15": "15min",
+        "30": "30min",
+        "60": "60min",
+        "101": "daily",
+    }
+
+    @staticmethod
+    def _df_to_kline_list(df: pd.DataFrame) -> List[Dict[str, Any]]:
+        """Convert a DataFrame to a list of K-line dicts with correct field names.
+
+        Produces dicts with keys: datetime, open, close, high, low, volume, amount.
+        """
+        klines: List[Dict[str, Any]] = []
+        has_amount = "amount" in df.columns
+        for _, row in df.iterrows():
+            point: Dict[str, Any] = {
+                "datetime": str(row.get("datetime", "")),
+                "open": float(row.get("open", 0)),
+                "close": float(row.get("close", 0)),
+                "high": float(row.get("high", 0)),
+                "low": float(row.get("low", 0)),
+                "volume": float(row.get("volume", 0)),
+            }
+            if has_amount:
+                amount = row.get("amount")
+                point["amount"] = float(amount) if pd.notna(amount) else None
+            klines.append(point)
+        return klines
+
+    # ------------------------------------------------------------------
+    # K-line data (multi-period)
+    # ------------------------------------------------------------------
+
+    def get_kline_data(
+        self,
+        symbol: str,
+        period: str = "5",
+        start_date: str = "",
+        end_date: str = "",
+        adjust: str = "qfq",
+    ) -> Dict[str, Any]:
+        """获取任意周期的K线数据。"""
+        period_label = self._PERIOD_LABEL_MAP.get(period, f"{period}min")
+
+        try:
+            if period == "101":
+                df, actual_start, actual_end = self.get_daily_data(
+                    symbol=symbol,
+                    start_date=start_date or "2000-01-01",
+                    end_date=end_date or "2099-12-31",
+                )
+            else:
+                start_dt = start_date or "2000-01-01"
+                end_dt = end_date or "2099-12-31"
+                start_datetime = f"{start_dt} 09:00:00"
+                end_datetime = f"{end_dt} 16:00:00"
+
+                df = self.provider.fetch_minute_data(
+                    stock_code=symbol,
+                    start_datetime=start_datetime,
+                    end_datetime=end_datetime,
+                    period=period,
+                    adjust=adjust,
+                )
+
+                if df is None or df.empty:
+                    df = pd.DataFrame(
+                        columns=["datetime", "open", "high", "low", "close", "volume"]
+                    )
+                    actual_start = start_datetime
+                    actual_end = end_datetime
+                else:
+                    df["datetime"] = df["datetime"].astype(str)
+                    actual_start = str(df["datetime"].min())
+                    actual_end = str(df["datetime"].max())
+
+            if not df.empty:
+                df["datetime"] = df["datetime"].astype(str)
+
+            klines = self._df_to_kline_list(df)
+
+            return {
+                "success": True,
+                "symbol": symbol,
+                "period": period_label,
+                "adjust": adjust,
+                "start_date": start_date,
+                "end_date": end_date,
+                "actual_start_date": str(actual_start),
+                "actual_end_date": str(actual_end),
+                "count": len(klines),
+                "klines": klines,
+            }
+        except Exception as e:
+            logger.error(f"获取K线数据失败: {str(e)}")
+            raise Exception(f"获取K线数据失败: {str(e)}")
+
+    def get_volume_profile(
+        self,
+        symbol: str,
+        period: str = "5",
+        start_date: str = "",
+        end_date: str = "",
+        adjust: str = "qfq",
+        bins: int = 100,
+    ) -> Dict[str, Any]:
+        """获取Volume Profile（成交量分布）。先获取K线数据，再计算Volume Profile。"""
+        kline_result = self.get_kline_data(
+            symbol=symbol,
+            period=period,
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
+        )
+
+        klines_list = kline_result.get("klines", [])
+        if not klines_list:
+            return {
+                "success": True,
+                "symbol": symbol,
+                "period": kline_result["period"],
+                "total_volume": 0.0,
+                "price_min": 0.0,
+                "price_max": 0.0,
+                "bin_size": 0.0,
+                "profile": [],
+                "poc": {"price": 0.0, "volume": 0.0},
+                "value_area": {"vah": 0.0, "val": 0.0, "volume_pct": 0.0},
+                "hvn_levels": [],
+                "lvn_levels": [],
+                "vwap": 0.0,
+            }
+
+        df = pd.DataFrame(klines_list)
+        result = DataProcessor.compute_volume_profile(df, bins=bins)
+        result["success"] = True
+        result["symbol"] = symbol
+        result["period"] = kline_result["period"]
+
+        # GMM fit on Volume Profile distribution
+        result["fit_result"] = DataProcessor.fit_gaussian_mixture(result["profile"])
+        return result
+
+    def get_stock_info(self, symbol: str) -> Dict[str, Any]:
+        """获取个股基本信息 + 腾讯行情。"""
+        stock_info = eastmoney_stock_info(symbol)
+        tencent_data = tencent_quote([symbol])
+        quote = tencent_data.get(symbol, {}) if tencent_data else {}
+        return {
+            "success": True,
+            "symbol": symbol,
+            "stock_info": stock_info if stock_info else None,
+            "tencent_quote": quote if quote else None,
+        }
+
+    def get_depth_data(
+        self,
+        symbol: str,
+        period: str = "5",
+        start_date: str = "",
+        end_date: str = "",
+        adjust: str = "qfq",
+    ) -> Dict[str, Any]:
+        """获取深度数据综合响应 — 一次返回所有所需数据。"""
+        kline_result = self.get_kline_data(
+            symbol=symbol,
+            period=period,
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
+        )
+
+        klines_list = kline_result.get("klines", [])
+
+        if klines_list:
+            df = pd.DataFrame(klines_list)
+            vol_profile = DataProcessor.compute_volume_profile(df)
+            vol_profile["symbol"] = symbol
+            vol_profile["period"] = kline_result["period"]
+            vol_profile["success"] = True
+            vol_profile["fit_result"] = DataProcessor.fit_gaussian_mixture(
+                vol_profile["profile"]
+            )
+        else:
+            vol_profile = {
+                "success": True,
+                "symbol": symbol,
+                "period": kline_result["period"],
+                "total_volume": 0.0,
+                "price_min": 0.0,
+                "price_max": 0.0,
+                "bin_size": 0.0,
+                "profile": [],
+                "poc": {"price": 0.0, "volume": 0.0},
+                "value_area": {"vah": 0.0, "val": 0.0, "volume_pct": 0.0},
+                "hvn_levels": [],
+                "lvn_levels": [],
+                "vwap": 0.0,
+                "fit_result": None,
+            }
+
+        cyq_info = None
+        try:
+            cyq_result = self.get_cyq_data(symbol=symbol, adjust=adjust)
+            cyq_info = cyq_result.get("cyq_info")
+        except Exception:
+            logger.warning(f"获取 {symbol} 筹码分布失败，继续返回其他数据")
+
+        stock_info = None
+        tencent_data = None
+        try:
+            info_result = self.get_stock_info(symbol)
+            stock_info = info_result.get("stock_info")
+            tencent_data = info_result.get("tencent_quote")
+        except Exception:
+            logger.warning(f"获取 {symbol} 个股信息失败，继续返回其他数据")
+
+        return {
+            "success": True,
+            "symbol": symbol,
+            "period": kline_result["period"],
+            "adjust": adjust,
+            "start_date": start_date,
+            "end_date": end_date,
+            "klines": klines_list,
+            "volume_profile": vol_profile,
+            "cyq_info": cyq_info,
+            "stock_info": stock_info,
+            "tencent_quote": tencent_data,
+        }
+
+    # ------------------------------------------------------------------
+    # Stock data (modified to support multi-period)
+    # ------------------------------------------------------------------
+
+    def get_stock_data(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        period: str = "1",
+    ) -> Dict[str, Any]:
+        """获取股票数据并进行GMM拟合。
+
+        Args:
+            symbol: 股票代码
+            start_date: 开始日期
+            end_date: 结束日期
+            period: K线周期 "1"(1分钟), "5", "15", "30", "60", "101"(日线)
+        """
+        period_label = self._PERIOD_LABEL_MAP.get(period, f"{period}min")
+
+        try:
+            datetime.strptime(start_date, "%Y-%m-%d")
+            datetime.strptime(end_date, "%Y-%m-%d")
+        except ValueError as e:
+            raise ValueError(f"日期格式错误: {str(e)}")
+
+        try:
+            if period == "1":
+                # Use existing minute data path (DB + API)
+                df, actual_start, actual_end = self.get_minute_data(
+                    symbol, start_date, end_date
+                )
+            else:
+                # Use general K-line path for other periods
+                kline_result = self.get_kline_data(
+                    symbol=symbol,
+                    period=period,
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust="qfq",
+                )
+                klines = kline_result.get("klines", [])
+                if klines:
+                    df = pd.DataFrame(klines)
+                    actual_start = kline_result["actual_start_date"]
+                    actual_end = kline_result["actual_end_date"]
+                else:
+                    df = pd.DataFrame(
+                        columns=["datetime", "open", "high", "low", "close", "volume"]
+                    )
+                    actual_start = start_date
+                    actual_end = end_date
+
+            if not df.empty:
+                df["datetime"] = df["datetime"].astype(str)
+
+            chart_data = DataProcessor.to_chart_data(df)
+            fit_result = DataProcessor.fit_gaussian_mixture(chart_data)
+
+            return {
+                "success": True,
+                "symbol": symbol,
+                "start_date": start_date,
+                "end_date": end_date,
+                "actual_start_date": str(actual_start),
+                "actual_end_date": str(actual_end),
+                "period": period_label,
+                "chart_data": chart_data,
+                "count": len(chart_data),
+                "fit_result": fit_result,
+            }
+        except ValueError:
+            raise
+        except Exception as e:
+            raise Exception(f"获取股票数据失败: {str(e)}")
 
 
 # 创建全局服务实例

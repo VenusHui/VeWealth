@@ -28,6 +28,7 @@ export default function Navbar() {
     () => [
       { href: '/', label: '首页' },
       { href: '/analysis', label: '分析台' },
+      { href: '/depth', label: '深度数据' },
       { href: '/watchlist', label: '监控台', requireAuth: true },
       { href: '/backtest', label: '回测中心', requireAuth: true },
     ],
