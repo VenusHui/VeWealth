@@ -59,19 +59,17 @@ class AStockDataProvider(MarketDataProvider):
                 )
                 if df is not None and not df.empty:
                     return df
-                logger.warning(
-                    f"股票 {stock_code} 在 {start_date} 到 {end_date} 期间无日线数据"
-                )
-                return None
             except Exception as e:
-                if attempt <= max_retries:
-                    logger.warning(
-                        f"获取股票 {stock_code} 日线数据失败(第{attempt}次重试): {e}"
-                    )
-                    time.sleep(_RETRY_SLEEP * attempt)
-                    continue
-                logger.error(f"获取股票 {stock_code} 日线数据失败: {e}")
-                break
+                logger.warning(
+                    f"获取股票 {stock_code} 日线数据失败(第{attempt}次): {e}"
+                )
+            if attempt <= max_retries:
+                time.sleep(_RETRY_SLEEP * attempt)
+                continue
+            logger.warning(
+                f"股票 {stock_code} Eastmoney 日线重试耗尽，回退 Tushare"
+            )
+            break
 
         return self._fetch_daily_tushare(
             stock_code=stock_code,
@@ -189,36 +187,33 @@ class AStockDataProvider(MarketDataProvider):
                         fqt=fqt,
                     )
 
-                if df is None or df.empty:
-                    logger.warning(
-                        f"股票 {stock_code} 在 {start_datetime}-{end_datetime} 期间无分钟数据"
-                    )
-                    return None
+                if df is not None and not df.empty:
+                    # Filter to requested datetime range
+                    if "datetime" in df.columns:
+                        df["datetime"] = pd.to_datetime(df["datetime"])
+                        mask = (df["datetime"] >= pd.Timestamp(start_datetime)) & (
+                            df["datetime"] <= pd.Timestamp(end_datetime)
+                        )
+                        df = df[mask]
+                        df["datetime"] = df["datetime"].dt.strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        )
 
-                # Filter to requested datetime range
-                if "datetime" in df.columns:
-                    df["datetime"] = pd.to_datetime(df["datetime"])
-                    mask = (df["datetime"] >= pd.Timestamp(start_datetime)) & (
-                        df["datetime"] <= pd.Timestamp(end_datetime)
-                    )
-                    df = df[mask]
-                    df["datetime"] = df["datetime"].dt.strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    )
-
-                if df.empty:
-                    return None
-                return df
+                    if not df.empty:
+                        return df
 
             except Exception as e:
-                if attempt <= max_retries:
-                    logger.warning(
-                        f"获取股票 {stock_code} 分钟数据失败(第{attempt}次重试): {e}"
-                    )
-                    time.sleep(_RETRY_SLEEP * attempt)
-                    continue
-                logger.error(f"获取股票 {stock_code} 分钟数据失败: {e}")
-                return None
+                logger.warning(
+                    f"获取股票 {stock_code} 分钟数据失败(第{attempt}次): {e}"
+                )
+
+            if attempt <= max_retries:
+                time.sleep(_RETRY_SLEEP * attempt)
+                continue
+            logger.warning(
+                f"股票 {stock_code} 在 {start_datetime}-{end_datetime} 期间无分钟数据"
+            )
+            return None
 
     # ------------------------------------------------------------------
     # Real-time data

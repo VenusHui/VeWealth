@@ -92,7 +92,7 @@ export default function DepthPage() {
   const [error, setError] = useState('')
 
   // Toolbar state
-  const [period, setPeriod] = useState('5min')
+  const [period, setPeriod] = useState('daily')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [adjust, setAdjust] = useState('qfq')
@@ -105,7 +105,7 @@ export default function DepthPage() {
   useEffect(() => {
     const end = new Date()
     const start = new Date()
-    start.setDate(start.getDate() - 5)
+    start.setDate(start.getDate() - 30)
     setEndDate(format(end, 'yyyy-MM-dd'))
     setStartDate(format(start, 'yyyy-MM-dd'))
   }, [])
