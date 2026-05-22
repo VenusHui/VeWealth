@@ -24,3 +24,4 @@ pyjwt==2.8.0
 passlib==1.7.4
 python-multipart==0.0.6
 bcrypt==3.2.2
+mootdx==0.11.7

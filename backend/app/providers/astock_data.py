@@ -17,9 +17,32 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-import requests
 
 logger = logging.getLogger(__name__)
+
+
+def _http_get_json(url: str, timeout: int = 15) -> Any:
+    """Fetch JSON from an HTTP endpoint using urllib (a-stock-data pattern).
+
+    Uses urllib instead of the requests library to avoid proxy interference
+    and TLS fingerprint mismatches that cause IP blocking on some servers.
+    """
+    req = urllib.request.Request(url)
+    req.add_header("User-Agent", UA)
+    req.add_header("Referer", "https://quote.eastmoney.com/")
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        return json.loads(resp.read().decode())
+    except Exception as e:
+        logger.error(f"HTTP请求失败 {url[:80]}: {e}")
+        raise
+
+
+def _build_url(base: str, params: dict[str, str]) -> str:
+    """Build a URL with query parameters."""
+    from urllib.parse import urlencode
+    return f"{base}?{urlencode(params)}"
+
 
 # ---------------------------------------------------------------------------
 # Constants (from a-stock-data)
@@ -30,12 +53,6 @@ UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/120.0.0.0 Safari/537.36"
 )
-
-EASTMONEY_HEADERS = {
-    "User-Agent": UA,
-    "Referer": "https://quote.eastmoney.com/",
-    "Origin": "https://quote.eastmoney.com",
-}
 
 KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 TRENDS2_URL = "https://push2his.eastmoney.com/api/qt/stock/trends2/get"
@@ -182,7 +199,6 @@ def tencent_quote(codes: list[str]) -> dict[str, dict]:
 
 def eastmoney_stock_info(code: str) -> dict[str, Any]:
     """Single-stock fundamentals from Eastmoney push2."""
-    url = STOCK_GET_URL
     params = {
         "fltt": "2",
         "invt": "2",
@@ -190,8 +206,8 @@ def eastmoney_stock_info(code: str) -> dict[str, Any]:
         "secid": _to_secid(code),
     }
     try:
-        r = requests.get(url, params=params, headers=EASTMONEY_HEADERS, timeout=10)
-        d = r.json().get("data", {})
+        url = _build_url(STOCK_GET_URL, params)
+        d = _http_get_json(url, timeout=10).get("data", {})
         return {
             "code": d.get("f57", ""),
             "name": d.get("f58", ""),
@@ -263,10 +279,8 @@ def eastmoney_kline(
         "end": end,
     }
     try:
-        r = requests.get(
-            KLINE_URL, params=params, headers=EASTMONEY_HEADERS, timeout=15
-        )
-        d = r.json()
+        url = _build_url(KLINE_URL, params)
+        d = _http_get_json(url, timeout=15)
         klines = (d.get("data") or {}).get("klines") or []
         if not klines:
             logger.warning(f"股票 {code} K线数据为空 (klt={klt})")
@@ -326,10 +340,8 @@ def eastmoney_trends2(code: str, ndays: int = 5) -> Optional[pd.DataFrame]:
         "iscr": "0",
     }
     try:
-        r = requests.get(
-            TRENDS2_URL, params=params, headers=EASTMONEY_HEADERS, timeout=15
-        )
-        d = r.json()
+        url = _build_url(TRENDS2_URL, params)
+        d = _http_get_json(url, timeout=15)
         trends = (d.get("data") or {}).get("trends") or []
         if not trends:
             logger.warning(f"股票 {code} 分时数据为空")
@@ -391,10 +403,8 @@ def _fetch_clist_page(
         "fields": fields,
     }
     try:
-        r = requests.get(
-            CLIST_URL, params=params, headers=EASTMONEY_HEADERS, timeout=30
-        )
-        d = r.json()
+        url = _build_url(CLIST_URL, params)
+        d = _http_get_json(url, timeout=30)
         data = d.get("data") or {}
         return data.get("diff") or [], data.get("total", 0)
     except Exception as e:
@@ -504,10 +514,8 @@ def _cyq_from_kline(code: str, fqt: str) -> Optional[pd.DataFrame]:
         "lmt": "210",
     }
     try:
-        r = requests.get(
-            KLINE_URL, params=params, headers=EASTMONEY_HEADERS, timeout=15
-        )
-        d = r.json()
+        url = _build_url(KLINE_URL, params)
+        d = _http_get_json(url, timeout=15)
         klines = (d.get("data") or {}).get("klines") or []
     except Exception as e:
         logger.error(f"CYQ K线数据请求失败 {code}: {e}")
@@ -648,14 +656,14 @@ def eastmoney_cyq(code: str, fqt: str = "0") -> Optional[pd.DataFrame]:
         DataFrame with CYQ columns or None on failure.
     """
     try:
-        url = "https://push2.eastmoney.com/api/qt/stock/cyq/get"
+        cyq_api = "https://push2.eastmoney.com/api/qt/stock/cyq/get"
         params = {
             "secid": _to_secid(code),
             "ut": UT_KLINE,
             "fqt": fqt,
         }
-        r = requests.get(url, params=params, headers=EASTMONEY_HEADERS, timeout=10)
-        d = r.json()
+        url = _build_url(cyq_api, params)
+        d = _http_get_json(url, timeout=10)
         data = d.get("data")
         if data:
             # Response format may vary; try common patterns

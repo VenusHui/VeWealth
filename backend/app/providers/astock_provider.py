@@ -1,4 +1,8 @@
-"""AStockDataProvider — implements MarketDataProvider via a-stock-data functions."""
+"""AStockDataProvider — implements MarketDataProvider via a-stock-data patterns.
+
+Primary K-line source: mootdx (TCP, no IP block).
+Fallback chain: Eastmoney HTTP → Tushare (daily only).
+"""
 
 from __future__ import annotations
 
@@ -23,17 +27,98 @@ try:
 except Exception:
     ts = None
 
+try:
+    from mootdx.quotes import Quotes
+
+    _mootdx_client = Quotes.factory(market="std")
+except Exception:
+    _mootdx_client = None
+
 logger = logging.getLogger(__name__)
 
 # Per-attempt sleep multiplier
 _RETRY_SLEEP = 0.6
 
+# mootdx frequency mapping: period str → mootdx frequency int
+_FREQ_MAP = {
+    "1": 0,   # 1min
+    "5": 1,   # 5min
+    "15": 2,  # 15min
+    "30": 3,  # 30min
+    "60": 4,  # 60min
+    "101": 9, # daily
+}
+
 
 class AStockDataProvider(MarketDataProvider):
-    """Data provider using direct HTTP APIs (a-stock-data patterns).
+    """Data provider using mootdx TCP (primary) with Eastmoney/Tushare fallbacks.
 
-    Daily K-line has a Tushare fallback when Eastmoney fails.
+    K-line data comes from mootdx → 通达信 servers via TCP, avoiding
+    IP-level blocks that affect Eastmoney HTTP endpoints.
     """
+
+    # ------------------------------------------------------------------
+    # mootdx K-line (primary source)
+    # ------------------------------------------------------------------
+
+    def _fetch_kline_mootdx(
+        self,
+        stock_code: str,
+        period: str,
+        start_date: str,
+        end_date: str,
+        count: int = 500,
+    ) -> Optional[pd.DataFrame]:
+        """Fetch K-line data via mootdx TCP (通达信).
+
+        Returns DataFrame with standardized columns or None.
+        """
+        if _mootdx_client is None:
+            return None
+
+        freq = _FREQ_MAP.get(period)
+        if freq is None:
+            return None
+
+        try:
+            market = 1 if stock_code.startswith(("6", "5", "9")) else 0
+            klines = _mootdx_client.bars(
+                symbol=stock_code, frequency=freq, market=market,
+                start=0, offset=count,
+            )
+            if klines is None or klines.empty:
+                return None
+
+            df = klines.rename(
+                columns={
+                    "open": "open",
+                    "close": "close",
+                    "high": "high",
+                    "low": "low",
+                    "volume": "volume",
+                    "amount": "amount",
+                }
+            )
+            # Keep only standard columns
+            cols = ["open", "close", "high", "low", "volume", "amount"]
+            available = [c for c in cols if c in df.columns]
+            if "datetime" not in df.columns and df.index.name == "datetime":
+                df = df.reset_index()
+            if "datetime" in df.columns:
+                available.insert(0, "datetime")
+                df["datetime"] = pd.to_datetime(df["datetime"])
+                # Filter by date range
+                if start_date:
+                    df = df[df["datetime"] >= pd.Timestamp(start_date)]
+                if end_date:
+                    df = df[df["datetime"] <= pd.Timestamp(end_date)]
+                df["datetime"] = df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
+            if df.empty:
+                return None
+            return df[available]
+        except Exception as e:
+            logger.warning(f"mootdx K线请求失败 {stock_code}: {e}")
+            return None
 
     # ------------------------------------------------------------------
     # Daily data
@@ -47,6 +132,15 @@ class AStockDataProvider(MarketDataProvider):
         adjust: str = "qfq",
         max_retries: int = 2,
     ) -> Optional[pd.DataFrame]:
+        # 1. Try mootdx first (TCP, no IP block)
+        df = self._fetch_kline_mootdx(
+            stock_code, period="101", start_date=start_date, end_date=end_date
+        )
+        if df is not None and not df.empty:
+            logger.info(f"股票 {stock_code} 日线由 mootdx 返回")
+            return df
+
+        # 2. Fallback: Eastmoney → Tushare
         fqt = fqt_code(adjust)
         for attempt in range(1, max_retries + 2):
             try:
@@ -173,6 +267,16 @@ class AStockDataProvider(MarketDataProvider):
         adjust: str = "",
         max_retries: int = 2,
     ) -> Optional[pd.DataFrame]:
+        # 1. Try mootdx first (TCP, supports all periods including 1min)
+        df = self._fetch_kline_mootdx(
+            stock_code, period=period,
+            start_date=start_datetime, end_date=end_datetime,
+        )
+        if df is not None and not df.empty:
+            logger.info(f"股票 {stock_code} period={period} 由 mootdx 返回 (共{len(df)}行)")
+            return df
+
+        # 2. Fallback: Eastmoney HTTP
         for attempt in range(1, max_retries + 2):
             try:
                 if period == "1":
