@@ -71,7 +71,12 @@ class AStockDataProvider(MarketDataProvider):
     ) -> Optional[pd.DataFrame]:
         """Fetch K-line data via mootdx TCP (通达信).
 
-        Returns DataFrame with standardized columns or None.
+        Returns DataFrame with standardized columns [datetime, open, close,
+        high, low, volume, amount] or None on failure.
+
+        Note: mootdx returns unadjusted (不复权) data.  Callers that require
+        qfq/hfq adjusted data should rely on the Eastmoney fallback chain
+        in fetch_daily_data / fetch_minute_data.
         """
         if _mootdx_client is None:
             return None
@@ -81,25 +86,15 @@ class AStockDataProvider(MarketDataProvider):
             return None
 
         try:
-            market = 1 if stock_code.startswith(("6", "5", "9")) else 0
             klines = _mootdx_client.bars(
-                symbol=stock_code, frequency=freq, market=market,
-                start=0, offset=count,
+                symbol=stock_code, frequency=freq, start=0, offset=count,
             )
             if klines is None or klines.empty:
                 return None
 
-            df = klines.rename(
-                columns={
-                    "open": "open",
-                    "close": "close",
-                    "high": "high",
-                    "low": "low",
-                    "volume": "volume",
-                    "amount": "amount",
-                }
-            )
-            # Keep only standard columns
+            df = klines
+            # Keep only standard columns; mootdx returns English names
+            # (open, close, high, low, volume, amount) with datetime index.
             cols = ["open", "close", "high", "low", "volume", "amount"]
             available = [c for c in cols if c in df.columns]
             if "datetime" not in df.columns and df.index.name == "datetime":
@@ -113,6 +108,12 @@ class AStockDataProvider(MarketDataProvider):
                 if end_date:
                     df = df[df["datetime"] <= pd.Timestamp(end_date)]
                 df["datetime"] = df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                # Guard: mootdx should always return datetime as the index,
+                # but if it doesn't, bail out instead of returning a
+                # DataFrame with no time column.
+                logger.warning(f"mootdx 缺少datetime列 {stock_code}")
+                return None
             if df.empty:
                 return None
             return df[available]

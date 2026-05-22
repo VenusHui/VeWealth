@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import time
 import urllib.request
 from typing import Any, Optional
