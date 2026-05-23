@@ -56,12 +56,19 @@ export default function DepthChart({
 
   const candlestickData = useMemo(() => ohlcvToCandlestickData(klines), [klines])
 
-  // Create chart ONCE on mount — never recreate on data change.
-  // Data updates are handled by setData effects below.
-  const initChart = useCallback(() => {
-    if (!chartContainerRef.current) return
-
+  // Create chart, destroying any previous instance.
+  // Recreated whenever candlestickData changes so the chart always
+  // shows the current data without relying on setData().
+  useEffect(() => {
     const container = chartContainerRef.current
+    if (!container) return
+
+    // Destroy previous chart
+    if (chartRef.current) {
+      chartRef.current.remove()
+      chartRef.current = null
+    }
+
     container.innerHTML = ''
 
     const chart = createChart(container, {
@@ -92,7 +99,7 @@ export default function DepthChart({
       },
     })
 
-    // Single pane: Candlestick only (no volume histogram pane)
+    // Candlestick series — set data directly on creation
     const cds = chart.addSeries(CandlestickSeries, {
       upColor: UP_COLOR,
       downColor: DOWN_COLOR,
@@ -101,31 +108,22 @@ export default function DepthChart({
       wickUpColor: UP_COLOR,
       wickDownColor: DOWN_COLOR,
     })
-    cds.setData([])
+    if (candlestickData.length > 0) {
+      cds.setData(candlestickData as CandlestickData<Time>[])
+      chart.timeScale().fitContent()
+    }
 
     chartRef.current = chart
     candlestickSeriesRef.current = cds
-  }, [])
+    maSeriesRefs.current = []
+    vwapSeriesRef.current = null
 
-  // Mount/unmount
-  useEffect(() => {
-    initChart()
     return () => {
       if (chartRef.current) {
         chartRef.current.remove()
         chartRef.current = null
         candlestickSeriesRef.current = null
       }
-    }
-  }, [initChart])
-
-  // Update candlestick data when klines change
-  useEffect(() => {
-    const cds = candlestickSeriesRef.current
-    const chart = chartRef.current
-    if (cds && chart) {
-      cds.setData(candlestickData as CandlestickData<Time>[])
-      chart.timeScale().fitContent()
     }
   }, [candlestickData])
 
