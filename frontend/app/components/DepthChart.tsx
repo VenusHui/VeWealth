@@ -121,23 +121,27 @@ export default function DepthChart({
 
   // Update candlestick data when klines change
   useEffect(() => {
-    if (candlestickSeriesRef.current) {
+    if (candlestickSeriesRef.current && chartRef.current) {
       candlestickSeriesRef.current.setData(candlestickData as CandlestickData<Time>[])
+      chartRef.current.timeScale().fitContent()
     }
   }, [candlestickData])
 
-  // Resize handler
+  // Resize handler using ResizeObserver for reliable layout tracking
   useEffect(() => {
-    const handleResize = () => {
-      if (chartRef.current && chartContainerRef.current) {
-        chartRef.current.applyOptions({
-          width: chartContainerRef.current.clientWidth,
-          height: chartContainerRef.current.clientHeight,
-        })
+    const container = chartContainerRef.current
+    if (!container) return
+
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect
+        if (chartRef.current && width > 0 && height > 0) {
+          chartRef.current.applyOptions({ width, height })
+        }
       }
-    }
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
+    })
+    ro.observe(container)
+    return () => ro.disconnect()
   }, [])
 
   // MA lines
@@ -329,9 +333,9 @@ export default function DepthChart({
   const showVPOverlay = volumeProfile && volumeProfile.profile.length > 0
 
   return (
-    <div className="relative flex gap-0 rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.78)] overflow-hidden" style={{ minHeight: 480 }}>
+    <div className="flex gap-0 rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.78)] overflow-hidden" style={{ height: 520 }}>
       {/* Candlestick chart + Volume Profile overlay */}
-      <div className="relative flex-1 min-w-0">
+      <div className="relative flex-1 min-w-0" style={{ height: 520 }}>
         <div ref={chartContainerRef} className="absolute inset-0" />
 
         {/* Volume Profile overlay — semi-transparent bars extending from right price axis */}
@@ -362,7 +366,7 @@ export default function DepthChart({
 
       {/* Volume Profile panel (right side) */}
       {showVPOverlay && (
-        <div className="relative flex w-32 flex-col border-l border-[var(--border-subtle)] bg-[rgba(248,250,252,0.7)] shrink-0">
+        <div className="relative flex w-32 flex-col border-l border-[var(--border-subtle)] bg-[rgba(248,250,252,0.7)] shrink-0" style={{ height: 520 }}>
           <div className="flex-none border-b border-[var(--border-subtle)] px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">
             筹码峰
           </div>
