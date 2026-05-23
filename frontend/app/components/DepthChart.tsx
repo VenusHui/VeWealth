@@ -117,6 +117,7 @@ export default function DepthChart({
     candlestickSeriesRef.current = cds
     maSeriesRefs.current = []
     vwapSeriesRef.current = null
+    cyqPriceLinesRef.current = []
 
     return () => {
       if (chartRef.current) {
