@@ -121,9 +121,11 @@ export default function DepthChart({
 
   // Update candlestick data when klines change
   useEffect(() => {
-    if (candlestickSeriesRef.current && chartRef.current) {
-      candlestickSeriesRef.current.setData(candlestickData as CandlestickData<Time>[])
-      chartRef.current.timeScale().fitContent()
+    const cds = candlestickSeriesRef.current
+    const chart = chartRef.current
+    if (cds && chart) {
+      cds.setData(candlestickData as CandlestickData<Time>[])
+      chart.timeScale().fitContent()
     }
   }, [candlestickData])
 

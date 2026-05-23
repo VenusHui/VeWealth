@@ -76,7 +76,7 @@ interface CandlestickData {
 
 export function ohlcvToCandlestickData(klines: KlineDataPoint[]): CandlestickData[] {
   return klines.map((k) => ({
-    time: k.datetime,
+    time: k.datetime.replace(' ', 'T'),
     open: k.open,
     high: k.high,
     low: k.low,
@@ -93,7 +93,7 @@ export function computeMALine(klines: KlineDataPoint[], period: number): { time:
   }
   for (let i = period - 1; i < klines.length; i++) {
     sum += klines[i].close
-    result.push({ time: klines[i].datetime, value: sum / period })
+    result.push({ time: klines[i].datetime.replace(' ', 'T'), value: sum / period })
     sum -= klines[i - period + 1].close
   }
   return result
@@ -107,7 +107,7 @@ export function computeVWAPLine(klines: KlineDataPoint[]): { time: string; value
     const typical = (k.high + k.low + k.close) / 3
     cumVol += k.volume
     cumVP += typical * k.volume
-    result.push({ time: k.datetime, value: cumVol > 0 ? cumVP / cumVol : k.close })
+    result.push({ time: k.datetime.replace(' ', 'T'), value: cumVol > 0 ? cumVP / cumVol : k.close })
   }
   return result
 }
