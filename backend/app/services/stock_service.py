@@ -157,46 +157,66 @@ class StockService:
             return []
 
     def search_stocks(self, keyword: str) -> List[StockSearchResult]:
-        """
-        搜索股票
-
-        Args:
-            keyword: 股票代码或名称关键词
-
-        Returns:
-            股票搜索结果列表
-
-        Raises:
-            Exception: 搜索失败时抛出异常
-        """
+        """搜索股票（Eastmoney 主源，security_universe + Tencent 备源）。"""
         try:
-            # 使用统一的数据源接口获取实时行情
             df = self.provider.fetch_realtime_data()
-
-            if df is None or df.empty:
-                return []
-
-            # 筛选包含关键词的股票
-            mask = df["code"].str.contains(keyword, case=False, na=False) | df[
-                "name"
-            ].str.contains(keyword, case=False, na=False)
-
-            filtered_df = df[mask].head(settings.MAX_SEARCH_RESULTS)
-
-            results = []
-            for _, row in filtered_df.iterrows():
-                results.append(
-                    StockSearchResult(
-                        code=str(row["code"]),
-                        name=str(row["name"]),
-                        current_price=(
-                            float(row["price"]) if pd.notna(row["price"]) else 0.0
-                        ),
+            if df is not None and not df.empty:
+                mask = df["code"].str.contains(keyword, case=False, na=False) | df[
+                    "name"
+                ].str.contains(keyword, case=False, na=False)
+                filtered_df = df[mask].head(settings.MAX_SEARCH_RESULTS)
+                results = []
+                for _, row in filtered_df.iterrows():
+                    results.append(
+                        StockSearchResult(
+                            code=str(row["code"]),
+                            name=str(row["name"]),
+                            current_price=(
+                                float(row["price"]) if pd.notna(row["price"]) else 0.0
+                            ),
+                        )
                     )
+                if results:
+                    return results
+        except Exception:
+            pass  # Fall through to DB fallback
+
+        # Fallback: search security_universe table + get prices from Tencent
+        try:
+            db: Session = SessionLocal()
+            try:
+                query = db.query(
+                    SecurityUniverse.stock_code, SecurityUniverse.stock_name
+                ).filter(
+                    SecurityUniverse.is_active.is_(True),
+                    (
+                        SecurityUniverse.stock_code.contains(keyword)
+                        | SecurityUniverse.stock_name.contains(keyword)
+                    ),
                 )
+                rows = query.limit(settings.MAX_SEARCH_RESULTS).all()
+                if not rows:
+                    return []
 
-            return results
+                codes = [str(r[0]).zfill(6) for r in rows]
+                names = {str(r[0]).zfill(6): str(r[1]) for r in rows}
 
+                # Batch query Tencent for real-time prices
+                quotes = tencent_quote(codes)
+
+                results = []
+                for code in codes:
+                    q = quotes.get(code, {})
+                    results.append(
+                        StockSearchResult(
+                            code=code,
+                            name=names.get(code, code),
+                            current_price=q.get("price", 0.0),
+                        )
+                    )
+                return results
+            finally:
+                db.close()
         except Exception as e:
             raise Exception(f"搜索股票失败: {str(e)}")
 

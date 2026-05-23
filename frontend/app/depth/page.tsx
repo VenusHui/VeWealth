@@ -93,6 +93,8 @@ export default function DepthPage() {
 
   // Toolbar state
   const [period, setPeriod] = useState('daily')
+  const periodRef = useRef(period)
+  periodRef.current = period
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [adjust, setAdjust] = useState('qfq')
@@ -160,7 +162,7 @@ export default function DepthPage() {
       setLoading(true)
       setError('')
 
-      const apiPeriod = PERIOD_API_MAP[period] || '5'
+      const apiPeriod = PERIOD_API_MAP[periodRef.current] || '5'
 
       const response = await axios.get(`${API_BASE_URL}/api/stock/depth`, {
         params: {
@@ -179,8 +181,8 @@ export default function DepthPage() {
         setStockInfo(response.data.stock_info || null)
         setTencentQuote(response.data.tencent_quote || null)
 
-        if (!stockName) {
-          const name = response.data.stock_info?.name || response.data.tencent_quote?.name || stockCode
+        const name = response.data.tencent_quote?.name || response.data.stock_info?.name || ''
+        if (name) {
           setStockName(name)
         }
       } else {
@@ -198,7 +200,7 @@ export default function DepthPage() {
     } finally {
       setLoading(false)
     }
-  }, [stockCode, period, startDate, endDate, adjust, stockName])
+  }, [stockCode, startDate, endDate, adjust])
 
   // Stable ref to handleFetchData so auto-fetch effect never uses stale closure
   const handleFetchDataRef = useRef(handleFetchData)
