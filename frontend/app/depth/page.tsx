@@ -399,6 +399,7 @@ export default function DepthPage() {
         >
           <Spin spinning={loading}>
             <DepthChart
+              key={`${stockCode}-${klines.length}-${klines[0]?.datetime || ''}`}
               klines={klines}
               volumeProfile={volumeProfile}
               cyqInfo={cyqInfo}
