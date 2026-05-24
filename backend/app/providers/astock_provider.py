@@ -39,14 +39,16 @@ logger = logging.getLogger(__name__)
 # Per-attempt sleep multiplier
 _RETRY_SLEEP = 0.6
 
-# mootdx frequency mapping: period str → mootdx frequency int
+# mootdx frequency mapping: API period str → mootdx frequency int
+# From mootdx.consts: KLINE_1MIN=8, KLINE_5MIN=0, KLINE_15MIN=1,
+# KLINE_30MIN=2, KLINE_1HOUR=3, KLINE_DAILY=4
 _FREQ_MAP = {
-    "1": 0,   # 1min
-    "5": 1,   # 5min
-    "15": 2,  # 15min
-    "30": 3,  # 30min
-    "60": 4,  # 60min
-    "101": 9, # daily
+    "1": 8,   # KLINE_1MIN
+    "5": 0,   # KLINE_5MIN
+    "15": 1,  # KLINE_15MIN
+    "30": 2,  # KLINE_30MIN
+    "60": 3,  # KLINE_1HOUR
+    "101": 4, # KLINE_DAILY
 }
 
 
