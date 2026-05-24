@@ -192,6 +192,21 @@ export function computeVolumeProfileFromKlines(
   }
 
   // Value Area
+  if (totalVolume <= 0) {
+    return {
+      total_volume: 0,
+      price_min: Math.round(priceMin * 1000) / 1000,
+      price_max: Math.round(priceMax * 1000) / 1000,
+      bin_size: Math.round(binSize * 10000) / 10000,
+      profile: profileList,
+      poc: { price: 0, volume: 0 },
+      value_area: { vah: 0, val: 0, volume_pct: 0 },
+      hvn_levels: [],
+      lvn_levels: [],
+      vwap: 0,
+    }
+  }
+
   const targetVol = totalVolume * 0.7
   let accVol = profile[pocIdx]
   let lowIdx = pocIdx
