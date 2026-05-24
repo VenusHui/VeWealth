@@ -225,6 +225,8 @@ class StockService:
         symbol: str,
         start_date: str,
         end_date: str,
+        count: int = 500,
+        start_offset: int = 0,
     ) -> Tuple[pd.DataFrame, str, str]:
         """
         获取日线数据（用于回测）
@@ -233,6 +235,8 @@ class StockService:
             symbol: 股票代码
             start_date: 开始日期 YYYY-MM-DD
             end_date: 结束日期 YYYY-MM-DD
+            count: 返回的最大K线数量（分页用）
+            start_offset: 跳过前N根K线（分页用）
 
         Returns:
             (日线数据DataFrame, 实际开始日期, 实际结束日期)
@@ -246,6 +250,8 @@ class StockService:
                 start_date=start_dt.strftime("%Y%m%d"),
                 end_date=end_dt.strftime("%Y%m%d"),
                 adjust="qfq",
+                count=count,
+                start_offset=start_offset,
             )
 
             if api_df is None or api_df.empty:
@@ -499,6 +505,8 @@ class StockService:
                     symbol=symbol,
                     start_date=start_date or "2000-01-01",
                     end_date=end_date or "2099-12-31",
+                    count=count,
+                    start_offset=offset,
                 )
             else:
                 start_dt = start_date or "2000-01-01"

@@ -143,15 +143,24 @@ export default function DepthChart({
     ch.timeScale().fitContent()
   }, [candlestickData])
 
-  // Track visible range and compute Volume Profile from visible candles only
+  // Track visible range and compute Volume Profile from visible candles only.
+  // We use refs for hasMore/loadingMore/onLoadMore so the subscription handler
+  // always reads the latest values without re-subscribing on every state change.
+  const hasMoreRef = useRef(hasMore)
+  hasMoreRef.current = hasMore
+  const loadingMoreRef = useRef(loadingMore)
+  loadingMoreRef.current = loadingMore
+  const onLoadMoreRef = useRef(onLoadMore)
+  onLoadMoreRef.current = onLoadMore
+
   const [visibleVP, setVisibleVP] = useState<VolumeProfileData | null>(null)
 
   useEffect(() => {
     const ch = chartRef.current
     if (!ch) return
 
-    const handler = () => {
-      const range = ch.timeScale().getVisibleLogicalRange()
+    function handleRangeChange(isInitial = false) {
+      const range = ch!.timeScale().getVisibleLogicalRange()
       if (!range || klines.length === 0) {
         setVisibleVP(null)
         return
@@ -166,18 +175,19 @@ export default function DepthChart({
       const vp = computeVolumeProfileFromKlines(visibleKlines, 80)
       setVisibleVP(vp)
 
-      // Trigger loadMore when scrolled near the left edge
-      if (from <= 5 && hasMore && onLoadMore && !loadingMore) {
-        onLoadMore()
+      // Only trigger loadMore from user-initiated scroll/zoom events,
+      // not from programmatic fitContent (initial call after data load).
+      if (!isInitial && from <= 5 && hasMoreRef.current && onLoadMoreRef.current && !loadingMoreRef.current) {
+        onLoadMoreRef.current()
       }
     }
 
-    // Compute initial
-    handler()
+    // Compute initial VP without triggering loadMore
+    handleRangeChange(true)
 
-    ch.timeScale().subscribeVisibleLogicalRangeChange(handler)
-    return () => ch.timeScale().unsubscribeVisibleLogicalRangeChange(handler)
-  }, [klines, hasMore, loadingMore, onLoadMore])
+    ch.timeScale().subscribeVisibleLogicalRangeChange(() => handleRangeChange(false))
+    return () => ch.timeScale().unsubscribeVisibleLogicalRangeChange(() => handleRangeChange(false))
+  }, [klines])
 
   // Use visible-range VP if available, otherwise fall back to backend VP
   const activeVP = visibleVP || volumeProfile

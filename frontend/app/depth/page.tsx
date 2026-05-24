@@ -92,6 +92,7 @@ export default function DepthPage() {
   const [totalOffset, setTotalOffset] = useState(0)
   const [hasMore, setHasMore] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
+  const loadingMoreRef = useRef(false)
 
   // Toolbar state
   const [period, setPeriod] = useState('daily')
@@ -188,11 +189,14 @@ export default function DepthPage() {
     }
   }, [stockCode, adjust])
 
-  // Load more historical data when scrolling left
+  // Load more historical data when scrolling left.
+  // Uses a ref for the loading guard to prevent race conditions from
+  // rapid scroll events firing before React commits the state update.
   const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMore || !stockCode.trim()) return
+    if (loadingMoreRef.current || !hasMore || !stockCode.trim()) return
+    loadingMoreRef.current = true
+    setLoadingMore(true)
     try {
-      setLoadingMore(true)
       const newOffset = totalOffset + 500
       const apiPeriod = PERIOD_API_MAP[periodRef.current] || '5'
       const response = await axios.get(`${API_BASE_URL}/api/stock/kline`, {
@@ -214,9 +218,10 @@ export default function DepthPage() {
     } catch {
       // silently fail for loadMore
     } finally {
+      loadingMoreRef.current = false
       setLoadingMore(false)
     }
-  }, [loadingMore, hasMore, stockCode, totalOffset, adjust])
+  }, [hasMore, stockCode, totalOffset, adjust])
 
   // Stable refs
   const handleFetchDataRef = useRef(handleFetchData)

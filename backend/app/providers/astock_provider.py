@@ -138,10 +138,17 @@ class AStockDataProvider(MarketDataProvider):
         end_date: str,
         adjust: str = "qfq",
         max_retries: int = 2,
+        count: int = 500,
+        start_offset: int = 0,
     ) -> Optional[pd.DataFrame]:
         # 1. Try mootdx first (TCP, no IP block)
         df = self._fetch_kline_mootdx(
-            stock_code, period="101", start_date=start_date, end_date=end_date
+            stock_code,
+            period="101",
+            start_date=start_date,
+            end_date=end_date,
+            count=count,
+            start_offset=start_offset,
         )
         if df is not None and not df.empty:
             logger.info(f"股票 {stock_code} 日线由 mootdx 返回")
