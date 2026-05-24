@@ -462,126 +462,76 @@ export default function DepthChart({
         )}
       </div>
 
-      {/* Volume Profile panel (right side) */}
-      {showVPOverlay && (
+      {/* CYQ chip distribution panel (right side) — shown when CYQ toggle is ON */}
+      {showCYQ && cyqInfo && displayPriceMin > 0 && (
         <div className="relative flex w-32 flex-col border-l border-[var(--border-subtle)] bg-[rgba(248,250,252,0.7)] shrink-0" style={{ height: 520 }}>
           <div className="flex-none border-b border-[var(--border-subtle)] px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">
-            成交量
+            筹码
           </div>
 
           <div className="relative flex-1 overflow-hidden">
-            {/* Volume bars */}
-            <div className="absolute inset-0">
-              {profileBars.map((bar, i) => (
-                <div
-                  key={i}
-                  className="absolute right-0 h-px bg-blue-400/50"
-                  style={{
-                    bottom: `${bar.yPct}%`,
-                    width: `${Math.max(bar.barWidth, 2)}%`,
-                    minWidth: '2px',
-                  }}
-                />
-              ))}
-            </div>
-
-            {/* Overlay markers */}
             <div className="absolute inset-0 pointer-events-none">
-              {valYPos >= 0 && vahYPos >= 0 && (
+              {/* 90% cost range band */}
+              {cyqInfo.cost_90_low > 0 && cyqInfo.cost_90_high > 0 && (
                 <div
-                  className="absolute left-2 right-0 bg-blue-400/10 border-l-2 border-blue-400/30"
-                  style={{ bottom: `${valYPos}%`, top: `${100 - vahYPos}%` }}
-                />
+                  className="absolute left-2 right-0 bg-amber-200/50 border-l-2 border-amber-400/60"
+                  style={{
+                    bottom: `${calcYPos(cyqInfo.cost_90_low)}%`,
+                    top: `${100 - calcYPos(cyqInfo.cost_90_high)}%`,
+                  }}
+                >
+                  <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] font-medium text-amber-700">90%</span>
+                </div>
               )}
 
-              {pocYPos >= 0 && (
+              {/* 70% cost range band */}
+              {cyqInfo.cost_70_low > 0 && cyqInfo.cost_70_high > 0 && (
+                <div
+                  className="absolute left-3 right-0 bg-cyan-200/60 border-l-2 border-cyan-400/60"
+                  style={{
+                    bottom: `${calcYPos(cyqInfo.cost_70_low)}%`,
+                    top: `${100 - calcYPos(cyqInfo.cost_70_high)}%`,
+                  }}
+                >
+                  <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] font-medium text-cyan-700">70%</span>
+                </div>
+              )}
+
+              {/* Average cost line */}
+              {cyqInfo.avg_cost > 0 && (
                 <>
-                  <div className="absolute left-0 right-0 border-t-2 border-dashed border-red-500 z-10" style={{ bottom: `${pocYPos}%` }} />
-                  <div className="absolute right-1 z-10 -translate-y-1/2 rounded bg-red-500 px-1 text-[9px] font-bold text-white" style={{ bottom: `${pocYPos}%` }}>
-                    POC
-                  </div>
+                  <div
+                    className="absolute left-0 right-0 border-t-2 border-dashed z-10"
+                    style={{ borderColor: '#38bdf8', bottom: `${calcYPos(cyqInfo.avg_cost)}%` }}
+                  />
+                  <span
+                    className="absolute right-1 z-10 text-[8px] font-bold"
+                    style={{ color: '#38bdf8', bottom: `${calcYPos(cyqInfo.avg_cost)}%`, transform: 'translateY(-50%)' }}
+                  >
+                    AVG
+                  </span>
                 </>
               )}
-
-              {vahYPos >= 0 && (
-                <div className="absolute left-0 right-0 border-t border-dashed border-blue-400/50 z-10" style={{ bottom: `${vahYPos}%` }} />
-              )}
-              {valYPos >= 0 && (
-                <div className="absolute left-0 right-0 border-t border-dashed border-blue-400/50 z-10" style={{ bottom: `${valYPos}%` }} />
-              )}
-
-              {hvnYPositions.map((y, i) => (
-                <div key={`hvn-${i}`} className="absolute z-10 flex items-center" style={{ bottom: `${y}%` }}>
-                  <div className="h-1.5 w-1.5 rounded-full bg-blue-600" />
-                  <span className="ml-0.5 text-[7px] text-blue-600 font-medium">HVN</span>
-                </div>
-              ))}
-
-              {lvnYPositions.map((y, i) => (
-                <div key={`lvn-${i}`} className="absolute z-10 flex items-center" style={{ bottom: `${y}%` }}>
-                  <div className="h-1.5 w-1.5 rounded-full border border-gray-400 bg-gray-300" />
-                  <span className="ml-0.5 text-[7px] text-gray-500 font-medium">LVN</span>
-                </div>
-              ))}
-
-              {showCYQ && Object.values(cyqYPositions).map((item, i) => (
-                <div key={i} className="absolute left-0 right-0 z-10" style={{ bottom: `${item.y}%` }}>
-                  <div className="border-t border-dashed" style={{ borderColor: item.color }} />
-                  <span className="absolute right-0.5 -translate-y-1/2 text-[8px] font-medium" style={{ color: item.color }}>
-                    {item.label}
-                  </span>
-                </div>
-              ))}
-
-              {showVWAP && vwapYPos >= 0 && (
-                <div className="absolute left-0 right-0 z-10 border-t-2 border-dashed" style={{ borderColor: VWAP_COLOR, bottom: `${vwapYPos}%` }} />
-              )}
-
-              {/* GMM fit curve */}
-              {showGMM && gmmCurvePoints.length > 0 && (
-                <svg className="absolute inset-0 z-20" preserveAspectRatio="none">
-                  <polyline
-                    points={gmmCurvePoints.map((p) => `${70 - p.widthPct},${100 - p.yPct}`).join(' ')}
-                    fill="none" stroke="#9333ea" strokeWidth="1.5" strokeDasharray="4,2" opacity="0.8"
-                  />
-                  {gmmComponents.map((c, i) => {
-                    const y = calcYPos(c.mean)
-                    if (y < 0 || y > 100) return null
-                    return (
-                      <g key={i}>
-                        <line x1="0" y1={`${100 - y}%`} x2="70" y2={`${100 - y}%`} stroke="#9333ea" strokeWidth="1" strokeDasharray="2,2" opacity="0.5" />
-                        <text x="72" y={`${100 - y}%`} fill="#9333ea" fontSize="8" dominantBaseline="middle">
-                          μ{c.mean.toFixed(1)}
-                        </text>
-                      </g>
-                    )
-                  })}
-                </svg>
-              )}
             </div>
           </div>
 
-          {/* Price labels */}
-          <div className="flex-none border-t border-[var(--border-subtle)] px-1 py-1 text-center text-[9px] text-[var(--text-dim)]">
-            <div>¥{activeVP.price_max.toFixed(2)}</div>
-            <div className="flex justify-between">
-              <span>¥{activeVP.price_min.toFixed(2)}</span>
-              <span>Vol</span>
+          {/* Info footer */}
+          <div className="flex-none border-t border-[var(--border-subtle)] px-1.5 py-1.5 space-y-0.5">
+            <div className="flex justify-between text-[9px]">
+              <span className="text-[var(--text-dim)]">获利</span>
+              <span className={cyqInfo.profit_ratio >= 0 ? 'text-red-600' : 'text-green-600'}>
+                {(cyqInfo.profit_ratio * 100).toFixed(1)}%
+              </span>
+            </div>
+            <div className="flex justify-between text-[9px]">
+              <span className="text-[var(--text-dim)]">90%集中度</span>
+              <span className="text-[var(--text-strong)]">{(cyqInfo.concentration_90 * 100).toFixed(2)}%</span>
+            </div>
+            <div className="flex justify-between text-[9px]">
+              <span className="text-[var(--text-dim)]">70%集中度</span>
+              <span className="text-[var(--text-strong)]">{(cyqInfo.concentration_70 * 100).toFixed(2)}%</span>
             </div>
           </div>
-
-          {/* GMM component info */}
-          {showGMM && gmmComponents.length > 0 && (
-            <div className="flex-none border-t border-[var(--border-subtle)] px-1.5 py-1">
-              {gmmComponents.map((c, i) => (
-                <div key={i} className="flex items-center justify-between text-[9px]">
-                  <span className="font-medium text-purple-700">μ{c.mean.toFixed(1)}</span>
-                  <span className="text-[var(--text-dim)]">σ{c.std.toFixed(2)}</span>
-                  <span className="text-[var(--text-dim)]">{((c.weight ?? 0) * 100).toFixed(0)}%</span>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
     </div>
