@@ -69,7 +69,7 @@ class AStockDataProvider(MarketDataProvider):
         period: str,
         start_date: str,
         end_date: str,
-        count: int = 800,
+        count: int = 2400,
     ) -> Optional[pd.DataFrame]:
         """Fetch K-line data via mootdx TCP (通达信).
 
@@ -88,36 +88,51 @@ class AStockDataProvider(MarketDataProvider):
             return None
 
         try:
-            klines = _mootdx_client.bars(
-                symbol=stock_code, frequency=freq, start=0, offset=count,
-            )
-            if klines is None or klines.empty:
+            cols = ["open", "close", "high", "low", "volume", "amount"]
+            frames = []
+            page_size = min(count, 800)  # mootdx caps at 800 per request
+            for start in range(0, count, page_size):
+                klines = _mootdx_client.bars(
+                    symbol=stock_code, frequency=freq,
+                    start=start, offset=page_size,
+                )
+                if klines is None or klines.empty:
+                    break
+                # Normalize: mootdx returns datetime as both index name
+                # and column. Drop the index, keep the column.
+                if "datetime" in klines.columns:
+                    klines = klines.reset_index(drop=True)
+                else:
+                    klines = klines.reset_index()
+                frames.append(klines)
+
+            if not frames:
                 return None
 
-            df = klines
-            # Keep only standard columns; mootdx returns English names
-            # (open, close, high, low, volume, amount) with datetime index.
-            cols = ["open", "close", "high", "low", "volume", "amount"]
-            available = [c for c in cols if c in df.columns]
-            if "datetime" not in df.columns and df.index.name == "datetime":
-                df = df.reset_index()
-            if "datetime" in df.columns:
-                available.insert(0, "datetime")
-                df["datetime"] = pd.to_datetime(df["datetime"])
-                # Filter by date range
-                if start_date:
-                    df = df[df["datetime"] >= pd.Timestamp(start_date)]
-                if end_date:
-                    df = df[df["datetime"] <= pd.Timestamp(end_date)]
-                df["datetime"] = df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
-            else:
-                # Guard: mootdx should always return datetime as the index,
-                # but if it doesn't, bail out instead of returning a
-                # DataFrame with no time column.
+            df = pd.concat(frames, ignore_index=True)
+            # Rename index column if needed
+            if "index" in df.columns and "datetime" not in df.columns:
+                df = df.rename(columns={"index": "datetime"})
+
+            if "datetime" not in df.columns:
                 logger.warning(f"mootdx 缺少datetime列 {stock_code}")
                 return None
+
+            df = df.drop_duplicates(subset=["datetime"] if "datetime" in df.columns else None)
+            df = df.sort_values("datetime")
+            df["datetime"] = pd.to_datetime(df["datetime"])
+
+            # Filter by date range
+            if start_date:
+                df = df[df["datetime"] >= pd.Timestamp(start_date)]
+            if end_date:
+                df = df[df["datetime"] <= pd.Timestamp(end_date)]
+
             if df.empty:
                 return None
+
+            df["datetime"] = df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
+            available = ["datetime"] + [c for c in cols if c in df.columns]
             return df[available]
         except Exception as e:
             logger.warning(f"mootdx K线请求失败 {stock_code}: {e}")
