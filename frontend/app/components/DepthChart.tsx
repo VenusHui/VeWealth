@@ -56,22 +56,16 @@ export default function DepthChart({
 
   const candlestickData = useMemo(() => ohlcvToCandlestickData(klines), [klines])
 
-  // Create chart, destroying any previous instance.
-  // Recreated whenever candlestickData changes so the chart always
-  // shows the current data without relying on setData().
+  // Create chart once on mount
   useEffect(() => {
     const container = chartContainerRef.current
     if (!container) return
 
-    // Destroy previous chart
-    if (chartRef.current) {
-      chartRef.current.remove()
-      chartRef.current = null
-    }
-
     container.innerHTML = ''
 
     const chart = createChart(container, {
+      width: container.clientWidth,
+      height: container.clientHeight,
       layout: {
         background: { color: 'transparent' },
         textColor: '#64748b',
@@ -99,7 +93,6 @@ export default function DepthChart({
       },
     })
 
-    // Candlestick series — set data directly on creation
     const cds = chart.addSeries(CandlestickSeries, {
       upColor: UP_COLOR,
       downColor: DOWN_COLOR,
@@ -108,24 +101,24 @@ export default function DepthChart({
       wickUpColor: UP_COLOR,
       wickDownColor: DOWN_COLOR,
     })
-    if (candlestickData.length > 0) {
-      cds.setData(candlestickData as CandlestickData<Time>[])
-      chart.timeScale().fitContent()
-    }
 
     chartRef.current = chart
     candlestickSeriesRef.current = cds
-    maSeriesRefs.current = []
-    vwapSeriesRef.current = null
-    cyqPriceLinesRef.current = []
 
     return () => {
-      if (chartRef.current) {
-        chartRef.current.remove()
-        chartRef.current = null
-        candlestickSeriesRef.current = null
-      }
+      chart.remove()
+      chartRef.current = null
+      candlestickSeriesRef.current = null
     }
+  }, []) // created once, never recreated
+
+  // Update candlestick data — proven working pattern: setData + fitContent
+  useEffect(() => {
+    const cds = candlestickSeriesRef.current
+    const ch = chartRef.current
+    if (!cds || !ch || candlestickData.length === 0) return
+    cds.setData(candlestickData as CandlestickData<Time>[])
+    ch.timeScale().fitContent()
   }, [candlestickData])
 
   // Resize handler using ResizeObserver for reliable layout tracking
