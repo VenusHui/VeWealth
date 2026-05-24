@@ -105,8 +105,9 @@ export default function DepthPage() {
   const [showCYQ, setShowCYQ] = useState(false)
 
   // Stock search
-  const handleSearch = async () => {
-    if (!searchKeyword.trim()) {
+  const handleSearch = async (keyword?: string) => {
+    const kw = (keyword ?? searchKeyword).trim()
+    if (!kw) {
       setSearchResults([])
       setShowSearchResults(false)
       return
@@ -114,7 +115,7 @@ export default function DepthPage() {
     try {
       setSearchLoading(true)
       const response = await axios.get(`${API_BASE_URL}/api/stock/search`, {
-        params: { keyword: searchKeyword.trim() },
+        params: { keyword: kw },
       })
       if (response.data.success) {
         setSearchResults(response.data.results)
@@ -133,6 +134,21 @@ export default function DepthPage() {
     setSearchKeyword('')
     setSearchResults([])
     setShowSearchResults(false)
+  }
+
+  // Handle unified input: detect code vs name
+  const handleUnifiedInput = () => {
+    const kw = searchKeyword.trim()
+    if (!kw) return
+    if (/^\d{6}$/.test(kw)) {
+      setStockCode(kw)
+      setStockName('')
+      setSearchKeyword('')
+      setSearchResults([])
+      setShowSearchResults(false)
+    } else {
+      handleSearch(kw)
+    }
   }
 
   // Fetch depth data
@@ -308,18 +324,20 @@ export default function DepthPage() {
       <div className="space-y-4">
         <SurfaceCard title="股票选择与参数">
           <div className="space-y-4">
-            {/* Search */}
+            {/* Unified search: code or name */}
             <div>
-              <label className="ve-field-label">搜索股票</label>
+              <label className="ve-field-label">
+                {stockName && stockCode ? `${stockName}（${stockCode}）` : '搜索股票'}
+              </label>
               <div className="flex gap-2">
                 <Input
                   value={searchKeyword}
                   onChange={(e) => setSearchKeyword(e.target.value)}
-                  onPressEnter={handleSearch}
-                  placeholder="输入股票代码或名称，如：贵州茅台 / 600519"
+                  onPressEnter={handleUnifiedInput}
+                  placeholder={stockCode || '输入代码或名称，如：贵州茅台 / 600519'}
                 />
-                <Button onClick={handleSearch} loading={searchLoading} disabled={!searchKeyword.trim()}>
-                  搜索
+                <Button onClick={handleUnifiedInput} loading={searchLoading || loading}>
+                  查询
                 </Button>
               </div>
             </div>
@@ -352,22 +370,6 @@ export default function DepthPage() {
               </div>
             )}
 
-            {/* Stock code + manual input */}
-            <div>
-              <label className="ve-field-label">{stockName ? `股票代码（${stockName}）` : '股票代码'}</label>
-              <Input
-                value={stockCode}
-                onChange={(e) => setStockCode(e.target.value)}
-                onPressEnter={handleFetchData}
-                maxLength={6}
-                placeholder="6 位代码"
-                style={{ maxWidth: 200 }}
-              />
-              {stockName && stockName !== stockCode && (
-                <span className="ml-2 text-sm text-[var(--text-dim)]">{stockName}</span>
-              )}
-            </div>
-
             <DepthToolbar
               period={period}
               onPeriodChange={(p) => setPeriod(p)}
@@ -382,10 +384,6 @@ export default function DepthPage() {
               showCYQ={showCYQ}
               onShowCYQToggle={() => setShowCYQ(!showCYQ)}
             />
-
-            <Button type="primary" onClick={handleFetchData} loading={loading}>
-              查询深度数据
-            </Button>
 
             {error && <Alert type="error" showIcon message={error} />}
           </div>
