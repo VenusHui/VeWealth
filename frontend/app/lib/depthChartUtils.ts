@@ -67,16 +67,20 @@ export interface CyqInfo {
 }
 
 interface CandlestickData {
-  time: string
+  time: number
   open: number
   high: number
   low: number
   close: number
 }
 
+function toUnixTime(datetime: string): number {
+  return Math.floor(new Date(datetime.replace(' ', 'T') + '+08:00').getTime() / 1000)
+}
+
 export function ohlcvToCandlestickData(klines: KlineDataPoint[]): CandlestickData[] {
   return klines.map((k) => ({
-    time: k.datetime.replace(' ', 'T'),
+    time: toUnixTime(k.datetime),
     open: k.open,
     high: k.high,
     low: k.low,
@@ -84,30 +88,30 @@ export function ohlcvToCandlestickData(klines: KlineDataPoint[]): CandlestickDat
   }))
 }
 
-export function computeMALine(klines: KlineDataPoint[], period: number): { time: string; value: number }[] {
+export function computeMALine(klines: KlineDataPoint[], period: number): { time: number; value: number }[] {
   if (klines.length < period) return []
-  const result: { time: string; value: number }[] = []
+  const result: { time: number; value: number }[] = []
   let sum = 0
   for (let i = 0; i < period - 1; i++) {
     sum += klines[i].close
   }
   for (let i = period - 1; i < klines.length; i++) {
     sum += klines[i].close
-    result.push({ time: klines[i].datetime.replace(' ', 'T'), value: sum / period })
+    result.push({ time: toUnixTime(klines[i].datetime), value: sum / period })
     sum -= klines[i - period + 1].close
   }
   return result
 }
 
-export function computeVWAPLine(klines: KlineDataPoint[]): { time: string; value: number }[] {
+export function computeVWAPLine(klines: KlineDataPoint[]): { time: number; value: number }[] {
   let cumVol = 0
   let cumVP = 0
-  const result: { time: string; value: number }[] = []
+  const result: { time: number; value: number }[] = []
   for (const k of klines) {
     const typical = (k.high + k.low + k.close) / 3
     cumVol += k.volume
     cumVP += typical * k.volume
-    result.push({ time: k.datetime.replace(' ', 'T'), value: cumVol > 0 ? cumVP / cumVol : k.close })
+    result.push({ time: toUnixTime(k.datetime), value: cumVol > 0 ? cumVP / cumVol : k.close })
   }
   return result
 }
