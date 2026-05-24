@@ -2,7 +2,6 @@
 
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import axios from 'axios'
-import { format } from 'date-fns'
 import { Alert, Button, Input, Spin } from 'antd'
 import DepthChart from '../components/DepthChart'
 import DepthToolbar from '../components/DepthToolbar'
@@ -95,22 +94,11 @@ export default function DepthPage() {
   const [period, setPeriod] = useState('daily')
   const periodRef = useRef(period)
   periodRef.current = period
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
   const [adjust, setAdjust] = useState('qfq')
   const [showMA, setShowMA] = useState(true)
   const [showVWAP, setShowVWAP] = useState(true)
   const [showGMM, setShowGMM] = useState(false)
   const [showCYQ, setShowCYQ] = useState(false)
-
-  // Default date range: last 5 days
-  useEffect(() => {
-    const end = new Date()
-    const start = new Date()
-    start.setDate(start.getDate() - 30)
-    setEndDate(format(end, 'yyyy-MM-dd'))
-    setStartDate(format(start, 'yyyy-MM-dd'))
-  }, [])
 
   // Stock search
   const handleSearch = async () => {
@@ -153,11 +141,6 @@ export default function DepthPage() {
       setError('股票代码格式错误，应为 6 位数字')
       return
     }
-    if (!startDate || !endDate) {
-      setError('请选择日期范围')
-      return
-    }
-
     try {
       setLoading(true)
       setError('')
@@ -168,8 +151,8 @@ export default function DepthPage() {
         params: {
           symbol: stockCode.trim(),
           period: apiPeriod,
-          start_date: startDate,
-          end_date: endDate,
+          start_date: '',
+          end_date: '',
           adjust,
         },
       })
@@ -200,7 +183,7 @@ export default function DepthPage() {
     } finally {
       setLoading(false)
     }
-  }, [stockCode, startDate, endDate, adjust])
+  }, [stockCode, adjust])
 
   // Stable ref to handleFetchData so auto-fetch effect never uses stale closure
   const handleFetchDataRef = useRef(handleFetchData)
@@ -208,10 +191,10 @@ export default function DepthPage() {
 
   // Auto-fetch when toolbar params change (if stock is selected)
   useEffect(() => {
-    if (stockCode.trim() && startDate && endDate) {
+    if (stockCode.trim()) {
       handleFetchDataRef.current()
     }
-  }, [period, startDate, endDate, adjust, stockCode])
+  }, [period, adjust, stockCode])
 
   // Summary cards
   const summaryCards = useMemo(() => {
@@ -343,9 +326,6 @@ export default function DepthPage() {
             <DepthToolbar
               period={period}
               onPeriodChange={(p) => setPeriod(p)}
-              startDate={startDate}
-              endDate={endDate}
-              onDateRangeChange={(s, e) => { setStartDate(s); setEndDate(e) }}
               adjust={adjust}
               onAdjustChange={setAdjust}
               showMA={showMA}
@@ -422,7 +402,7 @@ export default function DepthPage() {
         </SurfaceCard>
       ) : (
         <SurfaceCard title="深度数据图表" description="查询完成后，这里会出现多周期 K 线 + 筹码峰叠加视图。">
-          <EmptyState title="还没有深度数据" description="输入股票代码、选择周期和日期范围后执行查询。" />
+          <EmptyState title="还没有深度数据" description="输入股票代码并选择周期后执行查询，图表自动加载最大可用数据范围。" />
         </SurfaceCard>
       )}
 

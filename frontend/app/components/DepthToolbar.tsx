@@ -1,16 +1,10 @@
 'use client'
 
-import { DatePicker, Segmented, Switch } from 'antd'
-import dayjs from 'dayjs'
-
-const { RangePicker } = DatePicker
+import { Segmented, Switch } from 'antd'
 
 export interface DepthToolbarProps {
   period: string
   onPeriodChange: (period: string) => void
-  startDate: string
-  endDate: string
-  onDateRangeChange: (start: string, end: string) => void
   adjust: string
   onAdjustChange: (adjust: string) => void
   showMA: boolean
@@ -26,9 +20,6 @@ export interface DepthToolbarProps {
 export default function DepthToolbar({
   period,
   onPeriodChange,
-  startDate,
-  endDate,
-  onDateRangeChange,
   adjust,
   onAdjustChange,
   showMA,
@@ -57,21 +48,6 @@ export default function DepthToolbar({
             { label: '60分', value: '60min' },
             { label: '日', value: 'daily' },
           ]}
-        />
-      </div>
-
-      {/* Date range */}
-      <div>
-        <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.15em] text-[var(--text-dim)]">日期范围</div>
-        <RangePicker
-          size="small"
-          value={startDate && endDate ? [dayjs(startDate), dayjs(endDate)] : null}
-          onChange={(dates) => {
-            if (dates && dates[0] && dates[1]) {
-              onDateRangeChange(dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD'))
-            }
-          }}
-          style={{ width: 220 }}
         />
       </div>
 
