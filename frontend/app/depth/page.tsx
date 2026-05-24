@@ -297,7 +297,7 @@ export default function DepthPage() {
             ? `${(volumeProfile.total_volume / 10000).toFixed(0)} 万手`
             : volumeProfile.total_volume.toLocaleString()
           : '—',
-        meta: volumeProfile?.poc ? `POC ¥${volumeProfile.poc.price.toFixed(2)}` : '查询后展示筹码峰',
+        meta: volumeProfile?.poc ? `POC ¥${volumeProfile.poc.price.toFixed(2)}` : '查询后展示成交量分布',
         tone: (volumeProfile?.poc ? 'warning' : 'default') as 'warning' | 'default',
         icon: '∿',
       },
@@ -309,11 +309,11 @@ export default function DepthPage() {
     <AppPage>
       <PageHeader
         eyebrow="Depth Analysis"
-        title="深度数据 · 筹码结构与量价分布"
+        title="深度数据 · 量价分布与筹码分析"
         badges={
           <>
             <InfoPill>{period}</InfoPill>
-            <InfoPill>K 线 + 筹码峰</InfoPill>
+            <InfoPill>K 线 + 成交量分布</InfoPill>
             <InfoPill>Volume Profile</InfoPill>
             {showCYQ && <InfoPill>筹码分布</InfoPill>}
           </>
@@ -411,7 +411,7 @@ export default function DepthPage() {
               {stockName && stockCode && stockName !== stockCode && <InfoPill>{stockCode}</InfoPill>}
             </div>
           }
-          description={`${period} K线 · Volume Profile 筹码峰`}
+          description={`${period} K线 · Volume Profile 成交量分布`}
           actions={
             <div className="flex flex-wrap gap-2">
               <InfoPill>K线 {klines.length} 根</InfoPill>
@@ -447,7 +447,7 @@ export default function DepthPage() {
           </div>
         </SurfaceCard>
       ) : (
-        <SurfaceCard title="深度数据图表" description="查询完成后，这里会出现多周期 K 线 + 筹码峰叠加视图。">
+        <SurfaceCard title="深度数据图表" description="查询完成后，这里会出现多周期 K 线 + 成交量分布叠加视图。">
           <EmptyState title="还没有深度数据" description="输入股票代码并选择周期后执行查询，图表自动加载最大可用数据范围。" />
         </SurfaceCard>
       )}

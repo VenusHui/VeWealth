@@ -466,7 +466,7 @@ export default function DepthChart({
       {showVPOverlay && (
         <div className="relative flex w-32 flex-col border-l border-[var(--border-subtle)] bg-[rgba(248,250,252,0.7)] shrink-0" style={{ height: 520 }}>
           <div className="flex-none border-b border-[var(--border-subtle)] px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">
-            筹码峰
+            成交量
           </div>
 
           <div className="relative flex-1 overflow-hidden">
