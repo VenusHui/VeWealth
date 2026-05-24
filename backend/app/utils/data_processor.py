@@ -125,9 +125,11 @@ class DataProcessor:
 
             # 归一化到总成交量
             total_volume = volumes.sum()
-            # 计算密度的积分（numpy 2.x 推荐 trapezoid）
-            trapz_fn = getattr(np, "trapezoid", np.trapz)
-            density_integral = trapz_fn(densities, price_range)
+            # 计算密度的积分（numpy 2.x 推荐 trapezoid，1.x 用 trapz）
+            if hasattr(np, "trapezoid"):
+                density_integral = np.trapezoid(densities, price_range)
+            else:
+                density_integral = np.trapz(densities, price_range)
             if density_integral <= 0:
                 return None
             normalized_densities = densities * (total_volume / density_integral)
