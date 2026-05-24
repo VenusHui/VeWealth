@@ -64,8 +64,6 @@ export default function DepthChart({
     container.innerHTML = ''
 
     const chart = createChart(container, {
-      width: container.clientWidth,
-      height: container.clientHeight,
       layout: {
         background: { color: 'transparent' },
         textColor: '#64748b',
