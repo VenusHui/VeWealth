@@ -439,12 +439,30 @@ export default function DepthChart({
         {/* Volume Profile overlay — semi-transparent bars extending from right price axis */}
         {showVPOverlay && (
           <div className="absolute inset-0 pointer-events-none z-10" style={{ right: 60 }}>
-            {/* Volume scale indicator (top) */}
-            <div className="absolute top-1 right-1 text-[9px] text-blue-400/70 font-mono">
-              {activeVP.profile.reduce((m, p) => p.volume > m ? p.volume : m, 0) >= 10000
-                ? `${(Math.max(...activeVP.profile.map(p => p.volume)) / 10000).toFixed(0)}万手`
-                : `${Math.max(...activeVP.profile.map(p => p.volume)).toFixed(0)}手`}
-            </div>
+            {/* Volume axis: tick marks showing volume scale */}
+            {(() => {
+              const maxVol = activeVP.profile.reduce((m, p) => p.volume > m ? p.volume : m, 0)
+              if (maxVol <= 0) return null
+              const ticks = 4
+              const step = maxVol / ticks
+              const formatVol = (v: number) => v >= 10000 ? `${(v / 10000).toFixed(1)}万` : `${v.toFixed(0)}`
+              return (
+                <div className="absolute left-0 right-0 top-2 h-4 z-20 pointer-events-none">
+                  {Array.from({ length: ticks + 1 }, (_, i) => {
+                    const vol = step * i
+                    const xPct = i === 0 ? 95 : Math.max(5, 95 - (vol / maxVol) * 90)
+                    return (
+                      <div key={i} className="absolute top-0" style={{ right: `${100 - xPct}%` }}>
+                        <div className="h-2 border-l border-blue-400/30" />
+                        <span className="absolute top-2 -translate-x-1/2 text-[8px] text-blue-400/60 font-mono whitespace-nowrap">
+                          {i === 0 ? '0' : formatVol(vol)}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
             {profileBars.map((bar, i) => (
               <div
                 key={i}
