@@ -87,9 +87,24 @@ export default function DepthChart({
         borderColor: 'rgba(226,232,240,0.8)',
         timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: (time: number) => {
+          // Timestamps are Unix seconds. Display as Beijing time (UTC+8).
+          const d = new Date(time * 1000)
+          const bjHour = String((d.getUTCHours() + 8) % 24).padStart(2, '0')
+          const bjMin = String(d.getUTCMinutes()).padStart(2, '0')
+          const month = String(d.getUTCMonth() + 1).padStart(2, '0')
+          const day = String(d.getUTCDate()).padStart(2, '0')
+          return `${month}-${day} ${bjHour}:${bjMin}`
+        },
       },
       localization: {
-        dateFormat: 'yyyy-MM-dd',
+        dateFormat: 'MM-dd',
+        timeFormatter: (time: number) => {
+          const d = new Date(time * 1000)
+          const h = String((d.getUTCHours() + 8) % 24).padStart(2, '0')
+          const m = String(d.getUTCMinutes()).padStart(2, '0')
+          return `${h}:${m}`
+        },
       },
     })
 
