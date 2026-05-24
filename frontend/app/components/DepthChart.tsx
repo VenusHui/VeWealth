@@ -155,6 +155,25 @@ export default function DepthChart({
 
   const [visibleVP, setVisibleVP] = useState<VolumeProfileData | null>(null)
 
+  // Use visible-range VP if available, otherwise fall back to backend VP
+  const activeVP = visibleVP || volumeProfile
+
+  // Track chart's visible price range (updates on zoom/scroll/resize)
+  const [visiblePriceRange, setVisiblePriceRange] = useState<{ high: number; low: number } | null>(null)
+
+  const updateVisiblePriceRange = useCallback(() => {
+    const cds = candlestickSeriesRef.current
+    const container = chartContainerRef.current
+    if (!cds || !container) return
+    const h = container.clientHeight
+    if (h <= 0) return
+    const top = cds.coordinateToPrice(0) as number | null
+    const bot = cds.coordinateToPrice(h) as number | null
+    if (top != null && bot != null && top > bot) {
+      setVisiblePriceRange({ high: top, low: bot })
+    }
+  }, [])
+
   useEffect(() => {
     const ch = chartRef.current
     if (!ch) return
@@ -180,33 +199,18 @@ export default function DepthChart({
       if (!isInitial && from <= 5 && hasMoreRef.current && onLoadMoreRef.current && !loadingMoreRef.current) {
         onLoadMoreRef.current()
       }
+
+      // Keep VP bars aligned with chart's current price-axis zoom level.
+      updateVisiblePriceRange()
     }
 
     // Compute initial VP without triggering loadMore
     handleRangeChange(true)
 
-    ch.timeScale().subscribeVisibleLogicalRangeChange(() => handleRangeChange(false))
-    return () => ch.timeScale().unsubscribeVisibleLogicalRangeChange(() => handleRangeChange(false))
-  }, [klines])
-
-  // Use visible-range VP if available, otherwise fall back to backend VP
-  const activeVP = visibleVP || volumeProfile
-
-  // Track chart's visible price range (updates on zoom/scroll/resize)
-  const [visiblePriceRange, setVisiblePriceRange] = useState<{ high: number; low: number } | null>(null)
-
-  const updateVisiblePriceRange = useCallback(() => {
-    const cds = candlestickSeriesRef.current
-    const container = chartContainerRef.current
-    if (!cds || !container) return
-    const h = container.clientHeight
-    if (h <= 0) return
-    const top = cds.coordinateToPrice(0) as number | null
-    const bot = cds.coordinateToPrice(h) as number | null
-    if (top != null && bot != null && top > bot) {
-      setVisiblePriceRange({ high: top, low: bot })
-    }
-  }, [])
+    const rangeHandler = () => handleRangeChange(false)
+    ch.timeScale().subscribeVisibleLogicalRangeChange(rangeHandler)
+    return () => ch.timeScale().unsubscribeVisibleLogicalRangeChange(rangeHandler)
+  }, [klines, updateVisiblePriceRange])
 
   // Update price range on crosshair move and resize
   useEffect(() => {
