@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useCallback, useMemo } from 'react'
+import { useEffect, useRef, useCallback, useMemo, useState } from 'react'
 import {
   createChart,
   CandlestickSeries,
@@ -23,6 +23,7 @@ import {
   computeMALine,
   computeVWAPLine,
   getMaxProfileVolume,
+  computeVolumeProfileFromKlines,
 } from '../lib/depthChartUtils'
 
 interface DepthChartProps {
@@ -135,6 +136,40 @@ export default function DepthChart({
     cds.setData(candlestickData as CandlestickData<Time>[])
     ch.timeScale().fitContent()
   }, [candlestickData])
+
+  // Track visible range and compute Volume Profile from visible candles only
+  const [visibleVP, setVisibleVP] = useState<VolumeProfileData | null>(null)
+
+  useEffect(() => {
+    const ch = chartRef.current
+    if (!ch) return
+
+    const handler = () => {
+      const range = ch.timeScale().getVisibleLogicalRange()
+      if (!range || klines.length === 0) {
+        setVisibleVP(null)
+        return
+      }
+      const from = Math.max(0, Math.floor(range.from))
+      const to = Math.min(klines.length - 1, Math.ceil(range.to))
+      const visibleKlines = klines.slice(from, to + 1)
+      if (visibleKlines.length < 2) {
+        setVisibleVP(null)
+        return
+      }
+      const vp = computeVolumeProfileFromKlines(visibleKlines, 80)
+      setVisibleVP(vp)
+    }
+
+    // Compute initial
+    handler()
+
+    ch.timeScale().subscribeVisibleLogicalRangeChange(handler)
+    return () => ch.timeScale().unsubscribeVisibleLogicalRangeChange(handler)
+  }, [klines])
+
+  // Use visible-range VP if available, otherwise fall back to backend VP
+  const activeVP = visibleVP || volumeProfile
 
   // Resize handler using ResizeObserver for reliable layout tracking
   useEffect(() => {
@@ -265,52 +300,53 @@ export default function DepthChart({
     }
   }, [showCYQ, cyqInfo])
 
-  // Volume Profile panel data
+  // Volume Profile panel data (visible range only)
   const profileBars = useMemo(() => {
-    if (!volumeProfile || !volumeProfile.profile.length) return []
-    const maxVol = getMaxProfileVolume(volumeProfile.profile)
+    if (!activeVP || !activeVP.profile.length) return []
+    const maxVol = getMaxProfileVolume(activeVP.profile)
     if (maxVol === 0) return []
-    const priceMin = volumeProfile.price_min
-    const priceMax = volumeProfile.price_max
+    const priceMin = activeVP.price_min
+    const priceMax = activeVP.price_max
     const priceRange = priceMax - priceMin || 1
-    return volumeProfile.profile.map((p) => ({
+    return activeVP.profile.map((p) => ({
       ...p,
       barWidth: (p.volume / maxVol) * 100,
       yPct: ((p.price - priceMin) / priceRange) * 100,
     }))
-  }, [volumeProfile])
+  }, [activeVP])
 
   const calcYPos = useCallback(
     (price: number) => {
-      if (!volumeProfile) return -1
-      const priceRange = volumeProfile.price_max - volumeProfile.price_min
+      if (!activeVP) return -1
+      const priceRange = activeVP.price_max - activeVP.price_min
       if (priceRange <= 0) return -1
-      return ((price - volumeProfile.price_min) / priceRange) * 100
+      return ((price - activeVP.price_min) / priceRange) * 100
     },
-    [volumeProfile],
+    [activeVP],
   )
 
-  const pocYPos = useMemo(() => volumeProfile?.poc ? calcYPos(volumeProfile.poc.price) : -1, [volumeProfile, calcYPos])
-  const vahYPos = useMemo(() => volumeProfile ? calcYPos(volumeProfile.value_area.vah) : -1, [volumeProfile, calcYPos])
-  const valYPos = useMemo(() => volumeProfile ? calcYPos(volumeProfile.value_area.val) : -1, [volumeProfile, calcYPos])
-  const vwapYPos = useMemo(() => volumeProfile?.vwap ? calcYPos(volumeProfile.vwap) : -1, [volumeProfile, calcYPos])
+  const pocYPos = useMemo(() => activeVP?.poc ? calcYPos(activeVP.poc.price) : -1, [activeVP, calcYPos])
+  const vahYPos = useMemo(() => activeVP ? calcYPos(activeVP.value_area.vah) : -1, [activeVP, calcYPos])
+  const valYPos = useMemo(() => activeVP ? calcYPos(activeVP.value_area.val) : -1, [activeVP, calcYPos])
+  const vwapYPos = useMemo(() => activeVP?.vwap ? calcYPos(activeVP.vwap) : -1, [activeVP, calcYPos])
 
   const hvnYPositions = useMemo(() => {
-    if (!volumeProfile?.hvn_levels?.length) return []
-    return volumeProfile.hvn_levels
-      .filter((p) => p >= volumeProfile.price_min && p <= volumeProfile.price_max)
+    if (!activeVP?.hvn_levels?.length) return []
+    return activeVP.hvn_levels
+      .filter((p) => p >= activeVP.price_min && p <= activeVP.price_max)
       .map(calcYPos)
       .filter((y) => y >= 0)
-  }, [volumeProfile, calcYPos])
+  }, [activeVP, calcYPos])
 
   const lvnYPositions = useMemo(() => {
-    if (!volumeProfile?.lvn_levels?.length) return []
-    return volumeProfile.lvn_levels
-      .filter((p) => p >= volumeProfile.price_min && p <= volumeProfile.price_max)
+    if (!activeVP?.lvn_levels?.length) return []
+    return activeVP.lvn_levels
+      .filter((p) => p >= activeVP.price_min && p <= activeVP.price_max)
       .map(calcYPos)
       .filter((y) => y >= 0)
-  }, [volumeProfile, calcYPos])
+  }, [activeVP, calcYPos])
 
+  // GMM and CYQ still use backend data (not computed client-side)
   const gmmCurvePoints = useMemo(() => {
     if (!volumeProfile?.fit_result?.fit_curve || !volumeProfile.profile.length) return []
     const fitCurve = volumeProfile.fit_result.fit_curve
@@ -329,7 +365,7 @@ export default function DepthChart({
   }, [volumeProfile])
 
   const cyqYPositions = useMemo(() => {
-    if (!volumeProfile || !cyqInfo || volumeProfile.price_min === volumeProfile.price_max) return {}
+    if (!activeVP || !cyqInfo || activeVP.price_min === activeVP.price_max) return {}
     const result: Record<string, { y: number; label: string; color: string }> = {}
     if (cyqInfo.avg_cost > 0) result.avg = { y: calcYPos(cyqInfo.avg_cost), label: 'AVG', color: '#38bdf8' }
     if (cyqInfo.cost_90_high > 0) result.c90h = { y: calcYPos(cyqInfo.cost_90_high), label: '90H', color: '#f59e0b' }
@@ -337,9 +373,9 @@ export default function DepthChart({
     if (cyqInfo.cost_70_high > 0) result.c70h = { y: calcYPos(cyqInfo.cost_70_high), label: '70H', color: '#06b6d4' }
     if (cyqInfo.cost_70_low > 0) result.c70l = { y: calcYPos(cyqInfo.cost_70_low), label: '70L', color: '#06b6d4' }
     return result
-  }, [volumeProfile, cyqInfo, calcYPos])
+  }, [activeVP, cyqInfo, calcYPos])
 
-  const showVPOverlay = volumeProfile && volumeProfile.profile.length > 0
+  const showVPOverlay = activeVP && activeVP.profile.length > 0
 
   return (
     <div className="flex gap-0 rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.78)] overflow-hidden" style={{ height: 520 }}>
@@ -474,9 +510,9 @@ export default function DepthChart({
 
           {/* Price labels */}
           <div className="flex-none border-t border-[var(--border-subtle)] px-1 py-1 text-center text-[9px] text-[var(--text-dim)]">
-            <div>¥{volumeProfile.price_max.toFixed(2)}</div>
+            <div>¥{activeVP.price_max.toFixed(2)}</div>
             <div className="flex justify-between">
-              <span>¥{volumeProfile.price_min.toFixed(2)}</span>
+              <span>¥{activeVP.price_min.toFixed(2)}</span>
               <span>Vol</span>
             </div>
           </div>

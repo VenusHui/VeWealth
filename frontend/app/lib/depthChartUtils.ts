@@ -45,6 +45,7 @@ export interface VolumeProfileData {
   total_volume: number
   price_min: number
   price_max: number
+  bin_size: number
   profile: VolumeProfilePoint[]
   poc: { price: number; volume: number }
   value_area: { vah: number; val: number; volume_pct: number }
@@ -123,4 +124,120 @@ export function getMaxProfileVolume(profile: VolumeProfilePoint[]): number {
     if (p.volume > max) max = p.volume
   }
   return max
+}
+
+// Client-side Volume Profile computation (visible range only)
+export function computeVolumeProfileFromKlines(
+  klines: KlineDataPoint[],
+  bins: number = 80,
+): VolumeProfileData | null {
+  if (klines.length < 2) return null
+
+  let priceMin = Infinity
+  let priceMax = -Infinity
+  let totalVolume = 0
+  let vwapNum = 0
+  let vwapDen = 0
+
+  for (const k of klines) {
+    if (k.low < priceMin) priceMin = k.low
+    if (k.high > priceMax) priceMax = k.high
+    totalVolume += k.volume
+    const typical = (k.high + k.low + k.close) / 3
+    vwapNum += typical * k.volume
+    vwapDen += k.volume
+  }
+
+  if (priceMax <= priceMin) priceMax = priceMin + 0.01
+  const binSize = (priceMax - priceMin) / bins
+  const profile = new Float64Array(bins)
+
+  for (const k of klines) {
+    const vol = k.volume
+    const barRange = k.high - k.low
+    if (vol <= 0) continue
+
+    if (barRange <= 0) {
+      const b = Math.max(0, Math.min(bins - 1, Math.floor((k.low - priceMin) / binSize)))
+      profile[b] += vol
+    } else {
+      const volPerUnit = vol / barRange
+      const lowB = Math.max(0, Math.min(bins - 1, Math.floor((k.low - priceMin) / binSize)))
+      const highB = Math.max(0, Math.min(bins - 1, Math.floor((k.high - priceMin) / binSize)))
+      if (lowB === highB) {
+        profile[lowB] += vol
+      } else {
+        for (let b = lowB; b <= highB; b++) {
+          const binLow = priceMin + b * binSize
+          const binHigh = binLow + binSize
+          const overlap = Math.max(0, Math.min(k.high, binHigh) - Math.max(k.low, binLow))
+          profile[b] += volPerUnit * overlap
+        }
+      }
+    }
+  }
+
+  const profileList: VolumeProfilePoint[] = []
+  for (let i = 0; i < bins; i++) {
+    profileList.push({
+      price: Math.round((priceMin + (i + 0.5) * binSize) * 1000) / 1000,
+      volume: Math.round(profile[i] * 100) / 100,
+    })
+  }
+
+  // POC
+  let pocIdx = 0
+  for (let i = 1; i < bins; i++) {
+    if (profile[i] > profile[pocIdx]) pocIdx = i
+  }
+
+  // Value Area
+  const targetVol = totalVolume * 0.7
+  let accVol = profile[pocIdx]
+  let lowIdx = pocIdx
+  let highIdx = pocIdx
+  while (accVol < targetVol) {
+    const canLow = lowIdx > 0
+    const canHigh = highIdx < bins - 1
+    if (!canLow && !canHigh) break
+    if (canLow && canHigh) {
+      if (profile[lowIdx - 1] >= profile[highIdx + 1]) { lowIdx--; accVol += profile[lowIdx] }
+      else { highIdx++; accVol += profile[highIdx] }
+    } else if (canLow) { lowIdx--; accVol += profile[lowIdx] }
+    else { highIdx++; accVol += profile[highIdx] }
+  }
+
+  // HVN/LVN
+  const meanVol = totalVolume / bins
+  const variance = profile.reduce((s, v) => s + (v - meanVol) ** 2, 0) / bins
+  const stdVol = Math.sqrt(variance)
+  const hvnLevels: number[] = []
+  const lvnLevels: number[] = []
+  if (stdVol > 0) {
+    for (let i = 0; i < bins; i++) {
+      const price = priceMin + (i + 0.5) * binSize
+      if (profile[i] > meanVol + 1.5 * stdVol) hvnLevels.push(Math.round(price * 1000) / 1000)
+      else if (profile[i] < meanVol - 0.5 * stdVol) lvnLevels.push(Math.round(price * 1000) / 1000)
+    }
+  }
+
+  return {
+    total_volume: Math.round(totalVolume * 100) / 100,
+    price_min: Math.round(priceMin * 1000) / 1000,
+    price_max: Math.round(priceMax * 1000) / 1000,
+    bin_size: Math.round(binSize * 10000) / 10000,
+    profile: profileList,
+    poc: {
+      price: Math.round((priceMin + (pocIdx + 0.5) * binSize) * 1000) / 1000,
+      volume: Math.round(profile[pocIdx] * 100) / 100,
+    },
+    value_area: {
+      vah: Math.round((priceMin + (highIdx + 0.5) * binSize) * 1000) / 1000,
+      val: Math.round((priceMin + (lowIdx + 0.5) * binSize) * 1000) / 1000,
+      volume_pct: Math.round((accVol / totalVolume) * 1000) / 10,
+    },
+    hvn_levels: hvnLevels,
+    lvn_levels: lvnLevels,
+    vwap: Math.round((vwapDen > 0 ? vwapNum / vwapDen : 0) * 1000) / 1000,
+  }
 }

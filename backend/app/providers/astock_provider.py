@@ -69,7 +69,7 @@ class AStockDataProvider(MarketDataProvider):
         period: str,
         start_date: str,
         end_date: str,
-        count: int = 500,
+        count: int = 800,
     ) -> Optional[pd.DataFrame]:
         """Fetch K-line data via mootdx TCP (通达信).
 
