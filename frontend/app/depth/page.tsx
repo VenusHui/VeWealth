@@ -89,6 +89,9 @@ export default function DepthPage() {
   const [tencentQuote, setTencentQuote] = useState<TencentQuote | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [totalOffset, setTotalOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
 
   // Toolbar state
   const [period, setPeriod] = useState('daily')
@@ -185,16 +188,53 @@ export default function DepthPage() {
     }
   }, [stockCode, adjust])
 
-  // Stable ref to handleFetchData so auto-fetch effect never uses stale closure
+  // Load more historical data when scrolling left
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore || !stockCode.trim()) return
+    try {
+      setLoadingMore(true)
+      const newOffset = totalOffset + 500
+      const apiPeriod = PERIOD_API_MAP[periodRef.current] || '5'
+      const response = await axios.get(`${API_BASE_URL}/api/stock/kline`, {
+        params: {
+          symbol: stockCode.trim(),
+          period: apiPeriod,
+          start_date: '', end_date: '',
+          adjust,
+          offset: newOffset,
+          count: 500,
+        },
+      })
+      const newKlines = response.data.klines || []
+      if (newKlines.length < 500) setHasMore(false)
+      if (newKlines.length > 0) {
+        setKlines((prev) => [...newKlines, ...prev])
+        setTotalOffset(newOffset)
+      }
+    } catch {
+      // silently fail for loadMore
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [loadingMore, hasMore, stockCode, totalOffset, adjust])
+
+  // Stable refs
   const handleFetchDataRef = useRef(handleFetchData)
   handleFetchDataRef.current = handleFetchData
+  const loadMoreRef = useRef(loadMore)
+  loadMoreRef.current = loadMore
 
   // Auto-fetch when toolbar params change (if stock is selected)
   useEffect(() => {
+    setTotalOffset(0)
+    setHasMore(true)
     if (stockCode.trim()) {
       handleFetchDataRef.current()
     }
   }, [period, adjust, stockCode])
+
+  // Stable callback for loadMore (avoids stale closure in chart handler)
+  const onLoadMore = useCallback(() => loadMoreRef.current(), [])
 
   // Summary cards
   const summaryCards = useMemo(() => {
@@ -386,6 +426,9 @@ export default function DepthPage() {
               showVWAP={showVWAP}
               showGMM={showGMM}
               showCYQ={showCYQ}
+              hasMore={hasMore}
+              loadingMore={loadingMore}
+              onLoadMore={onLoadMore}
             />
           </Spin>
         </SurfaceCard>

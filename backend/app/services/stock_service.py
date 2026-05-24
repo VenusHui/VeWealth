@@ -487,8 +487,10 @@ class StockService:
         start_date: str = "",
         end_date: str = "",
         adjust: str = "qfq",
+        offset: int = 0,
+        count: int = 500,
     ) -> Dict[str, Any]:
-        """获取任意周期的K线数据。"""
+        """获取任意周期的K线数据。offset/count 用于分页动态加载。"""
         period_label = self._PERIOD_LABEL_MAP.get(period, f"{period}min")
 
         try:
@@ -510,6 +512,8 @@ class StockService:
                     end_datetime=end_datetime,
                     period=period,
                     adjust=adjust,
+                    count=count,
+                    start_offset=offset,
                 )
 
                 if df is None or df.empty:

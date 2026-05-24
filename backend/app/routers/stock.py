@@ -72,8 +72,10 @@ async def get_kline_data(
     start_date: str = Query("", description="开始日期，格式：YYYY-MM-DD"),
     end_date: str = Query("", description="结束日期，格式：YYYY-MM-DD"),
     adjust: str = Query("qfq", description="复权类型: qfq/hfq/''"),
+    offset: int = Query(0, description="数据偏移量（分页用，跳过前N根K线）"),
+    count: int = Query(500, description="返回的最大K线数量"),
 ):
-    """获取K线数据（支持多周期）。"""
+    """获取K线数据（支持多周期+分页）。offset/count 用于前端滚动动态加载。"""
     try:
         data = stock_service.get_kline_data(
             symbol=symbol,
@@ -81,6 +83,8 @@ async def get_kline_data(
             start_date=start_date,
             end_date=end_date,
             adjust=adjust,
+            offset=offset,
+            count=count,
         )
         return KlineResponse(**data)
     except Exception as e:

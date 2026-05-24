@@ -69,16 +69,15 @@ class AStockDataProvider(MarketDataProvider):
         period: str,
         start_date: str,
         end_date: str,
-        count: int = 2400,
+        count: int = 500,
+        start_offset: int = 0,
     ) -> Optional[pd.DataFrame]:
         """Fetch K-line data via mootdx TCP (通达信).
 
-        Returns DataFrame with standardized columns [datetime, open, close,
-        high, low, volume, amount] or None on failure.
-
-        Note: mootdx returns unadjusted (不复权) data.  Callers that require
-        qfq/hfq adjusted data should rely on the Eastmoney fallback chain
-        in fetch_daily_data / fetch_minute_data.
+        Args:
+            count: Number of bars to fetch (max 800 per request, capped).
+            start_offset: Skip the first N most-recent bars. Used by the
+                          frontend for dynamic scroll-based loading.
         """
         if _mootdx_client is None:
             return None
@@ -89,28 +88,20 @@ class AStockDataProvider(MarketDataProvider):
 
         try:
             cols = ["open", "close", "high", "low", "volume", "amount"]
-            frames = []
-            page_size = min(count, 800)  # mootdx caps at 800 per request
-            for start in range(0, count, page_size):
-                klines = _mootdx_client.bars(
-                    symbol=stock_code, frequency=freq,
-                    start=start, offset=page_size,
-                )
-                if klines is None or klines.empty:
-                    break
-                # Normalize: mootdx returns datetime as both index name
-                # and column. Drop the index, keep the column.
-                if "datetime" in klines.columns:
-                    klines = klines.reset_index(drop=True)
-                else:
-                    klines = klines.reset_index()
-                frames.append(klines)
-
-            if not frames:
+            page_size = min(count, 800)
+            klines = _mootdx_client.bars(
+                symbol=stock_code, frequency=freq,
+                start=start_offset, offset=page_size,
+            )
+            if klines is None or klines.empty:
                 return None
 
-            df = pd.concat(frames, ignore_index=True)
-            # Rename index column if needed
+            if "datetime" in klines.columns:
+                klines = klines.reset_index(drop=True)
+            else:
+                klines = klines.reset_index()
+
+            df = klines
             if "index" in df.columns and "datetime" not in df.columns:
                 df = df.rename(columns={"index": "datetime"})
 
@@ -118,11 +109,9 @@ class AStockDataProvider(MarketDataProvider):
                 logger.warning(f"mootdx 缺少datetime列 {stock_code}")
                 return None
 
-            df = df.drop_duplicates(subset=["datetime"] if "datetime" in df.columns else None)
             df = df.sort_values("datetime")
             df["datetime"] = pd.to_datetime(df["datetime"])
 
-            # Filter by date range
             if start_date:
                 df = df[df["datetime"] >= pd.Timestamp(start_date)]
             if end_date:
@@ -284,11 +273,14 @@ class AStockDataProvider(MarketDataProvider):
         period: str = "1",
         adjust: str = "",
         max_retries: int = 2,
+        count: int = 500,
+        start_offset: int = 0,
     ) -> Optional[pd.DataFrame]:
         # 1. Try mootdx first (TCP, supports all periods including 1min)
         df = self._fetch_kline_mootdx(
             stock_code, period=period,
             start_date=start_datetime, end_date=end_datetime,
+            count=count, start_offset=start_offset,
         )
         if df is not None and not df.empty:
             logger.info(f"股票 {stock_code} period={period} 由 mootdx 返回 (共{len(df)}行)")

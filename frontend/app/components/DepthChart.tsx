@@ -34,6 +34,9 @@ interface DepthChartProps {
   showVWAP: boolean
   showGMM: boolean
   showCYQ: boolean
+  hasMore?: boolean
+  loadingMore?: boolean
+  onLoadMore?: () => void
 }
 
 const MA_COLORS = ['#f59e0b', '#f97316', '#8b5cf6']
@@ -47,6 +50,9 @@ export default function DepthChart({
   showVWAP,
   showGMM,
   showCYQ,
+  hasMore,
+  loadingMore,
+  onLoadMore,
 }: DepthChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -159,6 +165,11 @@ export default function DepthChart({
       }
       const vp = computeVolumeProfileFromKlines(visibleKlines, 80)
       setVisibleVP(vp)
+
+      // Trigger loadMore when scrolled near the left edge
+      if (from <= 5 && hasMore && onLoadMore && !loadingMore) {
+        onLoadMore()
+      }
     }
 
     // Compute initial
@@ -166,7 +177,7 @@ export default function DepthChart({
 
     ch.timeScale().subscribeVisibleLogicalRangeChange(handler)
     return () => ch.timeScale().unsubscribeVisibleLogicalRangeChange(handler)
-  }, [klines])
+  }, [klines, hasMore, loadingMore, onLoadMore])
 
   // Use visible-range VP if available, otherwise fall back to backend VP
   const activeVP = visibleVP || volumeProfile
