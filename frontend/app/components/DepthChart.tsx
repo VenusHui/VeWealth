@@ -439,6 +439,12 @@ export default function DepthChart({
         {/* Volume Profile overlay — semi-transparent bars extending from right price axis */}
         {showVPOverlay && (
           <div className="absolute inset-0 pointer-events-none z-10" style={{ right: 60 }}>
+            {/* Volume scale indicator (top) */}
+            <div className="absolute top-1 right-1 text-[9px] text-blue-400/70 font-mono">
+              {activeVP.profile.reduce((m, p) => p.volume > m ? p.volume : m, 0) >= 10000
+                ? `${(Math.max(...activeVP.profile.map(p => p.volume)) / 10000).toFixed(0)}万手`
+                : `${Math.max(...activeVP.profile.map(p => p.volume)).toFixed(0)}手`}
+            </div>
             {profileBars.map((bar, i) => (
               <div
                 key={i}

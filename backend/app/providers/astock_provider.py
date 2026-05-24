@@ -355,6 +355,146 @@ class AStockDataProvider(MarketDataProvider):
     # CYQ data
     # ------------------------------------------------------------------
 
+    def _compute_cyq_locally(
+        self, stock_code: str
+    ) -> Optional[dict[str, Any]]:
+        """Compute chip distribution from mootdx daily klines.
+
+        Uses volume-weighted price distribution with exponential decay
+        (newer bars weighted more heavily) to approximate where current
+        shareholders acquired their shares.
+        """
+        import numpy as np
+
+        df = self._fetch_kline_mootdx(
+            stock_code, period="101",
+            start_date="", end_date="", count=210,
+        )
+        if df is None or df.empty:
+            return None
+
+        df = df.sort_values("datetime")
+        prices = (df["high"] + df["low"] + df["close"]) / 3.0
+        volumes = df["volume"].values
+        n = len(df)
+
+        if n < 10 or volumes.sum() <= 0:
+            return None
+
+        # Build cost distribution: 200 price bins
+        price_min = df["low"].min()
+        price_max = df["high"].max()
+        if price_max <= price_min:
+            price_max = price_min + 0.01
+        bins = 200
+        bin_size = (price_max - price_min) / bins
+        dist = np.zeros(bins)
+
+        for i in range(n):
+            vol = volumes[i]
+            if vol <= 0:
+                continue
+            # Exponential decay: older bars have less weight
+            decay = np.exp(-0.5 * (n - 1 - i) / max(n - 1, 1))
+            weight = vol * decay
+            low = df.iloc[i]["low"]
+            high_val = df.iloc[i]["high"]
+            bar_range = high_val - low
+            if bar_range <= 0:
+                b = int((low - price_min) / bin_size)
+                b = max(0, min(b, bins - 1))
+                dist[b] += weight
+            else:
+                vol_per_unit = weight / bar_range
+                low_b = int((low - price_min) / bin_size)
+                high_b = int((high_val - price_min) / bin_size)
+                low_b = max(0, min(low_b, bins - 1))
+                high_b = max(0, min(high_b, bins - 1))
+                for b in range(low_b, high_b + 1):
+                    bin_low = price_min + b * bin_size
+                    bin_high = bin_low + bin_size
+                    overlap = max(0.0, min(high_val, bin_high) - max(low, bin_low))
+                    dist[b] += vol_per_unit * overlap
+
+        total = dist.sum()
+        if total <= 0:
+            return None
+
+        # Average cost
+        bin_centers = np.array([price_min + (i + 0.5) * bin_size for i in range(bins)])
+        avg_cost = float(np.sum(bin_centers * dist) / total)
+
+        # Current price (last close)
+        current_price = float(df.iloc[-1]["close"])
+
+        # Profit ratio: percentage of distribution below current price
+        below = dist[bin_centers <= current_price].sum()
+        profit_ratio = float(below / total)
+
+        # 90% and 70% cost ranges via cumulative distribution
+        cumsum = 0.0
+        # Sort bin centers by distance from distribution peak
+        peak_idx = int(np.argmax(dist))
+        low_idx = peak_idx
+        high_idx = peak_idx
+        cumsum = dist[peak_idx]
+
+        target_90 = total * 0.90
+        while cumsum < target_90:
+            can_low = low_idx > 0
+            can_high = high_idx < bins - 1
+            if not can_low and not can_high:
+                break
+            if can_low and can_high:
+                if dist[low_idx - 1] >= dist[high_idx + 1]:
+                    low_idx -= 1
+                else:
+                    high_idx += 1
+            elif can_low:
+                low_idx -= 1
+            else:
+                high_idx += 1
+            cumsum += dist[low_idx if can_low else high_idx]
+        cost_90_low = float(bin_centers[low_idx])
+        cost_90_high = float(bin_centers[high_idx])
+        concentration_90 = float((cost_90_high - cost_90_low) / avg_cost) if avg_cost > 0 else 0
+
+        # 70% range
+        low_idx = peak_idx
+        high_idx = peak_idx
+        cumsum = dist[peak_idx]
+        target_70 = total * 0.70
+        while cumsum < target_70:
+            can_low = low_idx > 0
+            can_high = high_idx < bins - 1
+            if not can_low and not can_high:
+                break
+            if can_low and can_high:
+                if dist[low_idx - 1] >= dist[high_idx + 1]:
+                    low_idx -= 1
+                else:
+                    high_idx += 1
+            elif can_low:
+                low_idx -= 1
+            else:
+                high_idx += 1
+            cumsum += dist[low_idx if can_low else high_idx]
+        cost_70_low = float(bin_centers[low_idx])
+        cost_70_high = float(bin_centers[high_idx])
+        concentration_70 = float((cost_70_high - cost_70_low) / avg_cost) if avg_cost > 0 else 0
+
+        return {
+            "date": str(df.iloc[-1]["datetime"]),
+            "profit_ratio": profit_ratio,
+            "avg_cost": round(avg_cost, 2),
+            "cost_90_low": round(cost_90_low, 2),
+            "cost_90_high": round(cost_90_high, 2),
+            "concentration_90": round(concentration_90, 4),
+            "cost_70_low": round(cost_70_low, 2),
+            "cost_70_high": round(cost_70_high, 2),
+            "concentration_70": round(concentration_70, 4),
+        }
+
     def fetch_cyq_data(
         self, stock_code: str, adjust: str = ""
     ) -> Optional[pd.DataFrame]:
@@ -362,23 +502,37 @@ class AStockDataProvider(MarketDataProvider):
         try:
             df = eastmoney_cyq(code=stock_code, fqt=fqt)
             if df is None or df.empty:
-                logger.warning(f"股票 {stock_code} 无筹码分布数据")
-                return None
+                raise Exception("Eastmoney CYQ returned empty")
             return df
         except Exception as e:
-            logger.error(f"获取股票 {stock_code} 筹码分布数据失败: {e}")
+            logger.info(f"Eastmoney CYQ不可用，回退mootdx本地计算 {stock_code}: {e}")
+
+        # Local computation via mootdx
+        local = self._compute_cyq_locally(stock_code)
+        if local is None:
             return None
+        df = pd.DataFrame([local])
+        # Add required column names for normalize_cyq_data compatibility
+        df["获利比例"] = df["profit_ratio"]
+        df["平均成本"] = df["avg_cost"]
+        df["90成本-低"] = df["cost_90_low"]
+        df["90成本-高"] = df["cost_90_high"]
+        df["90集中度"] = df["concentration_90"]
+        df["70成本-低"] = df["cost_70_low"]
+        df["70成本-高"] = df["cost_70_high"]
+        df["70集中度"] = df["concentration_70"]
+        return df
 
     def normalize_cyq_data(self, df: pd.DataFrame) -> dict[str, Any]:
         latest = df.iloc[-1]
         return {
-            "date": str(latest.get("日期", "")),
-            "profit_ratio": float(latest.get("获利比例", 0)),
-            "avg_cost": float(latest.get("平均成本", 0)),
-            "cost_90_low": float(latest.get("90成本-低", 0)),
-            "cost_90_high": float(latest.get("90成本-高", 0)),
-            "concentration_90": float(latest.get("90集中度", 0)),
-            "cost_70_low": float(latest.get("70成本-低", 0)),
-            "cost_70_high": float(latest.get("70成本-高", 0)),
-            "concentration_70": float(latest.get("70集中度", 0)),
+            "date": str(latest.get("日期", latest.get("date", ""))),
+            "profit_ratio": float(latest.get("获利比例", latest.get("profit_ratio", 0))),
+            "avg_cost": float(latest.get("平均成本", latest.get("avg_cost", 0))),
+            "cost_90_low": float(latest.get("90成本-低", latest.get("cost_90_low", 0))),
+            "cost_90_high": float(latest.get("90成本-高", latest.get("cost_90_high", 0))),
+            "concentration_90": float(latest.get("90集中度", latest.get("concentration_90", 0))),
+            "cost_70_low": float(latest.get("70成本-低", latest.get("cost_70_low", 0))),
+            "cost_70_high": float(latest.get("70成本-高", latest.get("cost_70_high", 0))),
+            "concentration_70": float(latest.get("70集中度", latest.get("concentration_70", 0))),
         }
