@@ -137,7 +137,6 @@ export function fitGaussianMixture(
   const prices = profile.map((p) => p.price)
   const volumes = profile.map((p) => p.volume)
   const maxVol = Math.max(...volumes, 1)
-  const totalVol = volumes.reduce((s, v) => s + v, 0)
 
   // Find peaks (local maxima above noise threshold)
   const threshold = maxVol * 0.08
@@ -164,13 +163,14 @@ export function fitGaussianMixture(
     let right = idx
     while (left > 0 && volumes[left - 1] > halfH) left--
     while (right < volumes.length - 1 && volumes[right + 1] > halfH) right++
-    const width = Math.max(right - left, 1)
-    const std = (width * (prices[Math.min(right, prices.length - 1)] - prices[Math.max(left, 0)])) / (2 * width * 2.5) || (prices[1] - prices[0]) * 2
+    // Half-width at 60% height → Gaussian sigma (heuristic factor of 5)
+    const priceWidth = prices[right] - prices[left]
+    const std = priceWidth > 0 ? priceWidth / 5 : (prices[1] - prices[0]) * 2
 
     return { mean, std: Math.max(std, 0.01), peakVol }
   })
 
-  const totalPeakVol = components.reduce((s, c) => s + c.peakVol, 0) || 1
+  const totalPeakVol = components.reduce((s, c) => s + c.peakVol, 0)
 
   // Normalize: each component's weight = its peak volume / total peak volume
   const normalized = components.map((c) => ({
@@ -203,7 +203,6 @@ export function fitGaussianMixture(
     fit_curve: fitCurve,
   }
 }
-
 
 export function computeVolumeProfileFromKlines(
   klines: KlineDataPoint[],
