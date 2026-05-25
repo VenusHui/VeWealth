@@ -153,30 +153,34 @@ export function fitGaussianMixture(
   peakIndices.sort((a, b) => volumes[b] - volumes[a])
   const topPeaks = peakIndices.slice(0, maxComponents)
 
-  // Estimate Gaussian parameters for each peak
+  // Estimate Gaussian parameters for each peak.
+  // Use a wider std so the curve envelopes the bars smoothly rather
+  // than creating sharp spikes at individual peaks.
+  const totalPriceRange = prices[prices.length - 1] - prices[0]
   const components = topPeaks.map((idx) => {
     const mean = prices[idx]
     const peakVol = volumes[idx]
-    // Estimate std from peak width at 60% height
-    const halfH = peakVol * 0.6
+    // Find peak width at 25% height (wider than 60% → smoother envelope)
+    const halfH = peakVol * 0.25
     let left = idx
     let right = idx
     while (left > 0 && volumes[left - 1] > halfH) left--
     while (right < volumes.length - 1 && volumes[right + 1] > halfH) right++
-    // Half-width at 60% height → Gaussian sigma (heuristic factor of 5)
     const priceWidth = prices[right] - prices[left]
-    const std = priceWidth > 0 ? priceWidth / 5 : (prices[1] - prices[0]) * 2
+    // Use a minimum std so even narrow peaks produce visible curves
+    const std = Math.max(priceWidth / 2, totalPriceRange * 0.02)
 
-    return { mean, std: Math.max(std, 0.01), peakVol }
+    return { mean, std, peakVol }
   })
 
   const totalPeakVol = components.reduce((s, c) => s + c.peakVol, 0)
 
-  // Normalize: each component's weight = its peak volume / total peak volume
+  // Weight each component proportional to its peak volume
   const normalized = components.map((c) => ({
     mean: c.mean,
     std: c.std,
-    weight: c.peakVol / totalPeakVol,
+    weight: c.peakVol / (totalPeakVol || 1),
+    peakVol: c.peakVol,
   }))
 
   // Generate fit curve (200 points across the price range)
@@ -191,14 +195,12 @@ export function fitGaussianMixture(
     let fitVol = 0
     for (const c of normalized) {
       const z = (price - c.mean) / c.std
-      fitVol += c.weight * Math.exp(-0.5 * z * z) / (c.std * Math.sqrt(2 * Math.PI))
+      // Scale each component's contribution by its peak volume so the
+      // curve height at each mean equals the bar height at that price
+      fitVol += c.peakVol * Math.exp(-0.5 * z * z)
     }
     fitCurve.push({ price, fitVolume: fitVol })
   }
-  // Normalize fit curve so its max equals the profile's max volume
-  const rawMax = Math.max(...fitCurve.map((p) => p.fitVolume), 1e-10)
-  const scale = maxVol / rawMax
-  for (const p of fitCurve) p.fitVolume *= scale
 
   return {
     n_components: normalized.length,
