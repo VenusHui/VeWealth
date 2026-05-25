@@ -338,3 +338,76 @@ export function computeVolumeProfileFromKlines(
     vwap: Math.round((vwapDen > 0 ? vwapNum / vwapDen : 0) * 1000) / 1000,
   }
 }
+
+// ---------------------------------------------------------------------------
+// Client-side GMM peak fitting on Volume Profile
+// ---------------------------------------------------------------------------
+
+export interface GMMPeak {
+  price: number
+  volume: number
+  width: number
+  weight: number
+}
+
+export interface GMMFitResult2 {
+  peaks: GMMPeak[]
+  curve: Array<{ price: number; fitVolume: number }>
+}
+
+export function fitGMMToProfile(
+  profile: VolumeProfilePoint[],
+  maxPeaks: number = 4,
+): GMMFitResult2 | null {
+  if (profile.length < 5) return null
+
+  const prices = profile.map((p) => p.price)
+  const volumes = profile.map((p) => p.volume)
+  const totalVol = volumes.reduce((s, v) => s + v, 0)
+  if (totalVol <= 0) return null
+
+  const kw = Math.max(3, Math.floor(profile.length / 20))
+  const smoothed = new Float64Array(profile.length)
+  for (let i = 0; i < profile.length; i++) {
+    let s = 0, ws = 0
+    for (let j = -kw; j <= kw; j++) {
+      const idx = i + j
+      if (idx < 0 || idx >= profile.length) continue
+      const w = Math.exp(-0.5 * (j / kw) ** 2)
+      s += volumes[idx] * w; ws += w
+    }
+    smoothed[i] = s / ws
+  }
+
+  const maxSm = smoothed.reduce((m, v) => v > m ? v : m, 0)
+  const peakIndices: number[] = []
+  for (let i = 1; i < profile.length - 1; i++) {
+    if (smoothed[i] > smoothed[i - 1] && smoothed[i] >= smoothed[i + 1] && smoothed[i] > 0.1 * maxSm) {
+      peakIndices.push(i)
+    }
+  }
+  peakIndices.sort((a, b) => smoothed[b] - smoothed[a])
+  const top = peakIndices.slice(0, maxPeaks).sort((a, b) => a - b)
+
+  const peaks: GMMPeak[] = []
+  for (const idx of top) {
+    const pv = smoothed[idx]
+    let l = idx, r = idx
+    while (l > 0 && smoothed[l] > pv * 0.6) l--
+    while (r < profile.length - 1 && smoothed[r] > pv * 0.6) r++
+    const w = ((prices[r] - prices[l]) / 2.355) || (prices[1] - prices[0]) * 2
+    peaks.push({ price: prices[idx], volume: volumes[idx], width: w, weight: smoothed[idx] / smoothed.reduce((s, v) => s + v, 0) })
+  }
+
+  const curve: Array<{ price: number; fitVolume: number }> = []
+  for (let i = 0; i <= 200; i++) {
+    const p = prices[0] + (i / 200) * (prices[prices.length - 1] - prices[0])
+    let fv = 0
+    for (const peak of peaks) {
+      const z = (p - peak.price) / (peak.width || 0.01)
+      fv += peak.volume * Math.exp(-0.5 * z * z)
+    }
+    curve.push({ price: Math.round(p * 100) / 100, fitVolume: Math.round(fv * 100) / 100 })
+  }
+  return { peaks, curve }
+}

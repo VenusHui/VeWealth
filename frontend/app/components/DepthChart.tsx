@@ -15,6 +15,7 @@ import {
   type KlineDataPoint,
   type VolumeProfileData,
   type CyqInfo,
+  type GMMPeak,
   UP_COLOR,
   DOWN_COLOR,
   UP_BORDER,
@@ -24,7 +25,7 @@ import {
   computeVWAPLine,
   getMaxProfileVolume,
   computeVolumeProfileFromKlines,
-  fitGaussianMixture,
+  fitGMMToProfile,
 } from '../lib/depthChartUtils'
 
 interface DepthChartProps {
@@ -400,30 +401,23 @@ export default function DepthChart({
       .filter((y) => y >= 0)
   }, [activeVP, calcYPos, displayPriceMin, displayPriceMax])
 
-  // GMM curve points normalized to the fit curve's own max amplitude.
-  // Curve width is self-scaled so the tallest peak fills the VP bar area.
-  // GMM fit on VISIBLE Volume Profile only — recomputes on zoom/pan
-  const gmmResult = useMemo(() => {
-    if (!showGMM || !activeVP?.profile?.length) return null
-    return fitGaussianMixture(activeVP.profile, 3)
-  }, [showGMM, activeVP])
-
+  // GMM uses backend data but should align with visible price range
   const gmmCurvePoints = useMemo(() => {
-    if (!gmmResult?.fit_curve) return []
+    if (!volumeProfile?.fit_result?.fit_curve || !volumeProfile.profile.length) return []
+    const fitCurve = volumeProfile.fit_result.fit_curve
     const pr = displayPriceMax - displayPriceMin
     if (pr <= 0) return []
-    const fitMax = Math.max(...gmmResult.fit_curve.map((p) => p.fitVolume), 1)
-    return gmmResult.fit_curve
-      .filter((p) => p.price >= displayPriceMin && p.price <= displayPriceMax)
-      .map((p) => ({
-        yPct: ((p.price - displayPriceMin) / pr) * 100,
-        widthPct: Math.min((p.fitVolume / fitMax) * 100, 85),
-      }))
-  }, [gmmResult, displayPriceMin, displayPriceMax])
+    const maxFitVol = Math.max(...fitCurve.map((p) => p.fitVolume), 1)
+    return fitCurve.map((p) => ({
+      price: p.price,
+      yPct: ((p.price - displayPriceMin) / pr) * 100,
+      widthPct: (p.fitVolume / maxFitVol) * 70,
+    }))
+  }, [volumeProfile, displayPriceMin, displayPriceMax])
 
   const gmmComponents = useMemo(() => {
-    return gmmResult?.components || []
-  }, [gmmResult])
+    return volumeProfile?.fit_result?.components || []
+  }, [volumeProfile])
 
   const cyqYPositions = useMemo(() => {
     if (!cyqInfo || displayPriceMin === displayPriceMax) return {}
@@ -437,6 +431,12 @@ export default function DepthChart({
   }, [cyqInfo, calcYPos, displayPriceMin, displayPriceMax])
 
   const showVPOverlay = activeVP && activeVP.profile.length > 0
+
+  // GMM fit on Volume Profile distribution (when toggle is on)
+  const gmmFit = useMemo(() => {
+    if (!showGMM || !activeVP?.profile.length) return null
+    return fitGMMToProfile(activeVP.profile, 5)
+  }, [showGMM, activeVP])
 
   return (
     <div className="flex gap-0 rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.78)] overflow-hidden" style={{ height: 520 }}>
@@ -491,27 +491,38 @@ export default function DepthChart({
               />
             )}
 
-            {/* GMM fit curve and peaks — overlaid directly on VP bars */}
-            {showGMM && gmmCurvePoints.length > 0 && (
-              <svg className="absolute inset-0 z-20 pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
-                <polyline
-                  points={gmmCurvePoints.map((p) => `${100 - p.widthPct},${100 - p.yPct}`).join(' ')}
-                  fill="none" stroke="#c084fc" strokeWidth="1.5" opacity="0.85"
-                />
-                {gmmComponents.map((c, i) => {
-                  const y = calcYPos(c.mean)
+            {/* GMM multi-peak fit curve on Volume Profile */}
+            {gmmFit && gmmFit.peaks.length > 0 && (
+              <>
+                {/* Fit curve as a line traced across the profile */}
+                <svg className="absolute inset-0 z-20" preserveAspectRatio="none">
+                  <polyline
+                    points={gmmFit.curve.map((p) => {
+                      const y = ((p.price - (activeVP?.price_min ?? 0)) / ((activeVP?.price_max ?? 1) - (activeVP?.price_min ?? 0))) * 100
+                      const x = 95 - (p.fitVolume / Math.max(...gmmFit.curve.map(c => c.fitVolume), 1)) * 85
+                      return `${x},${100 - y}`
+                    }).join(' ')}
+                    fill="none" stroke="#9333ea" strokeWidth="2" strokeDasharray="6,3" opacity="0.85"
+                  />
+                </svg>
+                {/* Peak labels */}
+                {gmmFit.peaks.map((peak, i) => {
+                  const y = ((peak.price - (activeVP?.price_min ?? 0)) / ((activeVP?.price_max ?? 1) - (activeVP?.price_min ?? 0))) * 100
+                  const x = 95 - (peak.volume / Math.max(...gmmFit.curve.map(c => c.fitVolume), 1)) * 85
                   if (y < 0 || y > 100) return null
                   return (
-                    <g key={i}>
-                      <line x1="0" y1={100 - y} x2="100" y2={100 - y}
-                        stroke="#c084fc" strokeWidth="0.5" strokeDasharray="2,2" opacity="0.5" />
-                      <text x="1" y={100 - y - 1.5} fill="#c084fc" fontSize="3" fontWeight="bold" opacity="0.95">
-                        ¥{c.mean.toFixed(1)}
-                      </text>
-                    </g>
+                    <div
+                      key={i}
+                      className="absolute z-20 pointer-events-none"
+                      style={{ bottom: `${y}%`, right: `${100 - x + 2}%` }}
+                    >
+                      <span className="text-[9px] font-bold text-purple-700 bg-white/80 px-1 rounded whitespace-nowrap">
+                        ¥{peak.price.toFixed(2)}
+                      </span>
+                    </div>
                   )
                 })}
-              </svg>
+              </>
             )}
           </div>
         )}
