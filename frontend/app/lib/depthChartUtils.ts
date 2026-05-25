@@ -127,6 +127,84 @@ export function getMaxProfileVolume(profile: VolumeProfilePoint[]): number {
 }
 
 // Client-side Volume Profile computation (visible range only)
+// Client-side GMM fitting on Volume Profile distribution
+export function fitGaussianMixture(
+  profile: VolumeProfilePoint[],
+  maxComponents: number = 3,
+): { n_components: number; components: Array<{ mean: number; std: number; weight: number }>; fit_curve: Array<{ price: number; fitVolume: number }> } | null {
+  if (profile.length < 5) return null
+
+  const prices = profile.map((p) => p.price)
+  const volumes = profile.map((p) => p.volume)
+  const maxVol = Math.max(...volumes, 1)
+  const totalVol = volumes.reduce((s, v) => s + v, 0)
+
+  // Find peaks (local maxima above noise threshold)
+  const threshold = maxVol * 0.08
+  const peakIndices: number[] = []
+  for (let i = 1; i < volumes.length - 1; i++) {
+    if (volumes[i] > threshold && volumes[i] >= volumes[i - 1] && volumes[i] > volumes[i + 1]) {
+      peakIndices.push(i)
+    }
+  }
+
+  if (peakIndices.length === 0) return null
+
+  // Sort peaks by volume, take top N
+  peakIndices.sort((a, b) => volumes[b] - volumes[a])
+  const topPeaks = peakIndices.slice(0, maxComponents)
+
+  // Estimate Gaussian parameters for each peak
+  const components = topPeaks.map((idx) => {
+    const mean = prices[idx]
+    const peakVol = volumes[idx]
+    // Estimate std from peak width at 60% height
+    const halfH = peakVol * 0.6
+    let left = idx
+    let right = idx
+    while (left > 0 && volumes[left - 1] > halfH) left--
+    while (right < volumes.length - 1 && volumes[right + 1] > halfH) right++
+    const width = Math.max(right - left, 1)
+    const std = (width * (prices[Math.min(right, prices.length - 1)] - prices[Math.max(left, 0)])) / (2 * width * 2.5) || (prices[1] - prices[0]) * 2
+
+    return { mean, std: Math.max(std, 0.01), peakVol }
+  })
+
+  const totalPeakVol = components.reduce((s, c) => s + c.peakVol, 0) || 1
+
+  // Normalize: each component's weight = its peak volume / total peak volume
+  const normalized = components.map((c) => ({
+    mean: c.mean,
+    std: c.std,
+    weight: c.peakVol / totalPeakVol,
+  }))
+
+  // Generate fit curve (200 points across the price range)
+  const priceMin = prices[0]
+  const priceMax = prices[prices.length - 1]
+  const steps = 200
+  const step = (priceMax - priceMin) / (steps - 1)
+  const fitCurve: Array<{ price: number; fitVolume: number }> = []
+
+  for (let i = 0; i < steps; i++) {
+    const price = priceMin + i * step
+    let fitVol = 0
+    for (const c of normalized) {
+      const z = (price - c.mean) / c.std
+      fitVol += c.weight * Math.exp(-0.5 * z * z) / (c.std * Math.sqrt(2 * Math.PI))
+    }
+    // Scale fit volume to match the profile's scale
+    fitCurve.push({ price, fitVolume: fitVol * maxVol * 0.4 })
+  }
+
+  return {
+    n_components: normalized.length,
+    components: normalized,
+    fit_curve: fitCurve,
+  }
+}
+
+
 export function computeVolumeProfileFromKlines(
   klines: KlineDataPoint[],
   bins: number = 80,

@@ -24,6 +24,7 @@ import {
   computeVWAPLine,
   getMaxProfileVolume,
   computeVolumeProfileFromKlines,
+  fitGaussianMixture,
 } from '../lib/depthChartUtils'
 
 interface DepthChartProps {
@@ -401,23 +402,28 @@ export default function DepthChart({
 
   // GMM curve points normalized to the fit curve's own max amplitude.
   // Curve width is self-scaled so the tallest peak fills the VP bar area.
+  // GMM fit on VISIBLE Volume Profile only — recomputes on zoom/pan
+  const gmmResult = useMemo(() => {
+    if (!showGMM || !activeVP?.profile?.length) return null
+    return fitGaussianMixture(activeVP.profile, 3)
+  }, [showGMM, activeVP])
+
   const gmmCurvePoints = useMemo(() => {
-    if (!volumeProfile?.fit_result?.fit_curve || !volumeProfile.profile.length || !activeVP) return []
-    const fitCurve = volumeProfile.fit_result.fit_curve
+    if (!gmmResult?.fit_curve) return []
     const pr = displayPriceMax - displayPriceMin
     if (pr <= 0) return []
-    const fitMax = Math.max(...fitCurve.map((p) => p.fitVolume), 1)
-    return fitCurve
+    const fitMax = Math.max(...gmmResult.fit_curve.map((p) => p.fitVolume), 1)
+    return gmmResult.fit_curve
       .filter((p) => p.price >= displayPriceMin && p.price <= displayPriceMax)
       .map((p) => ({
         yPct: ((p.price - displayPriceMin) / pr) * 100,
         widthPct: Math.min((p.fitVolume / fitMax) * 100, 85),
       }))
-  }, [volumeProfile, activeVP, displayPriceMin, displayPriceMax])
+  }, [gmmResult, displayPriceMin, displayPriceMax])
 
   const gmmComponents = useMemo(() => {
-    return volumeProfile?.fit_result?.components || []
-  }, [volumeProfile])
+    return gmmResult?.components || []
+  }, [gmmResult])
 
   const cyqYPositions = useMemo(() => {
     if (!cyqInfo || displayPriceMin === displayPriceMax) return {}
