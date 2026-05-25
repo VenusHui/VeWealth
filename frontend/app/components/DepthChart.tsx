@@ -496,8 +496,7 @@ export default function DepthChart({
               <svg className="absolute inset-0 z-20 pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
                 <polyline
                   points={gmmCurvePoints.map((p) => `${100 - p.widthPct},${100 - p.yPct}`).join(' ')}
-                  fill="none" stroke="#a855f7" strokeWidth="0.8" strokeDasharray="3,3" opacity="0.7"
-                  vectorEffect="non-scaling-stroke"
+                  fill="none" stroke="#c084fc" strokeWidth="1.5" opacity="0.85"
                 />
                 {gmmComponents.map((c, i) => {
                   const y = calcYPos(c.mean)
@@ -505,9 +504,8 @@ export default function DepthChart({
                   return (
                     <g key={i}>
                       <line x1="0" y1={100 - y} x2="100" y2={100 - y}
-                        stroke="#a855f7" strokeWidth="0.3" strokeDasharray="2,2" opacity="0.4"
-                        vectorEffect="non-scaling-stroke" />
-                      <text x="2" y={100 - y - 1} fill="#a855f7" fontSize="2.5" fontWeight="bold" opacity="0.9">
+                        stroke="#c084fc" strokeWidth="0.5" strokeDasharray="2,2" opacity="0.5" />
+                      <text x="1" y={100 - y - 1.5} fill="#c084fc" fontSize="3" fontWeight="bold" opacity="0.95">
                         ¥{c.mean.toFixed(1)}
                       </text>
                     </g>

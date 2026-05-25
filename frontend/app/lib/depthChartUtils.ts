@@ -139,7 +139,7 @@ export function fitGaussianMixture(
   const maxVol = Math.max(...volumes, 1)
 
   // Find peaks (local maxima above noise threshold)
-  const threshold = maxVol * 0.08
+  const threshold = maxVol * 0.03
   const peakIndices: number[] = []
   for (let i = 1; i < volumes.length - 1; i++) {
     if (volumes[i] > threshold && volumes[i] >= volumes[i - 1] && volumes[i] > volumes[i + 1]) {
@@ -193,9 +193,12 @@ export function fitGaussianMixture(
       const z = (price - c.mean) / c.std
       fitVol += c.weight * Math.exp(-0.5 * z * z) / (c.std * Math.sqrt(2 * Math.PI))
     }
-    // Scale fit volume to match the profile's scale
-    fitCurve.push({ price, fitVolume: fitVol * maxVol * 0.4 })
+    fitCurve.push({ price, fitVolume: fitVol })
   }
+  // Normalize fit curve so its max equals the profile's max volume
+  const rawMax = Math.max(...fitCurve.map((p) => p.fitVolume), 1e-10)
+  const scale = maxVol / rawMax
+  for (const p of fitCurve) p.fitVolume *= scale
 
   return {
     n_components: normalized.length,
