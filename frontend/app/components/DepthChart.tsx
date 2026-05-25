@@ -399,19 +399,25 @@ export default function DepthChart({
       .filter((y) => y >= 0)
   }, [activeVP, calcYPos, displayPriceMin, displayPriceMax])
 
-  // GMM uses backend data but should align with visible price range
+  // GMM curve scaled to match visible VP bars
   const gmmCurvePoints = useMemo(() => {
-    if (!volumeProfile?.fit_result?.fit_curve || !volumeProfile.profile.length) return []
+    if (!volumeProfile?.fit_result?.fit_curve || !volumeProfile.profile.length || !activeVP) return []
     const fitCurve = volumeProfile.fit_result.fit_curve
     const pr = displayPriceMax - displayPriceMin
     if (pr <= 0) return []
-    const maxFitVol = Math.max(...fitCurve.map((p) => p.fitVolume), 1)
-    return fitCurve.map((p) => ({
-      price: p.price,
-      yPct: ((p.price - displayPriceMin) / pr) * 100,
-      widthPct: (p.fitVolume / maxFitVol) * 70,
-    }))
-  }, [volumeProfile, displayPriceMin, displayPriceMax])
+    // Scale fit volumes to the visible VP's max volume so curve amplitude
+    // matches the visible horizontal bars.
+    const vpMax = activeVP.profile.reduce((m, p) => p.volume > m ? p.volume : m, 0)
+    const fitMax = Math.max(...fitCurve.map((p) => p.fitVolume), 1)
+    const scale = vpMax / fitMax
+    return fitCurve
+      .filter((p) => p.price >= displayPriceMin && p.price <= displayPriceMax)
+      .map((p) => ({
+        price: p.price,
+        yPct: ((p.price - displayPriceMin) / pr) * 100,
+        widthPct: Math.min((p.fitVolume * scale / vpMax) * 90, 85),
+      }))
+  }, [volumeProfile, activeVP, displayPriceMin, displayPriceMax])
 
   const gmmComponents = useMemo(() => {
     return volumeProfile?.fit_result?.components || []
