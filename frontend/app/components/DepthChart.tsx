@@ -415,7 +415,7 @@ export default function DepthChart({
       .map((p) => ({
         price: p.price,
         yPct: ((p.price - displayPriceMin) / pr) * 100,
-        widthPct: Math.min((p.fitVolume * scale / vpMax) * 90, 85),
+        widthPct: Math.min((p.fitVolume * scale / vpMax) * 100, 85),
       }))
   }, [volumeProfile, activeVP, displayPriceMin, displayPriceMax])
 
@@ -489,27 +489,24 @@ export default function DepthChart({
               />
             )}
 
-            {/* GMM fit curve and peaks */}
+            {/* GMM fit curve and peaks — overlaid directly on VP bars */}
             {showGMM && gmmCurvePoints.length > 0 && (
-              <svg className="absolute inset-0 z-20" preserveAspectRatio="none" style={{ right: 60 }}>
+              <svg className="absolute inset-0 z-20 pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
                 <polyline
-                  points={gmmCurvePoints.map((p) => `${95 - p.widthPct * 0.9},${100 - p.yPct}`).join(' ')}
-                  fill="none" stroke="#a855f7" strokeWidth="2" strokeDasharray="6,2" opacity="0.7"
+                  points={gmmCurvePoints.map((p) => `${100 - p.widthPct},${100 - p.yPct}`).join(' ')}
+                  fill="none" stroke="#a855f7" strokeWidth="0.8" strokeDasharray="3,3" opacity="0.7"
+                  vectorEffect="non-scaling-stroke"
                 />
                 {gmmComponents.map((c, i) => {
                   const y = calcYPos(c.mean)
                   if (y < 0 || y > 100) return null
                   return (
                     <g key={i}>
-                      <line x1="0" y1={`${100 - y}%`} x2="90" y2={`${100 - y}%`}
-                        stroke="#a855f7" strokeWidth="1" strokeDasharray="3,3" opacity="0.5" />
-                      <text x="2" y={`${100 - y}%`} fill="#a855f7" fontSize="9" fontWeight="bold"
-                        dominantBaseline="middle" opacity="0.9">
+                      <line x1="0" y1={100 - y} x2="100" y2={100 - y}
+                        stroke="#a855f7" strokeWidth="0.3" strokeDasharray="2,2" opacity="0.4"
+                        vectorEffect="non-scaling-stroke" />
+                      <text x="2" y={100 - y - 1} fill="#a855f7" fontSize="2.5" fontWeight="bold" opacity="0.9">
                         ¥{c.mean.toFixed(1)}
-                      </text>
-                      <text x="2" y={`${100 - y + 3.5}%`} fill="#9333ea" fontSize="7"
-                        dominantBaseline="hanging" opacity="0.6">
-                        σ{c.std.toFixed(2)} w{(c.weight * 100).toFixed(0)}%
                       </text>
                     </g>
                   )
