@@ -492,38 +492,44 @@ export default function DepthChart({
             )}
 
             {/* GMM multi-peak fit curve on Volume Profile */}
-            {gmmFit && gmmFit.peaks.length > 0 && (
-              <>
-                {/* Fit curve as a line traced across the profile */}
-                <svg className="absolute inset-0 z-20" preserveAspectRatio="none">
-                  <polyline
-                    points={gmmFit.curve.map((p) => {
-                      const y = ((p.price - (activeVP?.price_min ?? 0)) / ((activeVP?.price_max ?? 1) - (activeVP?.price_min ?? 0))) * 100
-                      const x = 95 - (p.fitVolume / Math.max(...gmmFit.curve.map(c => c.fitVolume), 1)) * 85
-                      return `${x},${100 - y}`
-                    }).join(' ')}
-                    fill="none" stroke="#9333ea" strokeWidth="2" strokeDasharray="6,3" opacity="0.85"
-                  />
-                </svg>
-                {/* Peak labels */}
-                {gmmFit.peaks.map((peak, i) => {
-                  const y = ((peak.price - (activeVP?.price_min ?? 0)) / ((activeVP?.price_max ?? 1) - (activeVP?.price_min ?? 0))) * 100
-                  const x = 95 - (peak.volume / Math.max(...gmmFit.curve.map(c => c.fitVolume), 1)) * 85
-                  if (y < 0 || y > 100) return null
-                  return (
-                    <div
-                      key={i}
-                      className="absolute z-20 pointer-events-none"
-                      style={{ bottom: `${y}%`, right: `${100 - x + 2}%` }}
-                    >
-                      <span className="text-[9px] font-bold text-purple-700 bg-white/80 px-1 rounded whitespace-nowrap">
+            {gmmFit && gmmFit.peaks.length > 0 && (() => {
+              const priceMin = displayPriceMin || (activeVP?.price_min ?? 0)
+              const priceMax = displayPriceMax || (activeVP?.price_max ?? 1)
+              const priceRng = priceMax - priceMin || 1
+              const maxFit = Math.max(...gmmFit.curve.map(c => c.fitVolume), 1)
+              return (
+                <>
+                  {/* Fit curve overlaid on volume bars */}
+                  <svg className="absolute inset-0 z-20" preserveAspectRatio="none">
+                    <polyline
+                      points={gmmFit.curve.map((p) => {
+                        // y: price → vertical position (match volume bars' bottom%)
+                        const y = ((p.price - priceMin) / priceRng) * 100
+                        // x: volume → horizontal width from right (same scale as volume bars)
+                        const w = Math.min((p.fitVolume / maxFit) * 100, 85)
+                        return `${100 - w},${100 - y}`
+                      }).join(' ')}
+                      fill="none" stroke="#9333ea" strokeWidth="2" strokeDasharray="6,3" opacity="0.85"
+                    />
+                  </svg>
+                  {/* Peak labels positioned at the tip of each peak bar */}
+                  {gmmFit.peaks.map((peak, i) => {
+                    const y = ((peak.price - priceMin) / priceRng) * 100
+                    if (y < 0 || y > 100) return null
+                    const w = Math.min((peak.volume / maxFit) * 100, 85)
+                    return (
+                      <span
+                        key={i}
+                        className="absolute z-20 pointer-events-none text-[9px] font-bold text-purple-700 bg-white/80 px-1 rounded whitespace-nowrap"
+                        style={{ bottom: `${y}%`, right: `${w}%`, transform: 'translateY(50%)' }}
+                      >
                         ¥{peak.price.toFixed(2)}
                       </span>
-                    </div>
-                  )
-                })}
-              </>
-            )}
+                    )
+                  })}
+                </>
+              )
+            })()}
           </div>
         )}
       </div>
