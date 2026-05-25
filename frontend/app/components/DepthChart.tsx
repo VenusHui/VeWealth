@@ -399,23 +399,19 @@ export default function DepthChart({
       .filter((y) => y >= 0)
   }, [activeVP, calcYPos, displayPriceMin, displayPriceMax])
 
-  // GMM curve scaled to match visible VP bars
+  // GMM curve points normalized to the fit curve's own max amplitude.
+  // Curve width is self-scaled so the tallest peak fills the VP bar area.
   const gmmCurvePoints = useMemo(() => {
     if (!volumeProfile?.fit_result?.fit_curve || !volumeProfile.profile.length || !activeVP) return []
     const fitCurve = volumeProfile.fit_result.fit_curve
     const pr = displayPriceMax - displayPriceMin
     if (pr <= 0) return []
-    // Scale fit volumes to the visible VP's max volume so curve amplitude
-    // matches the visible horizontal bars.
-    const vpMax = activeVP.profile.reduce((m, p) => p.volume > m ? p.volume : m, 0)
     const fitMax = Math.max(...fitCurve.map((p) => p.fitVolume), 1)
-    const scale = vpMax / fitMax
     return fitCurve
       .filter((p) => p.price >= displayPriceMin && p.price <= displayPriceMax)
       .map((p) => ({
-        price: p.price,
         yPct: ((p.price - displayPriceMin) / pr) * 100,
-        widthPct: Math.min((p.fitVolume * scale / vpMax) * 100, 85),
+        widthPct: Math.min((p.fitVolume / fitMax) * 100, 85),
       }))
   }, [volumeProfile, activeVP, displayPriceMin, displayPriceMax])
 
