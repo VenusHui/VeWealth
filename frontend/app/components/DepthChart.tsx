@@ -15,7 +15,6 @@ import {
   type KlineDataPoint,
   type VolumeProfileData,
   type CyqInfo,
-  type GMMPeak,
   UP_COLOR,
   DOWN_COLOR,
   UP_BORDER,
@@ -361,14 +360,10 @@ export default function DepthChart({
   // Volume Profile panel data (visible range only)
   const profileBars = useMemo(() => {
     if (!activeVP || !activeVP.profile.length) return []
-    const maxVol = getMaxProfileVolume(activeVP.profile)
-    if (maxVol === 0) return []
+    if (getMaxProfileVolume(activeVP.profile) === 0) return []
     const pr = displayPriceMax - displayPriceMin || 1
-    // barWidth will be rescaled later by the shared xMax in the JSX
     return activeVP.profile.map((p) => ({
       ...p,
-      volume: p.volume,
-      barWidth: (p.volume / maxVol) * 100,
       yPct: ((p.price - displayPriceMin) / pr) * 100,
     }))
   }, [activeVP, displayPriceMin, displayPriceMax])
@@ -402,24 +397,6 @@ export default function DepthChart({
       .map(calcYPos)
       .filter((y) => y >= 0)
   }, [activeVP, calcYPos, displayPriceMin, displayPriceMax])
-
-  // GMM uses backend data but should align with visible price range
-  const gmmCurvePoints = useMemo(() => {
-    if (!volumeProfile?.fit_result?.fit_curve || !volumeProfile.profile.length) return []
-    const fitCurve = volumeProfile.fit_result.fit_curve
-    const pr = displayPriceMax - displayPriceMin
-    if (pr <= 0) return []
-    const maxFitVol = Math.max(...fitCurve.map((p) => p.fitVolume), 1)
-    return fitCurve.map((p) => ({
-      price: p.price,
-      yPct: ((p.price - displayPriceMin) / pr) * 100,
-      widthPct: (p.fitVolume / maxFitVol) * 70,
-    }))
-  }, [volumeProfile, displayPriceMin, displayPriceMax])
-
-  const gmmComponents = useMemo(() => {
-    return volumeProfile?.fit_result?.components || []
-  }, [volumeProfile])
 
   const cyqYPositions = useMemo(() => {
     if (!cyqInfo || displayPriceMin === displayPriceMax) return {}
