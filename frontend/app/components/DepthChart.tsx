@@ -364,8 +364,10 @@ export default function DepthChart({
     const maxVol = getMaxProfileVolume(activeVP.profile)
     if (maxVol === 0) return []
     const pr = displayPriceMax - displayPriceMin || 1
+    // barWidth will be rescaled later by the shared xMax in the JSX
     return activeVP.profile.map((p) => ({
       ...p,
+      volume: p.volume,
       barWidth: (p.volume / maxVol) * 100,
       yPct: ((p.price - displayPriceMin) / pr) * 100,
     }))
@@ -438,6 +440,18 @@ export default function DepthChart({
     return fitGMMToProfile(activeVP.profile, 5)
   }, [showGMM, activeVP])
 
+  // Shared X-axis max: include GMM fit peak so nothing clips
+  const vpxMax = useMemo(() => {
+    const vpMax = getMaxProfileVolume(activeVP?.profile || [])
+    const fitMax = gmmFit?.curve.reduce((m: number, p) => p.fitVolume > m ? p.fitVolume : m, 0) ?? 0
+    return Math.max(vpMax, fitMax, 1)
+  }, [activeVP, gmmFit])
+
+  const barWidth = useCallback(
+    (v: number) => (v / vpxMax) * 85,
+    [vpxMax],
+  )
+
   return (
     <div className="flex gap-0 rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.78)] overflow-hidden" style={{ height: 520 }}>
       {/* Candlestick chart + Volume Profile overlay */}
@@ -448,29 +462,23 @@ export default function DepthChart({
         {showVPOverlay && (
           <div className="absolute inset-0 pointer-events-none z-10" style={{ right: 60 }}>
             {/* Volume axis: tick marks showing volume scale */}
-            {(() => {
-              const maxVol = activeVP.profile.reduce((m, p) => p.volume > m ? p.volume : m, 0)
-              if (maxVol <= 0) return null
-              const ticks = 4
-              const step = maxVol / ticks
-              const formatVol = (v: number) => v >= 10000 ? `${(v / 10000).toFixed(1)}万` : `${v.toFixed(0)}`
-              return (
-                <div className="absolute left-0 right-0 top-2 h-4 z-20 pointer-events-none">
-                  {Array.from({ length: ticks + 1 }, (_, i) => {
-                    const vol = step * i
-                    const xPct = i === 0 ? 95 : Math.max(5, 95 - (vol / maxVol) * 90)
-                    return (
-                      <div key={i} className="absolute top-0" style={{ right: `${100 - xPct}%` }}>
-                        <div className="h-2 border-l border-blue-400/30" />
-                        <span className="absolute top-2 -translate-x-1/2 text-[8px] text-blue-400/60 font-mono whitespace-nowrap">
-                          {i === 0 ? '0' : formatVol(vol)}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              )
-            })()}
+            {vpxMax > 0 && (
+              <div className="absolute left-0 right-0 top-2 h-4 z-20 pointer-events-none">
+                {[0, 1, 2, 3, 4].map((i) => {
+                  const vol = (vpxMax / 4) * i
+                  const label = vol >= 10000 ? `${(vol / 10000).toFixed(1)}万` : `${vol.toFixed(0)}`
+                  const w = barWidth(vol)
+                  return (
+                    <div key={i} className="absolute top-0" style={{ right: `${w}%` }}>
+                      <div className="h-2 border-l border-blue-400/30" />
+                      <span className="absolute top-2 -translate-x-1/2 text-[8px] text-blue-400/60 font-mono whitespace-nowrap">
+                        {i === 0 ? '0' : label}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
             {profileBars.map((bar, i) => (
               <div
                 key={i}
@@ -478,7 +486,7 @@ export default function DepthChart({
                 style={{
                   bottom: `${bar.yPct}%`,
                   height: `${Math.max(100 / profileBars.length, 0.8)}%`,
-                  width: `${Math.min(bar.barWidth, 85)}%`,
+                  width: `${barWidth(bar.volume)}%`,
                 }}
               />
             ))}
@@ -496,33 +504,42 @@ export default function DepthChart({
               const priceMin = displayPriceMin || (activeVP?.price_min ?? 0)
               const priceMax = displayPriceMax || (activeVP?.price_max ?? 1)
               const priceRng = priceMax - priceMin || 1
-              const maxFit = Math.max(...gmmFit.curve.map(c => c.fitVolume), 1)
               return (
                 <>
-                  {/* Fit curve overlaid on volume bars */}
-                  <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 z-20">
-                    <polyline
-                      points={gmmFit.curve.map((p) => {
-                        const y = ((p.price - priceMin) / priceRng) * 100
-                        const w = Math.min((p.fitVolume / maxFit) * 100, 85)
-                        return `${100 - w},${100 - y}`
-                      }).join(' ')}
-                      fill="none" stroke="#9333ea" strokeWidth="2" strokeDasharray="6,3" opacity="0.85"
-                      vectorEffect="non-scaling-stroke"
-                    />
-                  </svg>
-                  {/* Peak labels positioned at the tip of each peak bar */}
-                  {gmmFit.peaks.map((peak, i) => {
-                    const y = ((peak.price - priceMin) / priceRng) * 100
+                  {gmmFit.curve.map((pt, i) => {
+                    const y = ((pt.price - priceMin) / priceRng) * 100
                     if (y < 0 || y > 100) return null
-                    const w = Math.min((peak.volume / maxFit) * 100, 85)
+                    const w = barWidth(pt.fitVolume)
+                    return (
+                      <div
+                        key={`gc-${i}`}
+                        className="absolute pointer-events-none"
+                        style={{ right: `${w}%`, bottom: `${y}%`, width: 2, height: 2, background: '#9333ea', opacity: 0.7, transform: 'translate(0,50%)' }}
+                      />
+                    )
+                  })}
+                  {gmmFit.peaks.map((pk, i) => {
+                    const y = ((pk.price - priceMin) / priceRng) * 100
+                    if (y < 0 || y > 100) return null
+                    return (
+                      <div
+                        key={`gr-${i}`}
+                        className="absolute left-0 right-0 pointer-events-none"
+                        style={{ bottom: `${y}%`, borderTop: '1px dashed #a855f7', opacity: 0.25 }}
+                      />
+                    )
+                  })}
+                  {gmmFit.peaks.map((pk, i) => {
+                    const y = ((pk.price - priceMin) / priceRng) * 100
+                    if (y < 0 || y > 100) return null
+                    const w = barWidth(pk.volume)
                     return (
                       <span
-                        key={i}
+                        key={`gl-${i}`}
                         className="absolute z-20 pointer-events-none text-[9px] font-bold text-purple-700 bg-white/80 px-1 rounded whitespace-nowrap"
-                        style={{ bottom: `${y}%`, right: `${w}%`, transform: 'translateY(50%)' }}
+                        style={{ bottom: `${y}%`, right: `${w}%` }}
                       >
-                        ¥{peak.price.toFixed(2)}
+                        ¥{pk.price.toFixed(2)}
                       </span>
                     )
                   })}
