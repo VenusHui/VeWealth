@@ -18,35 +18,6 @@ class DataProcessor:
     """数据处理器 - 负责高级数据分析和转换"""
 
     @staticmethod
-    def to_chart_data(df: pd.DataFrame) -> List[Dict[str, Any]]:
-        """
-        将DataFrame转换为图表数据格式
-
-        Args:
-            df: 包含OHLC数据的DataFrame
-
-        Returns:
-            图表数据列表
-        """
-        if df.empty:
-            return []
-
-        chart_data = []
-        for _, row in df.iterrows():
-            chart_data.append(
-                {
-                    "datetime": str(row.get("datetime", "")),
-                    "price": float(row.get("close", 0)),
-                    "volume": float(row.get("volume", 0)),
-                    "open": float(row.get("open", 0)),
-                    "high": float(row.get("high", 0)),
-                    "low": float(row.get("low", 0)),
-                }
-            )
-
-        return chart_data
-
-    @staticmethod
     def fit_gaussian_mixture(
         chart_data: List[Dict[str, Any]], n_components: int = 3, max_components: int = 5
     ) -> Optional[Dict[str, Any]]:

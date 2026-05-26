@@ -7,8 +7,6 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas.stock import (
     StockSearchResponse,
-    StockDataResponse,
-    CyqDataResponse,
     KlineResponse,
     VolumeProfileResponse,
     DepthResponse,
@@ -31,36 +29,6 @@ async def search_stock(
     try:
         results = stock_service.search_stocks(keyword)
         return StockSearchResponse(success=True, results=results)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/data", response_model=StockDataResponse)
-async def get_stock_data(
-    symbol: str = Query(..., description="股票代码，例如：000001"),
-    start_date: str = Query(..., description="开始日期，格式：YYYY-MM-DD"),
-    end_date: str = Query(..., description="结束日期，格式：YYYY-MM-DD"),
-    period: str = Query("1", description="K线周期: 1/5/15/30/60/101"),
-):
-    """
-    获取股票数据（多周期支持）
-
-    - period=1: 1分钟数据（默认，兼容旧版）
-    - period=5/15/30/60: 对应分钟K线
-    - period=101: 日线数据
-    - 自动进行GMM高斯混合模型拟合
-    """
-    try:
-        data = stock_service.get_stock_data(
-            symbol=symbol,
-            start_date=start_date,
-            end_date=end_date,
-            period=period,
-        )
-        return StockDataResponse(**data)
-
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -145,26 +113,5 @@ async def get_stock_info(
     try:
         data = stock_service.get_stock_info(symbol)
         return StockInfoResponse(**data)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/cyq", response_model=CyqDataResponse)
-async def get_cyq_data(
-    symbol: str = Query(..., description="股票代码，例如：000001"),
-    adjust: str = Query("", description="复权类型，''表示不复权，'qfq'表示前复权"),
-):
-    """
-    获取股票筹码分布数据
-
-    特性：
-    - 筹码分布数据（获利比例、平均成本等）
-    - 支持复权选项
-    - 用于分析主力成本和散户持仓情况
-    """
-    try:
-        data = stock_service.get_cyq_data(symbol=symbol, adjust=adjust)
-        return CyqDataResponse(**data)
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

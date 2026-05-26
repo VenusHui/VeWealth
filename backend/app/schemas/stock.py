@@ -21,79 +21,6 @@ class StockSearchResponse(BaseModel):
     results: List[StockSearchResult]
 
 
-class ChartDataPoint(BaseModel):
-    """图表数据点"""
-
-    datetime: str = Field(..., description="日期时间")
-    price: float = Field(..., description="收盘价")
-    volume: float = Field(..., description="成交量")
-    open: Optional[float] = Field(None, description="开盘价")
-    high: Optional[float] = Field(None, description="最高价")
-    low: Optional[float] = Field(None, description="最低价")
-
-
-class GaussianComponent(BaseModel):
-    """高斯分量参数"""
-
-    mean: float = Field(..., description="均值（价格）")
-    std: float = Field(..., description="标准差")
-    weight: float = Field(..., description="权重")
-    volume: float = Field(..., description="该分量对应的成交量")
-
-
-class FitCurvePoint(BaseModel):
-    """拟合曲线数据点"""
-
-    price: float = Field(..., description="价格")
-    fitVolume: float = Field(..., description="拟合的成交量")
-
-
-class FitResult(BaseModel):
-    """高斯混合模型拟合结果"""
-
-    n_components: int = Field(..., description="高斯分量数量")
-    components: List[GaussianComponent] = Field(..., description="各高斯分量参数")
-    fit_curve: List[FitCurvePoint] = Field(..., description="拟合曲线数据")
-    bic: float = Field(..., description="BIC评分")
-
-
-class StockDataResponse(BaseModel):
-    """股票数据查询响应"""
-
-    success: bool = True
-    symbol: str
-    start_date: str
-    end_date: str
-    actual_start_date: str
-    actual_end_date: str
-    period: str
-    chart_data: List[ChartDataPoint]
-    count: int
-    fit_result: Optional[FitResult] = Field(None, description="正态分布拟合结果")
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "success": True,
-                "symbol": "000001",
-                "start_date": "2024-01-01",
-                "end_date": "2024-01-31",
-                "period": "daily",
-                "chart_data": [
-                    {
-                        "datetime": "2024-01-01",
-                        "price": 12.34,
-                        "volume": 1234567,
-                        "open": 12.30,
-                        "high": 12.40,
-                        "low": 12.25,
-                    }
-                ],
-                "count": 20,
-            }
-        }
-
-
 class CyqInfo(BaseModel):
     """筹码分布信息"""
 
@@ -108,37 +35,8 @@ class CyqInfo(BaseModel):
     concentration_70: float = Field(..., description="70%集中度")
 
 
-class CyqDataResponse(BaseModel):
-    """筹码分布数据响应"""
-
-    success: bool = True
-    symbol: str = Field(..., description="股票代码")
-    adjust: str = Field(..., description="复权类型")
-    cyq_info: CyqInfo = Field(..., description="筹码分布信息")
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "success": True,
-                "symbol": "000001",
-                "adjust": "",
-                "cyq_info": {
-                    "date": "2024-01-11",
-                    "profit_ratio": 0.074399,
-                    "avg_cost": 11.25,
-                    "cost_90_low": 9.16,
-                    "cost_90_high": 12.56,
-                    "concentration_90": 0.173302,
-                    "cost_70_low": 9.33,
-                    "cost_70_high": 12.56,
-                    "concentration_70": 0.147273,
-                },
-            }
-        }
-
-
 # ---------------------------------------------------------------------------
-# K-line endpoint schemas
+# Depth (combined) endpoint schemas
 # ---------------------------------------------------------------------------
 
 
@@ -196,6 +94,31 @@ class PocData(BaseModel):
     volume: float = Field(..., description="POC 成交量")
 
 
+class GaussianComponent(BaseModel):
+    """高斯混合模型分量参数"""
+
+    mean: float = Field(..., description="均值（价格）")
+    std: float = Field(..., description="标准差")
+    weight: float = Field(..., description="权重")
+    volume: float = Field(..., description="该分量对应的成交量")
+
+
+class FitCurvePoint(BaseModel):
+    """GMM拟合曲线数据点"""
+
+    price: float = Field(..., description="价格")
+    fitVolume: float = Field(..., description="拟合成交量")
+
+
+class FitResult(BaseModel):
+    """高斯混合模型对Volume Profile分布的拟合结果"""
+
+    n_components: int = Field(..., description="高斯分量数量")
+    components: List[GaussianComponent] = Field(..., description="各高斯分量参数")
+    fit_curve: List[FitCurvePoint] = Field(..., description="拟合曲线数据")
+    bic: float = Field(..., description="BIC评分")
+
+
 class VolumeProfileResponse(BaseModel):
     """Volume Profile query response"""
 
@@ -212,7 +135,9 @@ class VolumeProfileResponse(BaseModel):
     hvn_levels: List[float]
     lvn_levels: List[float]
     vwap: float
-    fit_result: Optional[FitResult] = Field(None, description="Volume Profile分布的GMM拟合结果")
+    fit_result: Optional[FitResult] = Field(
+        None, description="Volume Profile分布的GMM拟合结果"
+    )
 
 
 # ---------------------------------------------------------------------------

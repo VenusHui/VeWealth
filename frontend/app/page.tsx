@@ -3,16 +3,9 @@
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { isAuthenticated } from './lib/auth'
-import { AppPage, InfoPill, MetricCard, PageHeader, QuickLinkCard, SurfaceCard } from './components/ui-shell'
+import { AppPage, InfoPill, PageHeader, QuickLinkCard } from './components/ui-shell'
 
 const capabilityCards = [
-  {
-    label: '分析台',
-    title: '价格分布与筹码结构联动分析',
-    description: '把搜索、日期过滤、拟合结果和图表放进一个连续工作流，快速判断成本区与集中成交价。',
-    href: '/analysis',
-    stats: '1 分钟粒度 · GMM 拟合 · 筹码分布',
-  },
   {
     label: '监控台',
     title: '把关注标的沉淀成可执行的预警清单',
@@ -49,16 +42,13 @@ export default function HomePage() {
           </>
         )}
         actions={(
-          <>
-            <Link href="/analysis" className="ve-button-primary">分析台</Link>
-            <Link href={isLoggedIn ? '/backtest' : '/login'} className="ve-button-secondary">
-              {isLoggedIn ? '回测中心' : '登录'}
-            </Link>
-          </>
+          <Link href={isLoggedIn ? '/backtest' : '/login'} className="ve-button-primary">
+            {isLoggedIn ? '回测中心' : '登录'}
+          </Link>
         )}
       />
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {capabilityCards.map((item) => (
           <QuickLinkCard key={item.href} {...item} href={item.href === '/watchlist' && !isLoggedIn ? '/login' : item.href} />
         ))}
