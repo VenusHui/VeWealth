@@ -1,0 +1,189 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - dev/**
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOCKER_REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/vewealth
+
+jobs:
+  # 代码质量检查
+  lint:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        working-directory: ./backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install black
+
+      - name: Run Python linting
+        working-directory: ./backend
+        run: |
+          # 代码格式检查（失败时应直接失败）
+          black --check .
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: './frontend/package-lock.json'
+
+      - name: Install Node.js dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Run TypeScript linting
+        working-directory: ./frontend
+        run: npm run lint
+
+  # 构建测试
+  build:
+    name: Build Test
+    runs-on: ubuntu-latest
+    needs: lint
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Backend Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          tags: vewealth-backend:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Frontend Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: false
+          tags: vewealth-frontend:test
+          build-args: |
+            NEXT_PUBLIC_API_URL=http://124.221.239.27:8001
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # 部署到云服务器
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [lint, build]
+    # 推送到 main 或任意 dev/** 分支时执行部署
+    if: |
+      github.event_name == 'push' && (
+        github.ref == 'refs/heads/main' ||
+        startsWith(github.ref, 'refs/heads/dev/')
+      )
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Display deployment info
+        run: |
+          echo "=========================================="
+          echo "🚀 部署信息"
+          echo "=========================================="
+          echo "分支: ${{ github.ref_name }}"
+          echo "提交: ${{ github.sha }}"
+          echo "作者: ${{ github.actor }}"
+          echo "=========================================="
+
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            echo "=========================================="
+            echo "🚀 开始部署 VeWealth"
+            echo "=========================================="
+            
+            # 设置部署目录
+            DEPLOY_DIR="${{ secrets.DEPLOY_PATH || '/home/ubuntu/repo/VeWealth' }}"
+            
+            # 如果目录不存在，克隆仓库
+            if [ ! -d "$DEPLOY_DIR" ]; then
+              echo "📦 克隆仓库..."
+              git clone https://github.com/${{ github.repository }}.git $DEPLOY_DIR
+            fi
+            
+            cd $DEPLOY_DIR
+            
+            # 拉取最新代码
+            echo "📥 拉取最新代码..."
+            BRANCH_NAME="${{ github.ref_name }}"
+            echo "正在部署分支: $BRANCH_NAME"
+            git fetch origin
+            git reset --hard origin/$BRANCH_NAME
+            
+            # 检查配置文件
+            if [ ! -f backend/settings/.prod.env ]; then
+              echo "❌ 错误: backend/settings/.prod.env 文件不存在"
+              echo "请先在服务器上配置生产环境文件"
+              exit 1
+            fi
+            
+            # 停止旧容器
+            echo "🛑 停止旧容器..."
+            docker-compose down || true
+            
+            # 清理未使用的镜像
+            echo "🧹 清理旧镜像..."
+            docker image prune -f
+            
+            bash docker-start.sh
+            
+            echo "=========================================="
+            echo "✅ 部署完成！"
+            echo "=========================================="
+
+      - name: Notify Deployment Status
+        if: always()
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            echo "部署结果: ${{ job.status }}"
+            echo "提交: ${{ github.sha }}"
+            echo "分支: ${{ github.ref }}"
+            echo "作者: ${{ github.actor }}"
+

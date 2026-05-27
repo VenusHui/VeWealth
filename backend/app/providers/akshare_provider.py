@@ -1,0 +1,255 @@
+"""AKShare 数据源实现"""
+
+from __future__ import annotations
+
+import logging
+import time
+from datetime import date
+from typing import Any, Optional
+
+import akshare as ak
+import pandas as pd
+
+from app.core.config import settings
+from app.providers.base import MarketDataProvider
+
+try:
+    import tushare as ts
+except Exception:
+    ts = None
+
+logger = logging.getLogger(__name__)
+
+_DAILY_COLUMN_MAP = {
+    "日期": "datetime",
+    "开盘": "open",
+    "收盘": "close",
+    "最高": "high",
+    "最低": "low",
+    "成交量": "volume",
+    "成交额": "amount",
+}
+
+_MINUTE_COLUMN_MAP = {
+    "时间": "datetime",
+    "开盘": "open",
+    "收盘": "close",
+    "最高": "high",
+    "最低": "low",
+    "成交量": "volume",
+    "成交额": "amount",
+}
+
+_REALTIME_COLUMN_MAP = {
+    "代码": "code",
+    "名称": "name",
+    "最新价": "price",
+}
+
+
+class AKShareProvider(MarketDataProvider):
+    """基于 AKShare 的数据源实现，日线数据支持 Tushare 备源。"""
+
+    # ---- daily data ----
+
+    def fetch_daily_data(
+        self,
+        stock_code: str,
+        start_date: str,
+        end_date: str,
+        adjust: str = "qfq",
+        max_retries: int = 2,
+    ) -> Optional[pd.DataFrame]:
+        for attempt in range(1, max_retries + 2):
+            try:
+                df = ak.stock_zh_a_hist(
+                    symbol=stock_code,
+                    period="daily",
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust=adjust,
+                )
+                if df is None or df.empty:
+                    logger.warning(
+                        f"股票 {stock_code} 在 {start_date} 到 {end_date} 期间无日线数据"
+                    )
+                    return None
+                return self._normalize_daily(df)
+            except Exception as e:
+                if attempt <= max_retries:
+                    logger.warning(
+                        f"获取股票 {stock_code} 日线数据失败(第{attempt}次重试): {e}"
+                    )
+                    time.sleep(0.6 * attempt)
+                    continue
+                logger.error(f"获取股票 {stock_code} 日线数据失败: {e}")
+                break
+
+        return self._fetch_daily_tushare(
+            stock_code=stock_code,
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
+            max_retries=settings.TUSHARE_RETRY_TIMES,
+        )
+
+    def _normalize_daily(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.rename(columns=_DAILY_COLUMN_MAP)
+        if "datetime" in df.columns:
+            df["datetime"] = pd.to_datetime(df["datetime"]).dt.strftime(
+                "%Y-%m-%d 00:00:00"
+            )
+        return df
+
+    # ---- Tushare fallback ----
+
+    @staticmethod
+    def _to_tushare_code(stock_code: str) -> str:
+        code = str(stock_code).zfill(6)
+        if code.startswith(("5", "6", "9")):
+            return f"{code}.SH"
+        return f"{code}.SZ"
+
+    def _fetch_daily_tushare(
+        self,
+        stock_code: str,
+        start_date: str,
+        end_date: str,
+        adjust: str,
+        max_retries: int,
+    ) -> Optional[pd.DataFrame]:
+        if not settings.TUSHARE_ENABLED:
+            return None
+        if not settings.TUSHARE_TOKEN:
+            logger.warning("Tushare 未配置 token，跳过备源")
+            return None
+        if ts is None:
+            logger.warning("tushare 依赖未安装，跳过备源")
+            return None
+
+        ts_code = self._to_tushare_code(stock_code)
+        adj = adjust if adjust in {"qfq", "hfq"} else None
+
+        for attempt in range(1, max_retries + 2):
+            try:
+                ts.set_token(settings.TUSHARE_TOKEN)
+                df = ts.pro_bar(
+                    ts_code=ts_code,
+                    adj=adj,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+                if df is None or df.empty:
+                    return None
+
+                normalized = pd.DataFrame(
+                    {
+                        "日期": pd.to_datetime(df["trade_date"], format="%Y%m%d"),
+                        "开盘": df["open"],
+                        "收盘": df["close"],
+                        "最高": df["high"],
+                        "最低": df["low"],
+                        "成交量": df["vol"],
+                        "成交额": df.get("amount"),
+                    }
+                )
+                normalized = normalized.sort_values("日期").reset_index(drop=True)
+                logger.info(f"股票 {stock_code} 日线数据由 Tushare 备源返回")
+                return self._normalize_daily(normalized)
+            except Exception as e:
+                if attempt <= max_retries:
+                    logger.warning(
+                        f"Tushare 获取股票 {stock_code} 日线失败(第{attempt}次重试): {e}"
+                    )
+                    time.sleep(0.8 * attempt)
+                    continue
+                logger.error(f"Tushare 获取股票 {stock_code} 日线失败: {e}")
+                return None
+        return None
+
+    # ---- minute data ----
+
+    def fetch_minute_data(
+        self,
+        stock_code: str,
+        start_datetime: str,
+        end_datetime: str,
+        period: str = "1",
+        adjust: str = "",
+        max_retries: int = 2,
+    ) -> Optional[pd.DataFrame]:
+        for attempt in range(1, max_retries + 2):
+            try:
+                df = ak.stock_zh_a_hist_min_em(
+                    symbol=stock_code,
+                    period=period,
+                    start_date=start_datetime,
+                    end_date=end_datetime,
+                    adjust=adjust,
+                )
+                if df is None or df.empty:
+                    logger.warning(
+                        f"股票 {stock_code} 在 {start_datetime}-{end_datetime} 期间无分钟数据"
+                    )
+                    return None
+                return self._normalize_minute(df)
+            except Exception as e:
+                if attempt <= max_retries:
+                    logger.warning(
+                        f"获取股票 {stock_code} 分钟数据失败(第{attempt}次重试): {e}"
+                    )
+                    time.sleep(0.6 * attempt)
+                    continue
+                logger.error(f"获取股票 {stock_code} 分钟数据失败: {e}")
+                return None
+
+    def _normalize_minute(self, df: pd.DataFrame) -> pd.DataFrame:
+        return df.rename(columns=_MINUTE_COLUMN_MAP)
+
+    # ---- realtime data ----
+
+    def fetch_realtime_data(self) -> Optional[pd.DataFrame]:
+        try:
+            df = ak.stock_zh_a_spot_em()
+            if df is None or df.empty:
+                logger.warning("获取实时行情数据为空")
+                return None
+            return self._normalize_realtime(df)
+        except Exception as e:
+            logger.error(f"获取实时行情数据失败: {e}")
+            return None
+
+    def _normalize_realtime(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.rename(columns=_REALTIME_COLUMN_MAP)
+        if "price" in df.columns:
+            df["price"] = pd.to_numeric(df["price"], errors="coerce")
+        return df
+
+    # ---- CYQ data ----
+
+    def fetch_cyq_data(
+        self, stock_code: str, adjust: str = ""
+    ) -> Optional[pd.DataFrame]:
+        try:
+            df = ak.stock_cyq_em(symbol=stock_code, adjust=adjust)
+            if df is None or df.empty:
+                logger.warning(f"股票 {stock_code} 无筹码分布数据")
+                return None
+            return df
+        except Exception as e:
+            logger.error(f"获取股票 {stock_code} 筹码分布数据失败: {e}")
+            return None
+
+    def normalize_cyq_data(self, df: pd.DataFrame) -> dict[str, Any]:
+        latest = df.iloc[-1]
+        return {
+            "date": str(latest.get("日期", "")),
+            "profit_ratio": float(latest.get("获利比例", 0)),
+            "avg_cost": float(latest.get("平均成本", 0)),
+            "cost_90_low": float(latest.get("90成本-低", 0)),
+            "cost_90_high": float(latest.get("90成本-高", 0)),
+            "concentration_90": float(latest.get("90集中度", 0)),
+            "cost_70_low": float(latest.get("70成本-低", 0)),
+            "cost_70_high": float(latest.get("70成本-高", 0)),
+            "concentration_70": float(latest.get("70集中度", 0)),
+        }

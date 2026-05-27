@@ -1,0 +1,58 @@
+services:
+
+  # 后端 API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vewealth-backend
+    restart: unless-stopped
+    environment:
+      # 环境标识：local 或 prod
+      ENV: ${ENV:-local}
+      DATABASE_URL: ${DATABASE_URL}
+    ports:
+      - "8001:8001"
+    networks:
+      - vewealth-network
+      - postgresql
+    volumes:
+      - ./backend/logs:/app/logs
+      - ./backend/settings:/app/settings:ro  # 挂载环境配置文件（只读）
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 前端应用
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8001}
+    container_name: vewealth-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - vewealth-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000', (r) => {if(r.statusCode !== 200) throw new Error(r.statusCode)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  vewealth-network:
+    driver: bridge
+  postgresql:
+    external: true
+    name: postgresql_default
+
+
