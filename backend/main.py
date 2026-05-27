@@ -9,7 +9,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import init_db
 from app.core.logger import get_module_logger
-from app.routers import stock_router, auth_router, watchlist_router, backtest_router
+from app.routers import (
+    stock_router,
+    auth_router,
+    watchlist_router,
+    backtest_router,
+    alert_router,
+)
 from app.routers.scheduler import router as scheduler_router
 from app.services.scheduler import app_scheduler
 from app.services.backtest import backtest_job_manager
@@ -71,6 +77,7 @@ app.include_router(stock_router, prefix=settings.API_PREFIX)
 app.include_router(auth_router, prefix=settings.API_PREFIX)
 app.include_router(watchlist_router, prefix=settings.API_PREFIX)
 app.include_router(backtest_router, prefix=settings.API_PREFIX)
+app.include_router(alert_router, prefix=settings.API_PREFIX)
 app.include_router(scheduler_router, prefix=settings.API_PREFIX)
 
 

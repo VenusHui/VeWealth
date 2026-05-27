@@ -8,9 +8,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_
 import numpy as np
 from app.providers import get_data_provider
+from app.providers.astock_data import tencent_quote
 from app.models.user import User
 from app.models.watchlist import WatchList
 from app.models.stock_data import StockMinuteData
+from app.models.alert_history import AlertHistory
 from app.utils.data_processor import DataProcessor
 from app.services.wechat_service import wechat_service
 from app.core.logger import get_module_logger
@@ -169,6 +171,23 @@ class AlertService:
                 if should_alert:
                     results["alerts_triggered"] += 1
 
+                    # 记录预警历史
+                    try:
+                        quotes = tencent_quote([item.stock_code])
+                        q = quotes.get(item.stock_code, {})
+                        alert_record = AlertHistory(
+                            user_id=user.id,
+                            stock_code=item.stock_code,
+                            stock_name=item.stock_name or q.get("name", ""),
+                            alert_threshold=item.alert_threshold
+                            or user.alert_threshold,
+                            current_price=current_price,
+                            change_pct=q.get("change_pct"),
+                        )
+                        self.db.add(alert_record)
+                    except Exception:
+                        logger.warning(f"记录预警历史失败 {item.stock_code}")
+
                     # 发送微信通知
                     if user.wechat_openid:
                         threshold = item.alert_threshold or user.alert_threshold
@@ -184,9 +203,6 @@ class AlertService:
 
                         if sent:
                             results["alerts_sent"] += 1
-                            # 更新最后预警时间
-                            item.last_alerted_at = datetime.utcnow()
-                            self.db.commit()
 
                         results["details"].append(
                             {
@@ -196,6 +212,10 @@ class AlertService:
                                 "alert_sent": sent,
                             }
                         )
+
+                    # 更新最后预警时间（无论微信是否发送成功）
+                    item.last_alerted_at = datetime.utcnow()
+                    self.db.commit()
 
             except Exception as e:
                 logger.error(f"检查预警失败 {item.stock_code}: {str(e)}", exc_info=True)

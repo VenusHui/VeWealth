@@ -39,6 +39,9 @@ class WatchListItem(BaseModel):
     last_alerted_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
+    current_price: Optional[float] = Field(None, description="最新价（来自腾讯行情）")
+    change_pct: Optional[float] = Field(None, description="涨跌幅（来自腾讯行情）")
+    change_amt: Optional[float] = Field(None, description="涨跌额（来自腾讯行情）")
 
     class Config:
         from_attributes = True

@@ -47,6 +47,7 @@ def init_db():
         backtest,
         backtest_job,
         security_universe,
+        alert_history,
     )  # noqa
 
     Base.metadata.create_all(bind=engine)

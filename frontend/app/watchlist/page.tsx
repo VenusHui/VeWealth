@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import axios from 'axios'
 import {
   Alert,
@@ -19,6 +20,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { getAuthHeader, getUser, isAuthenticated } from '../lib/auth'
 import { getApiBaseUrl } from '../lib/api'
 import { AppPage, EmptyState, InfoPill, MetricCard, PageHeader, SurfaceCard } from '../components/ui-shell'
+import { marketClassByValue, formatPct } from '../lib/marketColors'
 
 const API_BASE_URL = getApiBaseUrl()
 
@@ -31,6 +33,9 @@ interface WatchListItem {
   last_alerted_at?: string
   created_at: string
   updated_at: string
+  current_price?: number | null
+  change_pct?: number | null
+  change_amt?: number | null
 }
 
 export default function WatchListPage() {
@@ -80,6 +85,13 @@ export default function WatchListPage() {
     }
     fetchWatchList()
   }, [fetchWatchList, router])
+
+  // Auto-poll quotes every 30s
+  useEffect(() => {
+    if (!isAuthenticated()) return
+    const timer = setInterval(() => fetchWatchList(), 30000)
+    return () => clearInterval(timer)
+  }, [fetchWatchList])
 
   const handleAddStock = async () => {
     if (!stockCode.trim()) {
@@ -144,57 +156,86 @@ export default function WatchListPage() {
   }
 
   const columns: ColumnsType<WatchListItem> = [
-    { title: '股票代码', dataIndex: 'stock_code', key: 'stock_code', width: 120 },
+    { title: '代码', dataIndex: 'stock_code', key: 'stock_code', width: 100 },
     {
-      title: '股票名称',
+      title: '名称',
       dataIndex: 'stock_name',
       key: 'stock_name',
-      width: 140,
+      width: 120,
       render: (v) => v || '-',
     },
     {
-      title: '预警开关',
+      title: '最新价',
+      dataIndex: 'current_price',
+      key: 'current_price',
+      width: 90,
+      align: 'right',
+      render: (v) => (v != null ? `¥${v.toFixed(2)}` : '-'),
+    },
+    {
+      title: '涨跌幅',
+      dataIndex: 'change_pct',
+      key: 'change_pct',
+      width: 90,
+      align: 'right',
+      sorter: (a, b) => (a.change_pct ?? 0) - (b.change_pct ?? 0),
+      render: (v) =>
+        v != null ? <span className={marketClassByValue(v)}>{v > 0 ? '+' : ''}{v.toFixed(2)}%</span> : '-',
+    },
+    {
+      title: '涨跌额',
+      dataIndex: 'change_amt',
+      key: 'change_amt',
+      width: 80,
+      align: 'right',
+      responsive: ['lg'],
+      render: (v) =>
+        v != null ? <span className={marketClassByValue(v)}>{v > 0 ? '+' : ''}{v.toFixed(2)}</span> : '-',
+    },
+    {
+      title: '预警',
       dataIndex: 'alert_enabled',
       key: 'alert_enabled',
-      width: 120,
-      render: (_, row) => <Switch checked={row.alert_enabled} onChange={() => handleToggleAlert(row)} />,
+      width: 80,
+      render: (_, row) => <Switch size="small" checked={row.alert_enabled} onChange={() => handleToggleAlert(row)} />,
     },
     {
       title: '阈值',
       dataIndex: 'alert_threshold',
       key: 'alert_threshold',
-      width: 100,
+      width: 70,
       align: 'right',
+      responsive: ['lg'],
       render: (v) => (v != null ? `${(Number(v) * 100).toFixed(0)}%` : '-'),
     },
     {
       title: '最近预警',
       dataIndex: 'last_alerted_at',
       key: 'last_alerted_at',
-      width: 170,
+      width: 160,
+      responsive: ['lg'],
       render: (v) => (v ? new Date(v).toLocaleString() : <Tag>未触发</Tag>),
-    },
-    {
-      title: '创建时间',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      width: 170,
-      render: (v) => new Date(v).toLocaleString(),
     },
     {
       title: '操作',
       key: 'action',
-      width: 100,
+      width: 130,
       render: (_, row) => (
-        <Popconfirm title={`确定要删除 ${row.stock_code} 吗？`} onConfirm={() => handleDelete(row.id)}>
-          <Button danger type="link">删除</Button>
-        </Popconfirm>
+        <div className="flex items-center gap-1">
+          <Link href={`/depth?code=${row.stock_code}`} className="ve-tab-button text-xs px-2 py-1">分析</Link>
+          <Popconfirm title={`确定要删除 ${row.stock_code} 吗？`} onConfirm={() => handleDelete(row.id)}>
+            <Button danger type="link" size="small">删除</Button>
+          </Popconfirm>
+        </div>
       ),
     },
   ]
 
   const enabledCount = useMemo(() => watchlist.filter((item) => item.alert_enabled).length, [watchlist])
   const triggeredCount = useMemo(() => watchlist.filter((item) => item.last_alerted_at).length, [watchlist])
+  const upCount = useMemo(() => watchlist.filter((item) => (item.change_pct ?? 0) > 0).length, [watchlist])
+  const downCount = useMemo(() => watchlist.filter((item) => (item.change_pct ?? 0) < 0).length, [watchlist])
+  const flatCount = useMemo(() => watchlist.filter((item) => (item.change_pct ?? 0) === 0).length, [watchlist])
 
   return (
     <AppPage>
@@ -214,10 +255,13 @@ export default function WatchListPage() {
         )}
       />
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-6">
         <MetricCard label="监控股票" value={watchlist.length.toLocaleString()} meta="当前监控池" tone="brand" icon="◌" />
+        <MetricCard label="上涨" value={upCount.toLocaleString()} meta="今日上涨" tone="positive" icon="▲" />
+        <MetricCard label="下跌" value={downCount.toLocaleString()} meta="今日下跌" icon="▼" />
+        <MetricCard label="平盘" value={flatCount.toLocaleString()} meta="今日平盘" icon="—" />
         <MetricCard label="启用预警" value={enabledCount.toLocaleString()} meta="启用中的标的" icon="⦿" />
-        <MetricCard label="历史触发" value={triggeredCount.toLocaleString()} meta="触发过预警的标的" tone="warning" icon="!" />
+        <MetricCard label="历史触发" value={triggeredCount.toLocaleString()} meta="触发过预警" tone="warning" icon="!" />
       </div>
 
       <div className="grid grid-cols-1 gap-4">
@@ -289,9 +333,22 @@ export default function WatchListPage() {
                       <div className="font-semibold text-[var(--text-strong)]">{item.stock_name || item.stock_code}</div>
                       <div className="text-sm text-[var(--text-dim)]">{item.stock_code}</div>
                     </div>
-                    <Tag>{item.alert_enabled ? '启用中' : '已关闭'}</Tag>
+                    <div className="text-right">
+                      {item.current_price != null ? (
+                        <>
+                          <div className="font-semibold text-[var(--text-strong)]">¥{item.current_price.toFixed(2)}</div>
+                          {item.change_pct != null && (
+                            <div className={marketClassByValue(item.change_pct)}>
+                              {item.change_pct > 0 ? '+' : ''}{item.change_pct.toFixed(2)}%
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <Tag>无行情</Tag>
+                      )}
+                    </div>
                   </div>
-                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                  <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
                     <div>
                       <div className="text-[var(--text-dim)]">阈值</div>
                       <div className="font-medium text-[var(--text-strong)]">{item.alert_threshold != null ? `${(Number(item.alert_threshold) * 100).toFixed(0)}%` : '-'}</div>
@@ -302,9 +359,12 @@ export default function WatchListPage() {
                     </div>
                   </div>
                   <div className="mt-4 flex items-center justify-between">
-                    <Switch checked={item.alert_enabled} onChange={() => handleToggleAlert(item)} />
+                    <div className="flex items-center gap-2">
+                      <Switch size="small" checked={item.alert_enabled} onChange={() => handleToggleAlert(item)} />
+                      <Link href={`/depth?code=${item.stock_code}`} className="ve-tab-button text-xs px-2 py-1">分析</Link>
+                    </div>
                     <Popconfirm title={`确定要删除 ${item.stock_code} 吗？`} onConfirm={() => handleDelete(item.id)}>
-                      <Button danger type="link" className="p-0">删除</Button>
+                      <Button danger type="link" size="small" className="p-0">删除</Button>
                     </Popconfirm>
                   </div>
                 </div>

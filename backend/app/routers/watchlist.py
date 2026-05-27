@@ -15,6 +15,7 @@ from app.schemas.watchlist import (
     WatchListItemResponse,
     DeleteResponse,
 )
+from app.providers.astock_data import tencent_quote
 
 router = APIRouter(prefix="/watchlist", tags=["监控列表"])
 
@@ -32,6 +33,21 @@ async def get_watchlist(
         .order_by(WatchList.created_at.desc())
         .all()
     )
+
+    # Batch-fetch real-time quotes and attach to each item
+    if watchlist:
+        codes = [item.stock_code for item in watchlist]
+        try:
+            quotes = tencent_quote(codes)
+        except Exception:
+            quotes = {}
+
+        for item in watchlist:
+            q = quotes.get(item.stock_code, {})
+            if q:
+                item.current_price = q.get("price")
+                item.change_pct = q.get("change_pct")
+                item.change_amt = q.get("change_amt")
 
     return WatchListResponse(success=True, data=watchlist, total=len(watchlist))
 

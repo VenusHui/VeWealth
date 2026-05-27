@@ -197,6 +197,15 @@ class StockInfoResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class BatchQuoteResponse(BaseModel):
+    """批量行情响应"""
+
+    success: bool = True
+    quotes: dict[str, TencentQuote] = Field(
+        default_factory=dict, description="股票代码 -> 腾讯行情"
+    )
+
+
 class DepthResponse(BaseModel):
     """深度数据综合响应 - 一次返回 K线 + Volume Profile + 筹码分布 + 个股信息"""
 

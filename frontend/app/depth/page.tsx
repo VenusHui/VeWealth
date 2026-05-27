@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import axios from 'axios'
 import { Alert, Button, Input, Spin } from 'antd'
 import DepthChart from '../components/DepthChart'
@@ -9,11 +10,15 @@ import DepthStatistics from '../components/DepthStatistics'
 import { AppPage, EmptyState, InfoPill, MetricCard, PageHeader, SurfaceCard } from '../components/ui-shell'
 import { formatPct, marketClassByValue } from '../lib/marketColors'
 import { getApiBaseUrl } from '../lib/api'
+import { getAuthHeader, isAuthenticated } from '../lib/auth'
 import type {
   KlineDataPoint,
   VolumeProfileData,
   CyqInfo,
 } from '../lib/depthChartUtils'
+
+const RECENT_SYMBOLS_KEY = 'vewealth_recent_symbols'
+const MAX_RECENT = 5
 
 interface StockSearchResult {
   code: string
@@ -73,6 +78,9 @@ function getPriceTone(quote: TencentQuote | null): 'positive' | 'warning' | 'def
 }
 
 export default function DepthPage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+
   // Stock selection
   const [stockCode, setStockCode] = useState('')
   const [stockName, setStockName] = useState('')
@@ -80,6 +88,10 @@ export default function DepthPage() {
   const [searchResults, setSearchResults] = useState<StockSearchResult[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [showSearchResults, setShowSearchResults] = useState(false)
+
+  // Watchlist + recent symbols for quick switching
+  const [watchlistStocks, setWatchlistStocks] = useState<Array<{ code: string; name: string }>>([])
+  const [recentSymbols, setRecentSymbols] = useState<Array<{ code: string; name: string }>>([])
 
   // Data
   const [klines, setKlines] = useState<KlineDataPoint[]>([])
@@ -134,6 +146,18 @@ export default function DepthPage() {
     setSearchKeyword('')
     setSearchResults([])
     setShowSearchResults(false)
+    router.replace(`/depth?code=${stock.code}`, { scroll: false })
+    saveRecentSymbol(stock.code, stock.name)
+  }
+
+  const handleQuickSwitch = (code: string, name: string) => {
+    setStockCode(code)
+    setStockName(name)
+    setSearchKeyword('')
+    setSearchResults([])
+    setShowSearchResults(false)
+    router.replace(`/depth?code=${code}`, { scroll: false })
+    saveRecentSymbol(code, name)
   }
 
   // Handle unified input: detect code vs name
@@ -146,10 +170,90 @@ export default function DepthPage() {
       setSearchKeyword('')
       setSearchResults([])
       setShowSearchResults(false)
+      router.replace(`/depth?code=${kw}`, { scroll: false })
     } else {
       handleSearch(kw)
     }
   }
+
+  // Load watchlist for quick-switch dropdown
+  useEffect(() => {
+    if (!isAuthenticated()) return
+    axios
+      .get(`${API_BASE_URL}/api/watchlist`, { headers: getAuthHeader() })
+      .then((resp) => {
+        if (resp.data?.success) {
+          const items = (resp.data.data || []).map((item: { stock_code: string; stock_name?: string }) => ({
+            code: item.stock_code,
+            name: item.stock_name || item.stock_code,
+          }))
+          setWatchlistStocks(items)
+        }
+      })
+      .catch(() => { /* silent */ })
+  }, [])
+
+  // Load recent symbols from localStorage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(RECENT_SYMBOLS_KEY)
+      if (raw) setRecentSymbols(JSON.parse(raw))
+    } catch { /* ignore */ }
+  }, [])
+
+  // Save to recent symbols when stockCode changes (after successful data fetch)
+  const saveRecentSymbol = useCallback((code: string, name: string) => {
+    if (!code) return
+    setRecentSymbols((prev) => {
+      const filtered = prev.filter((s) => s.code !== code)
+      const next = [{ code, name }, ...filtered].slice(0, MAX_RECENT)
+      try { localStorage.setItem(RECENT_SYMBOLS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }, [])
+
+  // URL param sync: read ?code= on mount
+  useEffect(() => {
+    const codeParam = searchParams.get('code')
+    if (codeParam && /^\d{6}$/.test(codeParam)) {
+      setStockCode(codeParam)
+      setStockName('')
+      setSearchKeyword('')
+    }
+  }, [searchParams])
+
+  // Keyboard shortcuts (only when search input is not focused)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return
+
+      const key = e.key.toLowerCase()
+      if ((e.ctrlKey || e.metaKey) && key === 'k') {
+        e.preventDefault()
+        document.getElementById('depth-search-input')?.focus()
+        return
+      }
+
+      if (!stockCode) return
+
+      switch (key) {
+        case '1': setPeriod('1min'); break
+        case '2': setPeriod('5min'); break
+        case '3': setPeriod('15min'); break
+        case '4': setPeriod('30min'); break
+        case '5': setPeriod('60min'); break
+        case '6': setPeriod('daily'); break
+        case 'm': setShowMA((v) => !v); break
+        case 'v': setShowVWAP((v) => !v); break
+        case 'g': setShowGMM((v) => !v); break
+        case 'c': setShowCYQ((v) => !v); break
+        case 'escape': setShowSearchResults(false); break
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [stockCode])
 
   // Fetch depth data
   const handleFetchData = useCallback(async () => {
@@ -187,6 +291,7 @@ export default function DepthPage() {
         const name = response.data.tencent_quote?.name || response.data.stock_info?.name || ''
         if (name) {
           setStockName(name)
+          saveRecentSymbol(stockCode.trim(), name)
         }
       } else {
         setError('获取数据失败')
@@ -203,7 +308,7 @@ export default function DepthPage() {
     } finally {
       setLoading(false)
     }
-  }, [stockCode, adjust])
+  }, [stockCode, adjust, saveRecentSymbol])
 
   // Load more historical data when scrolling left.
   // Uses a ref for the loading guard to prevent race conditions from
@@ -316,6 +421,7 @@ export default function DepthPage() {
             <InfoPill>K 线 + 成交量分布</InfoPill>
             <InfoPill>Volume Profile</InfoPill>
             {showCYQ && <InfoPill>筹码分布</InfoPill>}
+            <InfoPill>Ctrl+K 搜索 · 1-6 切周期 · M/V/G/C 叠加</InfoPill>
           </>
         }
       />
@@ -331,6 +437,7 @@ export default function DepthPage() {
               </label>
               <div className="flex gap-2">
                 <Input
+                  id="depth-search-input"
                   value={searchKeyword}
                   onChange={(e) => setSearchKeyword(e.target.value)}
                   onPressEnter={handleUnifiedInput}
@@ -339,7 +446,39 @@ export default function DepthPage() {
                 <Button onClick={handleUnifiedInput} loading={searchLoading || loading}>
                   查询
                 </Button>
+                {watchlistStocks.length > 0 && (
+                  <select
+                    className="ve-select max-w-[140px]"
+                    value=""
+                    onChange={(e) => {
+                      const selected = watchlistStocks.find((s) => s.code === e.target.value)
+                      if (selected) handleQuickSwitch(selected.code, selected.name)
+                    }}
+                  >
+                    <option value="" disabled>自选股</option>
+                    {watchlistStocks.map((s) => (
+                      <option key={s.code} value={s.code}>{s.name || s.code}</option>
+                    ))}
+                  </select>
+                )}
               </div>
+
+              {/* Recent symbols */}
+              {recentSymbols.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[var(--text-dim)]">最近</span>
+                  {recentSymbols.map((s) => (
+                    <button
+                      key={s.code}
+                      type="button"
+                      onClick={() => handleQuickSwitch(s.code, s.name)}
+                      className="ve-info-pill cursor-pointer hover:bg-[rgba(15,118,110,0.08)] transition-colors"
+                    >
+                      {s.name || s.code}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {showSearchResults && (
