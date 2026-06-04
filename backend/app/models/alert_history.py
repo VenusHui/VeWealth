@@ -25,6 +25,9 @@ class AlertHistory(Base):
     alert_threshold = Column(Float, nullable=True, comment="触发时的阈值")
     current_price = Column(Float, nullable=False, comment="触发时的价格")
     change_pct = Column(Float, nullable=True, comment="触发时的涨跌幅")
+    alert_direction = Column(String(4), nullable=True, comment="预警方向: buy / sell")
+    density_value = Column(Float, nullable=True, comment="触发时的密度百分位(0-1)")
+    peak_price = Column(Float, nullable=True, comment="触发时最近的GMM峰值价格")
     created_at = Column(
         DateTime,
         default=datetime.utcnow,

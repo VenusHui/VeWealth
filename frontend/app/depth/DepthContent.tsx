@@ -571,6 +571,8 @@ export default function DepthContent() {
               hasMore={hasMore}
               loadingMore={loadingMore}
               onLoadMore={onLoadMore}
+              gmmThreshold={0.7}
+              currentPrice={tencentQuote?.price ?? null}
             />
           </Spin>
         </SurfaceCard>

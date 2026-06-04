@@ -2,8 +2,9 @@
 价格预警服务
 """
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta, date
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 import numpy as np
@@ -21,6 +22,21 @@ from app.core.logger import get_module_logger
 logger = get_module_logger("alert_service")
 
 
+class AlertDirection:
+    BUY = "buy"
+    SELL = "sell"
+
+
+@dataclass
+class AlertCheckResult:
+    """单次预警检查结果"""
+
+    direction: Optional[str] = None  # None, "buy", "sell"
+    density_value: Optional[float] = None
+    peak_price: Optional[float] = None
+    fit_result: Optional[dict] = None
+
+
 class AlertService:
     """价格预警服务"""
 
@@ -30,9 +46,9 @@ class AlertService:
 
     def check_stock_alert(
         self, user: User, watchlist_item: WatchList, current_price: float
-    ) -> bool:
+    ) -> AlertCheckResult:
         """
-        检查单个股票是否需要预警
+        检查单个股票是否需要预警，返回方向性结果
 
         Args:
             user: 用户对象
@@ -40,7 +56,7 @@ class AlertService:
             current_price: 当前价格
 
         Returns:
-            是否触发预警
+            AlertCheckResult 包含方向、密度、峰值信息
         """
         # 获取预警阈值
         threshold = watchlist_item.alert_threshold or user.alert_threshold
@@ -63,7 +79,7 @@ class AlertService:
         )
 
         if not historical_data:
-            return False
+            return AlertCheckResult()
 
         # 转换为字典列表
         chart_data = [
@@ -82,16 +98,38 @@ class AlertService:
         fit_result = self.data_processor.fit_gaussian_mixture(chart_data)
 
         if not fit_result:
-            return False
+            return AlertCheckResult()
 
         # 计算当前价格在分布中的位置
         price_density = self._calculate_price_density(current_price, fit_result)
 
-        # 判断是否超过阈值
-        if price_density >= threshold:
-            return True
+        # 找最近的GMM峰值价格
+        nearest_peak = self._get_nearest_peak_price(current_price, fit_result)
 
-        return False
+        # 双向判断
+        upper = threshold
+        lower = 1.0 - threshold
+
+        if price_density >= upper:
+            return AlertCheckResult(
+                direction=AlertDirection.SELL,
+                density_value=price_density,
+                peak_price=nearest_peak,
+                fit_result=fit_result,
+            )
+        elif price_density <= lower:
+            return AlertCheckResult(
+                direction=AlertDirection.BUY,
+                density_value=price_density,
+                peak_price=nearest_peak,
+                fit_result=fit_result,
+            )
+
+        return AlertCheckResult(
+            density_value=price_density,
+            peak_price=nearest_peak,
+            fit_result=fit_result,
+        )
 
     def _calculate_price_density(self, price: float, fit_result: dict) -> float:
         """
@@ -125,6 +163,27 @@ class AlertService:
             return percentile
 
         return 0.0
+
+    def _get_nearest_peak_price(
+        self, current_price: float, fit_result: dict
+    ) -> Optional[float]:
+        """
+        找当前价格最近的GMM峰值价格
+
+        Args:
+            current_price: 当前价格
+            fit_result: GMM拟合结果
+
+        Returns:
+            最近的峰值价格，获取失败返回None
+        """
+        if not fit_result or "components" not in fit_result:
+            return None
+        components = fit_result["components"]
+        if not components:
+            return None
+        nearest = min(components, key=lambda c: abs(c["mean"] - current_price))
+        return nearest["mean"]
 
     def check_all_alerts(self) -> Dict[str, Any]:
         """
@@ -166,10 +225,13 @@ class AlertService:
                     continue
 
                 # 检查是否触发预警
-                should_alert = self.check_stock_alert(user, item, current_price)
+                result = self.check_stock_alert(user, item, current_price)
 
-                if should_alert:
+                if result.direction:
                     results["alerts_triggered"] += 1
+                    direction_label = (
+                        "买入" if result.direction == AlertDirection.BUY else "卖出"
+                    )
 
                     # 记录预警历史
                     try:
@@ -183,6 +245,9 @@ class AlertService:
                             or user.alert_threshold,
                             current_price=current_price,
                             change_pct=q.get("change_pct"),
+                            alert_direction=result.direction,
+                            density_value=result.density_value,
+                            peak_price=result.peak_price,
                         )
                         self.db.add(alert_record)
                     except Exception:
@@ -191,7 +256,21 @@ class AlertService:
                     # 发送微信通知
                     if user.wechat_openid:
                         threshold = item.alert_threshold or user.alert_threshold
-                        alert_reason = f"当前价格 ¥{current_price:.2f} 超过正态分布 {threshold*100:.0f}% 阈值"
+                        peak_str = (
+                            f" (峰值 ¥{result.peak_price:.2f})"
+                            if result.peak_price is not None
+                            else ""
+                        )
+                        density_str = (
+                            f"密度 {(result.density_value * 100):.0f}%/{threshold*100:.0f}%"
+                            if result.density_value is not None
+                            else ""
+                        )
+                        alert_reason = (
+                            f"{direction_label}信号 | "
+                            f"当前价格 ¥{current_price:.2f} | "
+                            f"{density_str}{peak_str}"
+                        )
 
                         sent = wechat_service.send_price_alert(
                             openid=user.wechat_openid,
@@ -199,6 +278,7 @@ class AlertService:
                             stock_name=item.stock_name or item.stock_code,
                             current_price=current_price,
                             alert_reason=alert_reason,
+                            alert_direction=result.direction,
                         )
 
                         if sent:
@@ -210,6 +290,7 @@ class AlertService:
                                 "stock_code": item.stock_code,
                                 "current_price": current_price,
                                 "alert_sent": sent,
+                                "direction": result.direction,
                             }
                         )
 

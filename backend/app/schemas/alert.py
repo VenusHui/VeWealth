@@ -17,6 +17,9 @@ class AlertHistoryItem(BaseModel):
     alert_threshold: Optional[float]
     current_price: float
     change_pct: Optional[float]
+    alert_direction: Optional[str] = Field(None, description="预警方向: buy / sell")
+    density_value: Optional[float] = Field(None, description="触发时的密度百分位")
+    peak_price: Optional[float] = Field(None, description="最近的GMM峰值价格")
     created_at: datetime
 
     class Config:

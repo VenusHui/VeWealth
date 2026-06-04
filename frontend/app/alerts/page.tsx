@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import axios from 'axios'
-import { Spin, Table, Tag } from 'antd'
+import { Segmented, Spin, Table, Tag } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { getAuthHeader, isAuthenticated } from '../lib/auth'
 import { getApiBaseUrl } from '../lib/api'
@@ -21,6 +21,9 @@ interface AlertItem {
   alert_threshold?: number | null
   current_price: number
   change_pct?: number | null
+  alert_direction?: string | null
+  density_value?: number | null
+  peak_price?: number | null
   created_at: string
 }
 
@@ -31,8 +34,9 @@ export default function AlertsPage() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
+  const [directionFilter, setDirectionFilter] = useState<string>('all')
 
-  const fetchAlerts = useCallback(async (p = page, ps = pageSize) => {
+  const fetchAlerts = useCallback(async (p = page, ps = pageSize, dir = directionFilter) => {
     if (!isAuthenticated()) {
       router.push('/login')
       return
@@ -40,7 +44,11 @@ export default function AlertsPage() {
     try {
       setLoading(true)
       const offset = (p - 1) * ps
-      const resp = await axios.get(`${API_BASE_URL}/api/alerts?limit=${ps}&offset=${offset}`, {
+      let url = `${API_BASE_URL}/api/alerts?limit=${ps}&offset=${offset}`
+      if (dir && dir !== 'all') {
+        url += `&direction=${dir}`
+      }
+      const resp = await axios.get(url, {
         headers: getAuthHeader(),
       })
       if (resp.data?.success) {
@@ -52,7 +60,7 @@ export default function AlertsPage() {
     } finally {
       setLoading(false)
     }
-  }, [page, pageSize, router])
+  }, [page, pageSize, directionFilter, router])
 
   useEffect(() => {
     fetchAlerts()
@@ -73,6 +81,17 @@ export default function AlertsPage() {
       key: 'stock_name',
       width: 120,
       render: (v) => v || '-',
+    },
+    {
+      title: '方向',
+      dataIndex: 'alert_direction',
+      key: 'alert_direction',
+      width: 80,
+      render: (v: string | null) => {
+        if (v === 'buy') return <Tag color="red">买入</Tag>
+        if (v === 'sell') return <Tag color="green">卖出</Tag>
+        return <Tag>—</Tag>
+      },
     },
     {
       title: '触发价',
@@ -100,6 +119,24 @@ export default function AlertsPage() {
       render: (v) => (v != null ? `${(Number(v) * 100).toFixed(0)}%` : '-'),
     },
     {
+      title: '密度%',
+      dataIndex: 'density_value',
+      key: 'density_value',
+      width: 70,
+      align: 'right',
+      responsive: ['lg'],
+      render: (v: number | null) => v != null ? `${(v * 100).toFixed(0)}%` : '-',
+    },
+    {
+      title: '峰值价',
+      dataIndex: 'peak_price',
+      key: 'peak_price',
+      width: 90,
+      align: 'right',
+      responsive: ['lg'],
+      render: (v: number | null) => v != null ? `¥${v.toFixed(2)}` : '-',
+    },
+    {
       title: '操作',
       key: 'action',
       width: 80,
@@ -116,6 +153,8 @@ export default function AlertsPage() {
     const now = new Date()
     return d.toDateString() === now.toDateString()
   }).length
+  const buyCount = alerts.filter((a) => a.alert_direction === 'buy').length
+  const sellCount = alerts.filter((a) => a.alert_direction === 'sell').length
 
   return (
     <AppPage>
@@ -130,13 +169,26 @@ export default function AlertsPage() {
         }
       />
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-5">
         <MetricCard label="总预警" value={total.toLocaleString()} meta="历史累计" tone="brand" icon="!" />
         <MetricCard label="今日" value={todayCount.toLocaleString()} meta="今日触发" tone="warning" icon="⦿" />
+        <MetricCard label="买入信号" value={buyCount.toLocaleString()} meta="GMM低密度区" icon="▲" />
+        <MetricCard label="卖出信号" value={sellCount.toLocaleString()} meta="GMM高密度区" icon="▼" />
         <MetricCard label="涉及标的" value={[...new Set(alerts.map((a) => a.stock_code))].length.toLocaleString()} meta="不同股票" icon="◌" />
       </div>
 
       <SurfaceCard title="预警记录">
+        <div className="mb-4">
+          <Segmented
+            options={[
+              { label: '全部', value: 'all' },
+              { label: '买入', value: 'buy' },
+              { label: '卖出', value: 'sell' },
+            ]}
+            value={directionFilter}
+            onChange={(v) => { setDirectionFilter(v as string); setPage(1); }}
+          />
+        </div>
         {loading ? (
           <div className="py-16 text-center"><Spin /></div>
         ) : alerts.length > 0 ? (
@@ -180,8 +232,12 @@ export default function AlertsPage() {
                     </div>
                   </div>
                   <div className="mt-3 flex items-center justify-between text-sm">
-                    <div className="text-[var(--text-dim)]">
-                      阈值 {item.alert_threshold != null ? `${(Number(item.alert_threshold) * 100).toFixed(0)}%` : '-'}
+                    <div className="flex items-center gap-2">
+                      <span className="text-[var(--text-dim)]">
+                        阈值 {item.alert_threshold != null ? `${(Number(item.alert_threshold) * 100).toFixed(0)}%` : '-'}
+                      </span>
+                      {item.alert_direction === 'buy' && <Tag color="red">买入</Tag>}
+                      {item.alert_direction === 'sell' && <Tag color="green">卖出</Tag>}
                     </div>
                     <Tag>{new Date(item.created_at).toLocaleString()}</Tag>
                   </div>

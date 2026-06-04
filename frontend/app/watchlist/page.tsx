@@ -14,6 +14,7 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip,
   message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
@@ -206,7 +207,16 @@ export default function WatchListPage() {
       width: 70,
       align: 'right',
       responsive: ['lg'],
-      render: (v) => (v != null ? `${(Number(v) * 100).toFixed(0)}%` : '-'),
+      render: (v) => {
+        if (v == null) return '-'
+        const upper = Number(v)
+        const lower = 1 - upper
+        return (
+          <Tooltip title={`卖出信号: 密度 ≥ ${(upper * 100).toFixed(0)}% | 买入信号: 密度 ≤ ${(lower * 100).toFixed(0)}%`}>
+            <span className="cursor-help border-b border-dotted border-[var(--text-dim)]">{(upper * 100).toFixed(0)}%</span>
+          </Tooltip>
+        )
+      },
     },
     {
       title: '最近预警',
@@ -294,6 +304,9 @@ export default function WatchListPage() {
                     onChange={(v) => setAlertThreshold(Number(v || 0.7))}
                     style={{ width: '100%' }}
                   />
+                  <div className="text-xs text-[var(--text-dim)] mt-1">
+                    卖出信号: 密度 ≥ {(alertThreshold * 100).toFixed(0)}% · 买入信号: 密度 ≤ {((1 - alertThreshold) * 100).toFixed(0)}%
+                  </div>
                 </div>
                 <div className="md:col-span-2 flex flex-wrap gap-2">
                   <Button type="primary" loading={addLoading} onClick={handleAddStock}>添加到监控列表</Button>

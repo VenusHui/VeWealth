@@ -38,6 +38,8 @@ interface DepthChartProps {
   hasMore?: boolean
   loadingMore?: boolean
   onLoadMore?: () => void
+  gmmThreshold?: number
+  currentPrice?: number | null
 }
 
 const MA_COLORS = ['#f59e0b', '#f97316', '#8b5cf6']
@@ -54,6 +56,8 @@ export default function DepthChart({
   hasMore,
   loadingMore,
   onLoadMore,
+  gmmThreshold = 0.7,
+  currentPrice,
 }: DepthChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -417,6 +421,47 @@ export default function DepthChart({
     return fitGMMToProfile(activeVP.profile, 5)
   }, [showGMM, activeVP])
 
+  // GMM signal zones: compute buy/sell price boundaries from density thresholds
+  const gmmSignal = useMemo(() => {
+    if (!gmmFit?.curve.length) return { buyLine: null, sellLine: null, density: null, signal: null as string | null }
+    const maxDensity = gmmFit.curve.reduce((m, p) => p.fitVolume > m ? p.fitVolume : m, 0)
+    if (maxDensity <= 0) return { buyLine: null, sellLine: null, density: null, signal: null }
+    const upper = gmmThreshold
+    const lower = 1 - gmmThreshold
+
+    const sorted = [...gmmFit.curve].sort((a, b) => a.price - b.price)
+    let sellLine: number | null = null
+    let buyLine: number | null = null
+
+    for (const pt of sorted) {
+      if (pt.fitVolume / maxDensity >= upper) { sellLine = pt.price; break }
+    }
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      if (sorted[i].fitVolume / maxDensity <= lower) { buyLine = sorted[i].price; break }
+    }
+
+    let density: number | null = null
+    let signal: string | null = null
+    if (currentPrice != null) {
+      const prices = sorted.map((p) => p.price)
+      const densities = sorted.map((p) => p.fitVolume)
+      const idx = prices.findIndex((p) => p >= currentPrice)
+      if (idx === -1) {
+        density = densities[densities.length - 1] / maxDensity
+      } else if (idx === 0) {
+        density = densities[0] / maxDensity
+      } else {
+        const t = (currentPrice - prices[idx - 1]) / (prices[idx] - prices[idx - 1])
+        density = (densities[idx - 1] + t * (densities[idx] - densities[idx - 1])) / maxDensity
+      }
+      if (density >= upper) signal = 'sell'
+      else if (density <= lower) signal = 'buy'
+      else signal = 'neutral'
+    }
+
+    return { buyLine, sellLine, density, signal }
+  }, [gmmFit, gmmThreshold, currentPrice])
+
   // Shared X-axis max: include GMM fit peak so nothing clips
   const vpxMax = useMemo(() => {
     const vpMax = getMaxProfileVolume(activeVP?.profile || [])
@@ -520,6 +565,50 @@ export default function DepthChart({
                       </span>
                     )
                   })}
+
+                  {/* GMM signal zones: buy/sell boundary lines */}
+                  {gmmSignal.buyLine != null && (() => {
+                    const y = ((gmmSignal.buyLine - priceMin) / priceRng) * 100
+                    if (y < 0 || y > 100) return null
+                    return (
+                      <div
+                        className="absolute left-0 right-0 pointer-events-none flex items-center gap-1"
+                        style={{ bottom: `${y}%` }}
+                      >
+                        <div className="flex-1 border-t border-dashed" style={{ borderColor: '#dc2626', opacity: 0.5 }} />
+                        <span className="text-[8px] text-red-600 font-medium whitespace-nowrap pr-1">买入区</span>
+                      </div>
+                    )
+                  })()}
+                  {gmmSignal.sellLine != null && (() => {
+                    const y = ((gmmSignal.sellLine - priceMin) / priceRng) * 100
+                    if (y < 0 || y > 100) return null
+                    return (
+                      <div
+                        className="absolute left-0 right-0 pointer-events-none flex items-center gap-1"
+                        style={{ bottom: `${y}%` }}
+                      >
+                        <div className="flex-1 border-t border-dashed" style={{ borderColor: '#16a34a', opacity: 0.5 }} />
+                        <span className="text-[8px] text-green-600 font-medium whitespace-nowrap pr-1">卖出区</span>
+                      </div>
+                    )
+                  })()}
+
+                  {/* Current price density badge */}
+                  {gmmSignal.density != null && (
+                    <div className="absolute top-2 right-2 z-30 pointer-events-none">
+                      <span className={`
+                        text-[10px] font-bold px-1.5 py-0.5 rounded
+                        ${gmmSignal.signal === 'buy' ? 'bg-red-100 text-red-700' : ''}
+                        ${gmmSignal.signal === 'sell' ? 'bg-green-100 text-green-700' : ''}
+                        ${gmmSignal.signal === 'neutral' ? 'bg-slate-100 text-slate-600' : ''}
+                      `}>
+                        密度 {(gmmSignal.density * 100).toFixed(0)}%
+                        {gmmSignal.signal === 'buy' && ' 买入'}
+                        {gmmSignal.signal === 'sell' && ' 卖出'}
+                      </span>
+                    </div>
+                  )}
                 </>
               )
             })()}
