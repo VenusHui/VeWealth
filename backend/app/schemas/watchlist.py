@@ -42,6 +42,9 @@ class WatchListItem(BaseModel):
     current_price: Optional[float] = Field(None, description="最新价（来自腾讯行情）")
     change_pct: Optional[float] = Field(None, description="涨跌幅（来自腾讯行情）")
     change_amt: Optional[float] = Field(None, description="涨跌额（来自腾讯行情）")
+    gmm_signal: Optional[str] = Field(None, description="GMM信号: buy/sell/neutral")
+    gmm_density: Optional[float] = Field(None, description="GMM密度百分位(0-1)")
+    gmm_peak_price: Optional[float] = Field(None, description="最近GMM峰值价格")
 
     class Config:
         from_attributes = True

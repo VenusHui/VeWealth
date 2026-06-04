@@ -407,6 +407,57 @@ export default function DepthContent() {
         icon: '∿',
       },
     ]
+
+    // GMM signal card: compute from server-side fit_result
+    const threshold = 0.7
+    const fitResult = volumeProfile?.fit_result
+    const curPrice = q?.price
+    if (fitResult?.fit_curve?.length && curPrice != null) {
+      const curve = fitResult.fit_curve
+      const maxDensity = curve.reduce((m, p) => p.fitVolume > m ? p.fitVolume : m, 0)
+      if (maxDensity > 0) {
+        const sorted = [...curve].sort((a, b) => a.price - b.price)
+        const prices = sorted.map((p) => p.price)
+        const densities = sorted.map((p) => p.fitVolume)
+        const idx = prices.findIndex((p) => p >= curPrice)
+        let density: number
+        if (idx === -1) {
+          density = densities[densities.length - 1] / maxDensity
+        } else if (idx === 0) {
+          density = densities[0] / maxDensity
+        } else {
+          const t = (curPrice - prices[idx - 1]) / (prices[idx] - prices[idx - 1])
+          density = (densities[idx - 1] + t * (densities[idx] - densities[idx - 1])) / maxDensity
+        }
+        let signalLabel: string
+        let signalTone: 'positive' | 'warning' | 'default'
+        if (density >= threshold) {
+          signalLabel = '卖出信号'
+          signalTone = 'positive'
+        } else if (density <= 1 - threshold) {
+          signalLabel = '买入信号'
+          signalTone = 'warning'
+        } else {
+          signalLabel = '中性'
+          signalTone = 'default'
+        }
+        const components = fitResult.components || []
+        const nearestPeak = components.length > 0
+          ? components.reduce((a, b) => Math.abs(a.mean - curPrice) < Math.abs(b.mean - curPrice) ? a : b)
+          : null
+        const peakMeta = nearestPeak
+          ? `峰值 ¥${nearestPeak.mean.toFixed(2)}`
+          : `密度 ${(density * 100).toFixed(0)}%`
+        items.push({
+          label: 'GMM 信号',
+          value: signalLabel,
+          meta: peakMeta,
+          tone: signalTone,
+          icon: '⊚',
+        })
+      }
+    }
+
     return items
   }, [stockCode, stockName, klines, period, adjust, volumeProfile, tencentQuote])
 
@@ -530,7 +581,7 @@ export default function DepthContent() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
         {summaryCards.map((item) => (
           <MetricCard key={item.label} {...item} />
         ))}

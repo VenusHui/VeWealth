@@ -37,6 +37,9 @@ interface WatchListItem {
   current_price?: number | null
   change_pct?: number | null
   change_amt?: number | null
+  gmm_signal?: string | null
+  gmm_density?: number | null
+  gmm_peak_price?: number | null
 }
 
 export default function WatchListPage() {
@@ -201,6 +204,20 @@ export default function WatchListPage() {
       render: (_, row) => <Switch size="small" checked={row.alert_enabled} onChange={() => handleToggleAlert(row)} />,
     },
     {
+      title: '信号',
+      dataIndex: 'gmm_signal',
+      key: 'gmm_signal',
+      width: 80,
+      render: (_v, row) => {
+        if (!row.alert_enabled) return <Tag>关闭</Tag>
+        if (!row.gmm_signal) return <Tag>—</Tag>
+        const densityPct = row.gmm_density != null ? `${(row.gmm_density * 100).toFixed(0)}%` : ''
+        if (row.gmm_signal === 'buy') return <Tag color="red">买入 {densityPct}</Tag>
+        if (row.gmm_signal === 'sell') return <Tag color="green">卖出 {densityPct}</Tag>
+        return <Tag>{densityPct || '中性'}</Tag>
+      },
+    },
+    {
       title: '阈值',
       dataIndex: 'alert_threshold',
       key: 'alert_threshold',
@@ -246,6 +263,8 @@ export default function WatchListPage() {
   const upCount = useMemo(() => watchlist.filter((item) => (item.change_pct ?? 0) > 0).length, [watchlist])
   const downCount = useMemo(() => watchlist.filter((item) => (item.change_pct ?? 0) < 0).length, [watchlist])
   const flatCount = useMemo(() => watchlist.filter((item) => (item.change_pct ?? 0) === 0).length, [watchlist])
+  const buySignalCount = useMemo(() => watchlist.filter((item) => item.gmm_signal === 'buy').length, [watchlist])
+  const sellSignalCount = useMemo(() => watchlist.filter((item) => item.gmm_signal === 'sell').length, [watchlist])
 
   return (
     <AppPage>
@@ -265,12 +284,14 @@ export default function WatchListPage() {
         )}
       />
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4 xl:grid-cols-8">
         <MetricCard label="监控股票" value={watchlist.length.toLocaleString()} meta="当前监控池" tone="brand" icon="◌" />
         <MetricCard label="上涨" value={upCount.toLocaleString()} meta="今日上涨" tone="positive" icon="▲" />
         <MetricCard label="下跌" value={downCount.toLocaleString()} meta="今日下跌" icon="▼" />
         <MetricCard label="平盘" value={flatCount.toLocaleString()} meta="今日平盘" icon="—" />
         <MetricCard label="启用预警" value={enabledCount.toLocaleString()} meta="启用中的标的" icon="⦿" />
+        <MetricCard label="买入信号" value={buySignalCount.toLocaleString()} meta="GMM低密度区" icon="▲" />
+        <MetricCard label="卖出信号" value={sellSignalCount.toLocaleString()} meta="GMM高密度区" icon="▼" />
         <MetricCard label="历史触发" value={triggeredCount.toLocaleString()} meta="触发过预警" tone="warning" icon="!" />
       </div>
 
@@ -363,12 +384,21 @@ export default function WatchListPage() {
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
                     <div>
-                      <div className="text-[var(--text-dim)]">阈值</div>
-                      <div className="font-medium text-[var(--text-strong)]">{item.alert_threshold != null ? `${(Number(item.alert_threshold) * 100).toFixed(0)}%` : '-'}</div>
+                      <div className="text-[var(--text-dim)]">GMM 信号</div>
+                      <div className="font-medium text-[var(--text-strong)]">
+                        {!item.alert_enabled ? <Tag>关闭</Tag> :
+                         item.gmm_signal === 'buy' ? <Tag color="red">买入 {(item.gmm_density != null ? (item.gmm_density * 100).toFixed(0) : '')}%</Tag> :
+                         item.gmm_signal === 'sell' ? <Tag color="green">卖出 {(item.gmm_density != null ? (item.gmm_density * 100).toFixed(0) : '')}%</Tag> :
+                         item.gmm_signal === 'neutral' ? <Tag>中性</Tag> :
+                         <span className="text-[var(--text-dim)]">—</span>}
+                      </div>
                     </div>
                     <div>
-                      <div className="text-[var(--text-dim)]">最近预警</div>
-                      <div className="font-medium text-[var(--text-strong)]">{item.last_alerted_at ? new Date(item.last_alerted_at).toLocaleString() : '未触发'}</div>
+                      <div className="text-[var(--text-dim)]">阈值 / 峰值</div>
+                      <div className="font-medium text-[var(--text-strong)]">
+                        {item.alert_threshold != null ? `${(Number(item.alert_threshold) * 100).toFixed(0)}%` : '-'}
+                        {item.gmm_peak_price != null ? ` / ¥${item.gmm_peak_price.toFixed(2)}` : ''}
+                      </div>
                     </div>
                   </div>
                   <div className="mt-4 flex items-center justify-between">

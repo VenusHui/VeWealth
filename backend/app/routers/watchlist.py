@@ -2,12 +2,18 @@
 监控列表路由
 """
 
+import time
+from datetime import date, timedelta
+from typing import Optional, Dict, Tuple
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
+import numpy as np
 from app.core.database import get_db
 from app.core.deps import get_current_active_user
 from app.models.user import User
 from app.models.watchlist import WatchList
+from app.models.stock_data import StockMinuteData
 from app.schemas.watchlist import (
     AddWatchListRequest,
     UpdateWatchListRequest,
@@ -16,8 +22,98 @@ from app.schemas.watchlist import (
     DeleteResponse,
 )
 from app.providers.astock_data import tencent_quote
+from app.utils.data_processor import DataProcessor
 
 router = APIRouter(prefix="/watchlist", tags=["监控列表"])
+
+# In-memory cache for GMM signal computation: {stock_code: (timestamp, signal_dict)}
+_signal_cache: Dict[str, Tuple[float, dict]] = {}
+_SIGNAL_CACHE_TTL = 60
+
+
+def _compute_gmm_signal(
+    stock_code: str, current_price: float, db: Session
+) -> Optional[dict]:
+    """Compute GMM signal for a stock, with 60s cache."""
+    now = time.time()
+    if stock_code in _signal_cache:
+        ts, cached = _signal_cache[stock_code]
+        if now - ts < _SIGNAL_CACHE_TTL:
+            return cached
+
+    threshold = 0.7
+    try:
+        end_date = date.today()
+        start_date = end_date - timedelta(days=3)
+        rows = (
+            db.query(StockMinuteData)
+            .filter(
+                and_(
+                    StockMinuteData.stock_code == stock_code,
+                    StockMinuteData.trade_date >= start_date,
+                    StockMinuteData.trade_date <= end_date,
+                )
+            )
+            .order_by(StockMinuteData.trade_time)
+            .all()
+        )
+        if not rows:
+            _signal_cache[stock_code] = (now, None)
+            return None
+
+        chart_data = [
+            {
+                "datetime": str(r.trade_time),
+                "price": r.close_price,
+                "volume": r.volume,
+                "open": r.open_price,
+                "high": r.high_price,
+                "low": r.low_price,
+            }
+            for r in rows
+        ]
+
+        fit = DataProcessor.fit_gaussian_mixture(chart_data)
+        if not fit or "fit_curve" not in fit:
+            _signal_cache[stock_code] = (now, None)
+            return None
+
+        prices = [p["price"] for p in fit["fit_curve"]]
+        densities = [p["fitVolume"] for p in fit["fit_curve"]]
+        max_den = max(densities)
+        if max_den <= 0:
+            _signal_cache[stock_code] = (now, None)
+            return None
+
+        cur_den = float(np.interp(current_price, prices, densities))
+        percentile = cur_den / max_den
+
+        upper = threshold
+        lower = 1.0 - threshold
+        if percentile >= upper:
+            signal = "sell"
+        elif percentile <= lower:
+            signal = "buy"
+        else:
+            signal = "neutral"
+
+        components = fit.get("components", [])
+        nearest_peak = None
+        if components:
+            nearest = min(components, key=lambda c: abs(c["mean"] - current_price))
+            nearest_peak = nearest["mean"]
+
+        result = {
+            "signal": signal,
+            "density": round(percentile, 4),
+            "peak_price": nearest_peak,
+        }
+        _signal_cache[stock_code] = (now, result)
+        return result
+
+    except Exception:
+        _signal_cache[stock_code] = (now, None)
+        return None
 
 
 @router.get("", response_model=WatchListResponse)
@@ -48,6 +144,14 @@ async def get_watchlist(
                 item.current_price = q.get("price")
                 item.change_pct = q.get("change_pct")
                 item.change_amt = q.get("change_amt")
+
+            # Compute GMM signal for alert-enabled stocks with valid price
+            if item.alert_enabled and item.current_price is not None:
+                sig = _compute_gmm_signal(item.stock_code, item.current_price, db)
+                if sig:
+                    item.gmm_signal = sig["signal"]
+                    item.gmm_density = sig["density"]
+                    item.gmm_peak_price = sig["peak_price"]
 
     return WatchListResponse(success=True, data=watchlist, total=len(watchlist))
 
