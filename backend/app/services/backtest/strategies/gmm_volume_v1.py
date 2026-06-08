@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import pandas as pd
 
@@ -17,6 +18,7 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
         "基于 GMM 多峰拟合的成交量密度策略。"
         "滚动窗口内对价格-成交量分布拟合高斯混合模型，"
         "密度低于下阈值（1-threshold）时买入，高于上阈值（threshold）时卖出。"
+        "策略选股模式支持多线程并行处理（受 Python GIL 限制，建议手动回测模式）。"
     )
 
     @classmethod
@@ -66,6 +68,15 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
                 "default": 0.2,
                 "min": 0.01,
                 "max": 1.0,
+            },
+            {
+                "key": "max_workers",
+                "label": "并行进程数",
+                "type": "int",
+                "required": True,
+                "default": 1,
+                "min": 1,
+                "max": 8,
             },
         ]
 
@@ -126,7 +137,7 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
         return work
 
     # ------------------------------------------------------------------
-    # V2: strategy_select mode — cross-sectional candidate generation
+    # V2: strategy_select mode — parallel cross-sectional scanning
     # ------------------------------------------------------------------
 
     def generate_candidates(
@@ -138,16 +149,19 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
 
         work = market_df.copy()
         work["trade_date"] = pd.to_datetime(work["datetime"])
-        symbols = work["symbol"].dropna().unique()
+        symbols = list(work["symbol"].dropna().unique())
+
+        if not symbols:
+            return pd.DataFrame(columns=cols)
 
         lookback = int(params.get("lookback_days", 60))
         threshold = float(params.get("threshold", 0.7))
         max_comp = int(params.get("max_components", 5))
         refit_int = int(params.get("refit_interval", 5))
-        upper = threshold
-        lower = 1.0 - threshold
+        max_workers = int(params.get("max_workers", 4))
 
-        candidates: list[dict] = []
+        # Pre-split and serialize: convert to chart_data tuples for efficient IPC
+        symbol_chart_data: list[tuple[str, list[dict], list[float], list[str]]] = []
         for sym in symbols:
             sym_df = (
                 work[work["symbol"] == sym]
@@ -156,41 +170,95 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
             )
             if len(sym_df) < lookback + 2:
                 continue
+            chart_data = _build_chart_data(sym_df)
+            closes = [float(c["price"]) for c in chart_data]
+            dates = [c["datetime"] for c in chart_data]
+            symbol_chart_data.append((sym, chart_data, closes, dates))
 
-            cached_fit = None
-            for i in range(lookback, len(sym_df)):
-                window = sym_df.iloc[i - lookback : i]
-                if len(window) < max(10, lookback // 2):
+        if not symbol_chart_data:
+            return pd.DataFrame(columns=cols)
+
+        n_workers = min(max_workers, len(symbol_chart_data))
+        chunk_size = max(1, len(symbol_chart_data) // n_workers)
+        chunks = [
+            symbol_chart_data[i : i + chunk_size]
+            for i in range(0, len(symbol_chart_data), chunk_size)
+        ]
+
+        all_candidates: list[dict] = []
+
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = {
+                executor.submit(
+                    _scan_chart_data_chunk,
+                    chunk,
+                    lookback,
+                    threshold,
+                    max_comp,
+                    refit_int,
+                ): chunk
+                for chunk in chunks
+            }
+
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    if result:
+                        all_candidates.extend(result)
+                except Exception:
                     continue
 
-                if cached_fit is None or i % refit_int == 0:
-                    chart_data = _build_chart_data(window)
-                    cached_fit = DataProcessor.fit_gaussian_mixture(
-                        chart_data, max_components=max_comp
-                    )
+        return pd.DataFrame(all_candidates)
 
-                if cached_fit is None or "fit_curve" not in cached_fit:
-                    continue
 
-                close_price = float(sym_df.iloc[i]["close"])
-                density = _compute_density(close_price, cached_fit)
-                if density is None:
-                    continue
+# ------------------------------------------------------------------
+# Worker function (module-level, required for ProcessPoolExecutor)
+# ------------------------------------------------------------------
 
-                if density <= lower:
-                    candidates.append(
-                        {
-                            "trade_date": sym_df.iloc[i]["trade_date"],
-                            "symbol": str(sym).strip(),
-                            "signal_strength": round(1.0 - density, 4),
-                            "reason": (
-                                f"GMM密度 {(density * 100):.0f}% ≤ "
-                                f"{(lower * 100):.0f}% (买入信号)"
-                            ),
-                        }
-                    )
 
-        return pd.DataFrame(candidates)
+def _scan_chart_data_chunk(
+    symbol_chart_data: list[tuple[str, list[dict], list[float], list[str]]],
+    lookback: int,
+    threshold: float,
+    max_comp: int,
+    refit_int: int,
+) -> list[dict]:
+    """Process a chunk of pre-serialized symbol data (runs in child process)."""
+    candidates: list[dict] = []
+    lower = 1.0 - threshold
+    upper = threshold
+
+    for sym, chart_data, closes, dates in symbol_chart_data:
+        n = len(chart_data)
+        cached_fit = None
+        for i in range(lookback, n):
+            if cached_fit is None or i % refit_int == 0:
+                window = chart_data[i - lookback : i]
+                cached_fit = DataProcessor.fit_gaussian_mixture(
+                    window, max_components=max_comp
+                )
+
+            if cached_fit is None or "fit_curve" not in cached_fit:
+                continue
+
+            density = _compute_density(closes[i], cached_fit)
+            if density is None:
+                continue
+
+            if density <= lower:
+                candidates.append(
+                    {
+                        "trade_date": dates[i],
+                        "symbol": str(sym).strip(),
+                        "signal_strength": round(1.0 - density, 4),
+                        "reason": (
+                            f"GMM密度 {(density * 100):.0f}% ≤ "
+                            f"{(lower * 100):.0f}% (买入信号)"
+                        ),
+                    }
+                )
+
+    return candidates
 
 
 # ------------------------------------------------------------------
