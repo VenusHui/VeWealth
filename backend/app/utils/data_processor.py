@@ -96,8 +96,8 @@ class DataProcessor:
 
             # 归一化到总成交量
             total_volume = volumes.sum()
-            # 计算密度的积分（numpy 2.x 推荐 trapezoid）
-            trapz_fn = getattr(np, "trapezoid", np.trapz)
+            # numpy 2.x removed trapz, replaced with trapezoid
+            trapz_fn = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
             density_integral = trapz_fn(densities, price_range)
             if density_integral <= 0:
                 return None
