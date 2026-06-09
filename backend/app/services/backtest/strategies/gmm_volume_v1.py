@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-# Must be set BEFORE numpy/sklearn imports, otherwise BLAS internal
-# threading spawns threads that cause fork() to deadlock in child processes.
+# Force single-thread BLAS before numpy/sklearn load, otherwise internal
+# OpenBLAS threads survive fork() and deadlock child processes.
 import os as _os
 
-_os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-_os.environ.setdefault("OMP_NUM_THREADS", "1")
+_os.environ["OPENBLAS_NUM_THREADS"] = "1"
+_os.environ["OMP_NUM_THREADS"] = "1"
 
+import logging
 import multiprocessing
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 
@@ -17,16 +20,26 @@ from .base import BaseStrategy
 from .contracts import BaseStrategyV2
 from app.utils.data_processor import DataProcessor
 
+_logger = logging.getLogger(__name__)
+
 # ------------------------------------------------------------------
-# Shared-memory state for fork-based multiprocessing.
-# The parent process loads all chart data here BEFORE spawning workers.
-# With fork(), child processes inherit this memory via copy-on-write
-# without any pickling. Workers receive only index ranges.
+# Shared state for fork-based multiprocessing.
+# The parent populates this list BEFORE spawning workers. With fork(),
+# children inherit it via copy-on-write — no pickling needed.
+# Workers receive only (start, end) index ranges.
+#
+# NOT THREAD-SAFE: generate_candidates resets this list on each call.
+# Concurrent calls from different threads will corrupt the data.
 # ------------------------------------------------------------------
-_SHARED_SYM_IDS: list[str] = []
-_SHARED_CHART_DATA: list[list[dict]] = []
-_SHARED_CLOSES: list[list[float]] = []
-_SHARED_DATES: list[list[str]] = []
+
+
+@dataclass
+class _SymbolData:
+    sym_id: str
+    chart_data: list[dict]
+
+
+_SHARED_DATA: list[_SymbolData] = []
 
 
 class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
@@ -178,12 +191,9 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
         refit_int = int(params.get("refit_interval", 5))
         max_workers = int(params.get("max_workers", 4))
 
-        # Pre-serialize all symbol data. This runs once in the parent process.
-        global _SHARED_SYM_IDS, _SHARED_CHART_DATA, _SHARED_CLOSES, _SHARED_DATES
-        _SHARED_SYM_IDS = []
-        _SHARED_CHART_DATA = []
-        _SHARED_CLOSES = []
-        _SHARED_DATES = []
+        # Pre-serialize all symbol data into the shared global list
+        global _SHARED_DATA
+        _SHARED_DATA = []
 
         for sym in symbols:
             sym_df = (
@@ -193,12 +203,14 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
             )
             if len(sym_df) < lookback + 2:
                 continue
-            _SHARED_SYM_IDS.append(str(sym).strip())
-            _SHARED_CHART_DATA.append(_build_chart_data(sym_df))
-            _SHARED_CLOSES.append([float(c["price"]) for c in _SHARED_CHART_DATA[-1]])
-            _SHARED_DATES.append([c["datetime"] for c in _SHARED_CHART_DATA[-1]])
+            _SHARED_DATA.append(
+                _SymbolData(
+                    sym_id=str(sym).strip(),
+                    chart_data=_build_chart_data(sym_df),
+                )
+            )
 
-        total = len(_SHARED_SYM_IDS)
+        total = len(_SHARED_DATA)
         if total == 0:
             return pd.DataFrame(columns=cols)
 
@@ -209,15 +221,11 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
             return pd.DataFrame(result)
 
         # Multi-process via multiprocessing.Pool with fork.
-        # Workers inherit shared data via copy-on-write — only index ranges
-        # are passed as arguments, zero large-data pickling.
-        # Must disable BLAS internal threading before fork, otherwise
-        # sklearn's OpenBLAS threads cause child processes to deadlock.
+        # Workers inherit _SHARED_DATA via copy-on-write.
+        # BLAS threading is already disabled (module-level env) and
+        # re-confirmed in the pool initializer for belt-and-suspenders.
         chunk_size = max(1, total // n_workers)
-        ranges = []
-        for start in range(0, total, chunk_size):
-            end = min(start + chunk_size, total)
-            ranges.append((start, end))
+        ranges = [(i, min(i + chunk_size, total)) for i in range(0, total, chunk_size)]
 
         all_candidates: list[dict] = []
         ctx = multiprocessing.get_context("fork")
@@ -225,6 +233,7 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
         with ctx.Pool(
             processes=n_workers,
             initializer=_blas_single_thread,
+            maxtasksperchild=1,
         ) as pool:
             async_results = [
                 pool.apply_async(
@@ -235,17 +244,21 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
             ]
             for ar in async_results:
                 try:
-                    result = ar.get(timeout=600)
+                    result = ar.get(timeout=120)
                     if result:
                         all_candidates.extend(result)
+                except multiprocessing.TimeoutError:
+                    _logger.error(
+                        "GMM worker chunk timed out after 120s, results dropped"
+                    )
                 except Exception:
-                    continue
+                    _logger.exception("GMM worker chunk failed")
 
         return pd.DataFrame(all_candidates)
 
 
 # ------------------------------------------------------------------
-# Worker: receives index range only, reads data from fork-inherited globals
+# Worker: reads data from fork-inherited _SHARED_DATA via index range
 # ------------------------------------------------------------------
 
 
@@ -257,37 +270,34 @@ def _scan_range(
     max_comp: int,
     refit_int: int,
 ) -> list[dict]:
-    """Scan symbols [start, end) using fork-inherited shared data. No pickling."""
+    """Scan symbols [start, end) using fork-inherited shared data."""
     candidates: list[dict] = []
     lower = 1.0 - threshold
 
     for idx in range(start, end):
-        sym = _SHARED_SYM_IDS[idx]
-        chart_data = _SHARED_CHART_DATA[idx]
-        closes = _SHARED_CLOSES[idx]
-        dates = _SHARED_DATES[idx]
+        sd = _SHARED_DATA[idx]
+        chart_data = sd.chart_data
         n = len(chart_data)
 
         cached_fit = None
         for i in range(lookback, n):
             if cached_fit is None or i % refit_int == 0:
-                window = chart_data[i - lookback : i]
                 cached_fit = DataProcessor.fit_gaussian_mixture(
-                    window, max_components=max_comp
+                    chart_data[i - lookback : i], max_components=max_comp
                 )
 
             if cached_fit is None or "fit_curve" not in cached_fit:
                 continue
 
-            density = _compute_density(closes[i], cached_fit)
+            density = _compute_density(float(chart_data[i]["price"]), cached_fit)
             if density is None:
                 continue
 
             if density <= lower:
                 candidates.append(
                     {
-                        "trade_date": dates[i],
-                        "symbol": sym,
+                        "trade_date": chart_data[i]["datetime"],
+                        "symbol": sd.sym_id,
                         "signal_strength": round(1.0 - density, 4),
                         "reason": (
                             f"GMM密度 {(density * 100):.0f}% ≤ "
@@ -300,7 +310,7 @@ def _scan_range(
 
 
 def _blas_single_thread():
-    """Pool initializer: force BLAS to single-thread to avoid fork deadlocks."""
+    """Pool initializer: force single-thread BLAS in child processes."""
     import os
 
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
