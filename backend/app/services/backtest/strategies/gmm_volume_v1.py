@@ -2,13 +2,31 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+# Must be set BEFORE numpy/sklearn imports, otherwise BLAS internal
+# threading spawns threads that cause fork() to deadlock in child processes.
+import os as _os
+
+_os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+_os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+import multiprocessing
 import numpy as np
 import pandas as pd
 
 from .base import BaseStrategy
 from .contracts import BaseStrategyV2
 from app.utils.data_processor import DataProcessor
+
+# ------------------------------------------------------------------
+# Shared-memory state for fork-based multiprocessing.
+# The parent process loads all chart data here BEFORE spawning workers.
+# With fork(), child processes inherit this memory via copy-on-write
+# without any pickling. Workers receive only index ranges.
+# ------------------------------------------------------------------
+_SHARED_SYM_IDS: list[str] = []
+_SHARED_CHART_DATA: list[list[dict]] = []
+_SHARED_CLOSES: list[list[float]] = []
+_SHARED_DATES: list[list[str]] = []
 
 
 class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
@@ -18,7 +36,7 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
         "基于 GMM 多峰拟合的成交量密度策略。"
         "滚动窗口内对价格-成交量分布拟合高斯混合模型，"
         "密度低于下阈值（1-threshold）时买入，高于上阈值（threshold）时卖出。"
-        "策略选股模式支持多线程并行处理（受 Python GIL 限制，建议手动回测模式）。"
+        "策略选股模式使用 fork 多进程并行，告别 Python GIL。"
     )
 
     @classmethod
@@ -74,7 +92,7 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
                 "label": "并行进程数",
                 "type": "int",
                 "required": True,
-                "default": 1,
+                "default": 4,
                 "min": 1,
                 "max": 8,
             },
@@ -137,7 +155,7 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
         return work
 
     # ------------------------------------------------------------------
-    # V2: strategy_select mode — parallel cross-sectional scanning
+    # V2: strategy_select mode — fork-based parallel scanning
     # ------------------------------------------------------------------
 
     def generate_candidates(
@@ -160,8 +178,13 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
         refit_int = int(params.get("refit_interval", 5))
         max_workers = int(params.get("max_workers", 4))
 
-        # Pre-split and serialize: convert to chart_data tuples for efficient IPC
-        symbol_chart_data: list[tuple[str, list[dict], list[float], list[str]]] = []
+        # Pre-serialize all symbol data. This runs once in the parent process.
+        global _SHARED_SYM_IDS, _SHARED_CHART_DATA, _SHARED_CLOSES, _SHARED_DATES
+        _SHARED_SYM_IDS = []
+        _SHARED_CHART_DATA = []
+        _SHARED_CLOSES = []
+        _SHARED_DATES = []
+
         for sym in symbols:
             sym_df = (
                 work[work["symbol"] == sym]
@@ -170,39 +193,49 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
             )
             if len(sym_df) < lookback + 2:
                 continue
-            chart_data = _build_chart_data(sym_df)
-            closes = [float(c["price"]) for c in chart_data]
-            dates = [c["datetime"] for c in chart_data]
-            symbol_chart_data.append((sym, chart_data, closes, dates))
+            _SHARED_SYM_IDS.append(str(sym).strip())
+            _SHARED_CHART_DATA.append(_build_chart_data(sym_df))
+            _SHARED_CLOSES.append([float(c["price"]) for c in _SHARED_CHART_DATA[-1]])
+            _SHARED_DATES.append([c["datetime"] for c in _SHARED_CHART_DATA[-1]])
 
-        if not symbol_chart_data:
+        total = len(_SHARED_SYM_IDS)
+        if total == 0:
             return pd.DataFrame(columns=cols)
 
-        n_workers = min(max_workers, len(symbol_chart_data))
-        chunk_size = max(1, len(symbol_chart_data) // n_workers)
-        chunks = [
-            symbol_chart_data[i : i + chunk_size]
-            for i in range(0, len(symbol_chart_data), chunk_size)
-        ]
+        # Single-process path for small work or max_workers=1
+        n_workers = min(max_workers, total)
+        if n_workers <= 1:
+            result = _scan_range(0, total, lookback, threshold, max_comp, refit_int)
+            return pd.DataFrame(result)
+
+        # Multi-process via multiprocessing.Pool with fork.
+        # Workers inherit shared data via copy-on-write — only index ranges
+        # are passed as arguments, zero large-data pickling.
+        # Must disable BLAS internal threading before fork, otherwise
+        # sklearn's OpenBLAS threads cause child processes to deadlock.
+        chunk_size = max(1, total // n_workers)
+        ranges = []
+        for start in range(0, total, chunk_size):
+            end = min(start + chunk_size, total)
+            ranges.append((start, end))
 
         all_candidates: list[dict] = []
+        ctx = multiprocessing.get_context("fork")
 
-        with ThreadPoolExecutor(max_workers=n_workers) as executor:
-            futures = {
-                executor.submit(
-                    _scan_chart_data_chunk,
-                    chunk,
-                    lookback,
-                    threshold,
-                    max_comp,
-                    refit_int,
-                ): chunk
-                for chunk in chunks
-            }
-
-            for future in as_completed(futures):
+        with ctx.Pool(
+            processes=n_workers,
+            initializer=_blas_single_thread,
+        ) as pool:
+            async_results = [
+                pool.apply_async(
+                    _scan_range,
+                    (s, e, lookback, threshold, max_comp, refit_int),
+                )
+                for s, e in ranges
+            ]
+            for ar in async_results:
                 try:
-                    result = future.result()
+                    result = ar.get(timeout=600)
                     if result:
                         all_candidates.extend(result)
                 except Exception:
@@ -212,24 +245,29 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
 
 
 # ------------------------------------------------------------------
-# Worker function (module-level, required for ProcessPoolExecutor)
+# Worker: receives index range only, reads data from fork-inherited globals
 # ------------------------------------------------------------------
 
 
-def _scan_chart_data_chunk(
-    symbol_chart_data: list[tuple[str, list[dict], list[float], list[str]]],
+def _scan_range(
+    start: int,
+    end: int,
     lookback: int,
     threshold: float,
     max_comp: int,
     refit_int: int,
 ) -> list[dict]:
-    """Process a chunk of pre-serialized symbol data (runs in child process)."""
+    """Scan symbols [start, end) using fork-inherited shared data. No pickling."""
     candidates: list[dict] = []
     lower = 1.0 - threshold
-    upper = threshold
 
-    for sym, chart_data, closes, dates in symbol_chart_data:
+    for idx in range(start, end):
+        sym = _SHARED_SYM_IDS[idx]
+        chart_data = _SHARED_CHART_DATA[idx]
+        closes = _SHARED_CLOSES[idx]
+        dates = _SHARED_DATES[idx]
         n = len(chart_data)
+
         cached_fit = None
         for i in range(lookback, n):
             if cached_fit is None or i % refit_int == 0:
@@ -249,7 +287,7 @@ def _scan_chart_data_chunk(
                 candidates.append(
                     {
                         "trade_date": dates[i],
-                        "symbol": str(sym).strip(),
+                        "symbol": sym,
                         "signal_strength": round(1.0 - density, 4),
                         "reason": (
                             f"GMM密度 {(density * 100):.0f}% ≤ "
@@ -261,8 +299,16 @@ def _scan_chart_data_chunk(
     return candidates
 
 
+def _blas_single_thread():
+    """Pool initializer: force BLAS to single-thread to avoid fork deadlocks."""
+    import os
+
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["OMP_NUM_THREADS"] = "1"
+
+
 # ------------------------------------------------------------------
-# Shared helpers
+# Helpers
 # ------------------------------------------------------------------
 
 
