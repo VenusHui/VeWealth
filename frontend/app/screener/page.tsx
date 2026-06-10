@@ -248,7 +248,7 @@ export default function ScreenerPage() {
       {/* Results table */}
       <ScreenerResultsTable
         results={scan.results}
-        scanning={scan.status === 'scanning'}
+        status={scan.status}
         progress={scan.progress}
         strategyId={strategyId}
       />

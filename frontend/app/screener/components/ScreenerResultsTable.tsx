@@ -29,12 +29,12 @@ const SIGNAL_DESCRIPTIONS: Record<string, string> = {
 
 export function ScreenerResultsTable({
   results,
-  scanning,
+  status,
   progress,
   strategyId,
 }: {
   results: ScreenerResult[]
-  scanning: boolean
+  status: 'idle' | 'scanning' | 'completed' | 'failed'
   progress: { total: number; scanned: number; hits: number }
   strategyId: string
 }) {
@@ -189,22 +189,30 @@ export function ScreenerResultsTable({
   [addingCodes, handleAddToWatchlist, strategyId],
 )
 
+  const isRunning = status === 'scanning'
+  const isDone = status === 'completed'
+  const isIdle = status === 'idle'
+
   return (
     <SurfaceCard
       title={
-        scanning
+        isRunning
           ? `扫描进度: ${progress.scanned.toLocaleString()} / ${progress.total.toLocaleString()}`
-          : `选股结果`
+          : isDone
+            ? `选股结果`
+            : `选股结果`
       }
       description={
-        scanning
+        isRunning
           ? `已命中 ${progress.hits} 个信号`
-          : results.length > 0
-            ? `共命中 ${results.length} 个信号，按信号强度排序`
+          : isDone
+            ? results.length > 0
+              ? `共命中 ${results.length} 个信号，按信号强度排序`
+              : '扫描完成，当前市场未触发买入信号'
             : undefined
       }
     >
-      {scanning && progress.total > 0 ? (
+      {isRunning && progress.total > 0 ? (
         <div className="mb-4">
           <div className="h-2 w-full rounded-full bg-[rgba(0,0,0,0.06)]">
             <div
@@ -313,15 +321,20 @@ export function ScreenerResultsTable({
             ))}
           </div>
         </>
-      ) : scanning ? (
+      ) : isRunning ? (
         <EmptyState
           title="正在扫描中…"
           description="系统正在逐只扫描股票，命中信号后将实时展示在这里。"
         />
+      ) : isDone ? (
+        <EmptyState
+          title="扫描完成，未命中信号"
+          description={`已扫描 ${progress.total.toLocaleString()} 只股票，当前市场条件下未触发买入信号。可尝试调整策略参数或扩大选股范围后重新扫描。`}
+        />
       ) : (
         <EmptyState
-          title="暂无结果"
-          description="点击「开始选股」按钮，扫描全市场触发买入信号的标的。"
+          title="开始选股"
+          description="选择策略并配置参数后，点击「开始选股」扫描全市场触发买入信号的标的。"
         />
       )}
     </SurfaceCard>
