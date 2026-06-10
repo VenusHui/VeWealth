@@ -27,6 +27,8 @@ export type RunItem = {
 
 export type DetailTab = 'overview' | 'trades' | 'rounds' | 'snapshots' | 'strategy'
 export type MainTab = 'create' | 'records' | 'detail' | 'strategies'
+export type ActiveJobStatus = 'pending' | 'running'
+export type JobStatus = 'pending' | 'running' | 'success' | 'completed' | 'failed' | 'cancelled'
 
 export type JobItem = {
   job_id: string

@@ -9,6 +9,8 @@ import { BacktestRecordsPanel } from './components/BacktestRecordsPanel'
 import { BacktestDetailPanel } from './components/BacktestDetailPanel'
 import { BacktestCreatePanel } from './components/BacktestCreatePanel'
 import { StrategyManagementPanel } from './components/StrategyManagementPanel'
+import { ActiveJobsSection } from './components/ActiveJobsSection'
+import { ACTIVE_JOB_STATUSES } from './components/statusLabels'
 import type {
   BacktestOverview,
   BacktestFacts,
@@ -27,7 +29,6 @@ import type {
 import { AppPage, InfoPill, MetricCard, PageHeader } from '../components/ui-shell'
 
 const API_BASE_URL = getApiBaseUrl()
-const ACTIVE_JOB_STATUSES = ['pending', 'running'] as const
 
 export default function BacktestPage() {
   const [mainTab, setMainTab] = useState<MainTab>('create')
@@ -301,6 +302,16 @@ export default function BacktestPage() {
     fetchStrategyManagementList(strategyManagementPage, strategyManagementPageSize, strategyManagementQuery, strategyManagementUsable)
   }, [mounted, fetchStrategyManagementList, strategyManagementPage, strategyManagementPageSize, strategyManagementQuery, strategyManagementUsable])
 
+  const activeJobs = useMemo(
+    () => jobs.filter((j) => ACTIVE_JOB_STATUSES.includes(j.status)),
+    [jobs],
+  )
+
+  const recordsPolling = useMemo(
+    () => mainTab === 'records' && activeJobs.length > 0,
+    [mainTab, activeJobs],
+  )
+
   useEffect(() => {
     if (!selectedStrategy) return
     const defaults: Record<string, string> = {}
@@ -311,11 +322,13 @@ export default function BacktestPage() {
   }, [selectedStrategy])
 
   useEffect(() => {
-    const hasActive = (job && ACTIVE_JOB_STATUSES.includes(job.status as (typeof ACTIVE_JOB_STATUSES)[number])) || jobs.some((j) => ACTIVE_JOB_STATUSES.includes(j.status as (typeof ACTIVE_JOB_STATUSES)[number]))
-    if (mainTab !== 'create' || !hasActive) return
-    const timer = setInterval(() => fetchJobs(false), 10000)
+    if (!recordsPolling) return
+    const timer = setInterval(() => {
+      fetchJobs(false)
+      fetchRuns(runsPage, runsPageSize)
+    }, 10000)
     return () => clearInterval(timer)
-  }, [fetchJobs, mainTab, jobs, job])
+  }, [recordsPolling, fetchJobs, fetchRuns, runsPage, runsPageSize])
 
   useEffect(() => {
     if (!job?.job_id) return
@@ -339,6 +352,12 @@ export default function BacktestPage() {
     }, 10000)
     return () => clearInterval(timer)
   }, [fetchJobs, fetchRuns, job?.job_id])
+
+  useEffect(() => {
+    if (!result) return
+    const timer = setTimeout(() => setResult(null), 8000)
+    return () => clearTimeout(timer)
+  }, [result])
 
   useEffect(() => {
     if (mainTab !== 'detail' || !selectedRunId) return
@@ -387,7 +406,7 @@ export default function BacktestPage() {
       }
       const resp = await axios.post(`${API_BASE_URL}/api/backtest/jobs`, payload, { headers: getAuthHeader() })
       setJob(resp.data?.data)
-      setMainTab('create')
+      setMainTab('records')
       fetchJobs()
     } catch {
       setError('回测执行失败')
@@ -425,11 +444,6 @@ export default function BacktestPage() {
     loadDetailTabData(selectedRunId, 'snapshots', undefined, undefined, { benchmarkCode, compareRunId })
   }
 
-  const runningJobs = useMemo(
-    () => jobs.filter((item) => ACTIVE_JOB_STATUSES.includes(item.status as (typeof ACTIVE_JOB_STATUSES)[number])).length,
-    [jobs],
-  )
-
   if (!mounted) return <div className="mx-auto max-w-3xl px-4 py-10">加载中...</div>
   if (!isAuthenticated()) return <div className="mx-auto max-w-3xl px-4 py-10">请先登录后使用回测功能。</div>
 
@@ -442,7 +456,7 @@ export default function BacktestPage() {
           <>
             <InfoPill>{strategies.length} 个策略</InfoPill>
             <InfoPill>{runsTotal} 条历史记录</InfoPill>
-            <InfoPill>{runningJobs} 个进行中任务</InfoPill>
+            <InfoPill>{activeJobs.length} 个进行中任务</InfoPill>
           </>
         )}
       />
@@ -450,7 +464,7 @@ export default function BacktestPage() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <MetricCard label="策略" value={strategies.length.toLocaleString()} meta="可选策略数" tone="brand" icon="◎" />
         <MetricCard label="历史记录" value={runsTotal.toLocaleString()} meta="已完成回测" icon="▤" />
-        <MetricCard label="进行中" value={runningJobs.toLocaleString()} meta={job ? job.name || job.job_id : '无活跃任务'} tone="warning" icon="↻" />
+        <MetricCard label="进行中" value={activeJobs.length.toLocaleString()} meta={job ? job.name || job.job_id : '无活跃任务'} tone="warning" icon="↻" />
       </div>
 
       <MainTabSwitcher activeTab={mainTab} onChange={setMainTab} />
@@ -473,9 +487,6 @@ export default function BacktestPage() {
           excludeSt={excludeSt}
           loading={loading}
           error={error}
-          job={job}
-          jobs={jobs}
-          jobsLoading={jobsLoading}
           onNameChange={setName}
           onStrategyChange={setStrategyId}
           onModeChange={setMode}
@@ -501,20 +512,30 @@ export default function BacktestPage() {
       ) : null}
 
       {mainTab === 'records' ? (
-        <BacktestRecordsPanel
-          runs={runs}
-          runsLoading={runsLoading}
-          onRefresh={() => fetchRuns(runsPage, runsPageSize)}
-          onViewDetail={loadRunDetail}
-          total={runsTotal}
-          page={runsPage}
-          pageSize={runsPageSize}
-          onPageChange={setRunsPage}
-          onPageSizeChange={(size) => {
-            setRunsPageSize(size)
-            setRunsPage(1)
-          }}
-        />
+        <>
+          <ActiveJobsSection
+            jobs={activeJobs}
+            loading={jobsLoading}
+          />
+          <BacktestRecordsPanel
+            runs={runs}
+            runsLoading={runsLoading}
+            pollingActive={recordsPolling}
+            onRefresh={() => {
+              fetchJobs(false)
+              fetchRuns(runsPage, runsPageSize)
+            }}
+            onViewDetail={loadRunDetail}
+            total={runsTotal}
+            page={runsPage}
+            pageSize={runsPageSize}
+            onPageChange={setRunsPage}
+            onPageSizeChange={(size) => {
+              setRunsPageSize(size)
+              setRunsPage(1)
+            }}
+          />
+        </>
       ) : null}
 
       {mainTab === 'detail' ? (
@@ -576,8 +597,7 @@ export default function BacktestPage() {
 
       {result ? (
         <div className="rounded-[24px] border border-[rgba(21,128,61,0.16)] bg-[rgba(240,253,244,0.92)] px-5 py-4 text-sm text-green-800">
-          最新任务：Run #{result.run_id}，交易 {result.trades?.length || 0} 笔。
-          <button className="ml-3 font-semibold underline" onClick={() => mainTab !== 'records' && setMainTab('records')}>查看记录</button>
+          回测完成：Run #{result.run_id}，共 {result.trades?.length || 0} 笔交易。
         </div>
       ) : null}
     </AppPage>

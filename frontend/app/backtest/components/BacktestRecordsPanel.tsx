@@ -1,8 +1,9 @@
-import { Button, Table, Tag } from 'antd'
+import { Button, Table } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import Link from 'next/link'
 import type { RunItem } from './types'
 import { formatDrawdownPct, formatPct, marketClassByDrawdown, marketClassByValue } from '../../lib/marketColors'
+import { StatusTag } from './statusLabels'
 
 function getRecordColumns(onViewDetail: (runId: number) => void): ColumnsType<RunItem> {
   return [
@@ -31,7 +32,7 @@ function getRecordColumns(onViewDetail: (runId: number) => void): ColumnsType<Ru
       align: 'right',
       render: (v) => <span className={marketClassByDrawdown(v)}>{formatDrawdownPct(v)}</span>,
     },
-    { title: '状态', dataIndex: 'status', key: 'status', width: 90, render: (v) => <Tag>{v}</Tag> },
+    { title: '状态', dataIndex: 'status', key: 'status', width: 90, render: (v) => <StatusTag status={v} /> },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 180, render: (v) => new Date(v).toLocaleString() },
     {
       title: '操作',
@@ -56,6 +57,7 @@ export function BacktestRecordsPanel({
   pageSize,
   onPageChange,
   onPageSizeChange,
+  pollingActive = false,
 }: {
   runs: RunItem[]
   runsLoading: boolean
@@ -66,12 +68,16 @@ export function BacktestRecordsPanel({
   pageSize: number
   onPageChange: (page: number) => void
   onPageSizeChange: (size: number) => void
+  pollingActive?: boolean
 }) {
   return (
     <section className="ve-panel">
       <div className="mb-5 flex flex-col gap-4 border-b border-[var(--border-subtle)] pb-4 md:flex-row md:items-start md:justify-between">
-        <div>
+        <div className="flex items-center gap-2">
           <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">回测记录</h2>
+          {pollingActive ? (
+            <span className="inline-block h-2 w-2 rounded-full bg-[var(--brand)] animate-pulse" title="自动刷新中" />
+          ) : null}
         </div>
         <Button type="default" onClick={onRefresh}>刷新</Button>
       </div>
@@ -84,7 +90,7 @@ export function BacktestRecordsPanel({
           columns={getRecordColumns(onViewDetail)}
           dataSource={runs}
           scroll={{ x: 1100 }}
-          locale={{ emptyText: '暂无回测记录' }}
+          locale={{ emptyText: '暂无回测记录，提交新的回测任务后结果将显示在这里' }}
           pagination={{
             current: page,
             pageSize,
@@ -108,7 +114,7 @@ export function BacktestRecordsPanel({
                 <div className="truncate font-semibold text-[var(--text-strong)]">{r.name}</div>
                 <div className="truncate text-sm text-[var(--text-dim)]">{r.strategy_id}</div>
               </div>
-              <Tag>{r.status}</Tag>
+              <StatusTag status={r.status} />
             </div>
             <div className="mt-3 space-y-1 text-sm text-[var(--text-muted)]">
               <div>{r.start_date} ~ {r.end_date}</div>

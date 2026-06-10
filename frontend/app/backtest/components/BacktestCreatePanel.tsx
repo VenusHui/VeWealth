@@ -1,5 +1,4 @@
-import { LoadingHint } from './LoadingHint'
-import type { JobItem, Strategy } from './types'
+import type { Strategy } from './types'
 
 const BOARD_LABELS: Record<'main' | 'gem' | 'star' | 'bse', string> = {
   main: '主板',
@@ -23,9 +22,6 @@ export function BacktestCreatePanel({
   strategyParams,
   loading,
   error,
-  job,
-  jobs,
-  jobsLoading,
   onNameChange,
   onStrategyChange,
   onModeChange,
@@ -56,9 +52,6 @@ export function BacktestCreatePanel({
   strategyParams: Record<string, string>
   loading: boolean
   error: string
-  job: JobItem | null
-  jobs: JobItem[]
-  jobsLoading: boolean
   onNameChange: (v: string) => void
   onStrategyChange: (v: string) => void
   onModeChange: (v: 'manual_symbols' | 'strategy_select') => void
@@ -76,8 +69,7 @@ export function BacktestCreatePanel({
   onSubmit: () => void
 }) {
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.35fr_0.65fr]">
-      <section className="ve-panel space-y-5">
+    <section className="ve-panel space-y-5">
         <div className="space-y-1">
           <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">新建回测任务</h2>
         </div>
@@ -178,52 +170,10 @@ export function BacktestCreatePanel({
           <button type="button" onClick={onSubmit} disabled={loading} className="ve-button-primary">
             {loading ? '提交中…' : '提交回测任务'}
           </button>
-          <span className="text-sm text-[var(--text-dim)]">提交后进入任务队列，完成后出现在记录列表。</span>
+          <span className="text-sm text-[var(--text-dim)]">提交后将跳转至记录页面，可实时查看任务进度。</span>
         </div>
 
         {error ? <div className="rounded-2xl border border-[rgba(220,38,38,0.16)] bg-[rgba(254,242,242,0.86)] px-4 py-3 text-sm text-red-700">{error}</div> : null}
-      </section>
-
-      <section className="ve-panel space-y-4">
-        <div className="space-y-1">
-          <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">任务状态</h2>
-        </div>
-
-        {job ? (
-          <div className="ve-metric-card ve-metric-card--brand">
-            <div>
-              <div className="text-xs uppercase tracking-[0.16em] text-[var(--text-dim)]">当前任务</div>
-              <div className="mt-2 text-lg font-semibold text-[var(--text-strong)]">{job.name || job.job_id}</div>
-            </div>
-            <div className="space-y-1 text-sm text-[var(--text-muted)]">
-              <div>状态：{job.status}</div>
-              <div>进度：{Number(job.progress_pct || 0).toFixed(1)}%</div>
-              {job.created_at ? <div>创建：{new Date(job.created_at).toLocaleString()}</div> : null}
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-[22px] border border-dashed border-[var(--border)] px-4 py-8 text-center text-sm text-[var(--text-dim)]">当前没有活跃任务</div>
-        )}
-
-        <div className="space-y-2">
-          <div className="text-sm font-semibold text-[var(--text-strong)]">最近任务</div>
-          <div className="space-y-2">
-            {jobsLoading ? (
-              <LoadingHint text="任务列表加载中..." />
-            ) : jobs.length > 0 ? (
-              jobs.map((j) => (
-                <div key={j.job_id} className="rounded-[20px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.72)] px-4 py-3 text-sm">
-                  <div className="font-medium text-[var(--text-strong)]">{j.name || j.job_id}</div>
-                  <div className="text-[var(--text-dim)]">{j.status} · {Number(j.progress_pct || 0).toFixed(1)}%</div>
-                  {j.created_at ? <div className="text-[var(--text-dim)]">{new Date(j.created_at).toLocaleString()}</div> : null}
-                </div>
-              ))
-            ) : (
-              <div className="rounded-[20px] border border-dashed border-[var(--border)] px-4 py-6 text-sm text-[var(--text-dim)]">暂无任务</div>
-            )}
-          </div>
-        </div>
-      </section>
-    </div>
+    </section>
   )
 }

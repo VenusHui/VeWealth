@@ -1,6 +1,6 @@
 export function LoadingHint({ text }: { text: string }) {
   return (
-    <div className="text-sm text-gray-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
+    <div className="rounded-[20px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-4 py-3 text-sm text-[var(--text-dim)]">
       {text}
     </div>
   )
