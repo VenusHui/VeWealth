@@ -3,7 +3,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import axios from 'axios'
-import { Alert, Button, Input, Spin } from 'antd'
+import { Alert, Button, Input, Select, Spin } from 'antd'
 import DepthChart from '../components/DepthChart'
 import DepthToolbar from '../components/DepthToolbar'
 import DepthStatistics from '../components/DepthStatistics'
@@ -479,24 +479,25 @@ export default function DepthContent() {
                   onChange={(e) => setSearchKeyword(e.target.value)}
                   onPressEnter={handleUnifiedInput}
                   placeholder={stockCode || '输入代码或名称，如：贵州茅台 / 600519'}
+                  className="flex-1"
                 />
                 <Button onClick={handleUnifiedInput} loading={searchLoading || loading}>
                   查询
                 </Button>
                 {watchlistStocks.length > 0 && (
-                  <select
-                    className="ve-select max-w-[140px]"
-                    value=""
-                    onChange={(e) => {
-                      const selected = watchlistStocks.find((s) => s.code === e.target.value)
+                  <Select
+                    className="w-28"
+                    value={undefined}
+                    placeholder="自选股"
+                    onChange={(code) => {
+                      const selected = watchlistStocks.find((s) => s.code === code)
                       if (selected) handleQuickSwitch(selected.code, selected.name)
                     }}
-                  >
-                    <option value="" disabled>自选股</option>
-                    {watchlistStocks.map((s) => (
-                      <option key={s.code} value={s.code}>{s.name || s.code}</option>
-                    ))}
-                  </select>
+                    options={watchlistStocks.map((s) => ({
+                      value: s.code,
+                      label: s.name || s.code,
+                    }))}
+                  />
                 )}
               </div>
 
