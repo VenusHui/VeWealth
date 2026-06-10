@@ -9,7 +9,6 @@ import { BacktestRecordsPanel } from './components/BacktestRecordsPanel'
 import { BacktestDetailPanel } from './components/BacktestDetailPanel'
 import { BacktestCreatePanel } from './components/BacktestCreatePanel'
 import { StrategyManagementPanel } from './components/StrategyManagementPanel'
-import { ActiveJobsSection } from './components/ActiveJobsSection'
 import { ACTIVE_JOB_STATUSES } from './components/statusLabels'
 import type {
   BacktestOverview,
@@ -500,30 +499,25 @@ export default function BacktestPage() {
       ) : null}
 
       {mainTab === 'records' ? (
-        <>
-          <ActiveJobsSection
-            jobs={activeJobs}
-            loading={jobsLoading}
-          />
-          <BacktestRecordsPanel
-            runs={runs}
-            runsLoading={runsLoading}
-            pollingActive={recordsPolling}
-            onRefresh={() => {
-              fetchJobs(false)
-              fetchRuns(runsPage, runsPageSize)
-            }}
-            onViewDetail={loadRunDetail}
-            total={runsTotal}
-            page={runsPage}
-            pageSize={runsPageSize}
-            onPageChange={setRunsPage}
-            onPageSizeChange={(size) => {
-              setRunsPageSize(size)
-              setRunsPage(1)
-            }}
-          />
-        </>
+        <BacktestRecordsPanel
+          runs={runs}
+          runsLoading={runsLoading}
+          activeJobs={activeJobs}
+          pollingActive={recordsPolling}
+          onRefresh={() => {
+            fetchJobs(false)
+            fetchRuns(runsPage, runsPageSize)
+          }}
+          onViewDetail={loadRunDetail}
+          total={runsTotal}
+          page={runsPage}
+          pageSize={runsPageSize}
+          onPageChange={setRunsPage}
+          onPageSizeChange={(size) => {
+            setRunsPageSize(size)
+            setRunsPage(1)
+          }}
+        />
       ) : null}
 
       {mainTab === 'detail' ? (

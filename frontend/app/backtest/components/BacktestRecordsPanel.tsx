@@ -1,7 +1,7 @@
-import { Button, Table } from 'antd'
+import { Button, Progress, Table } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import Link from 'next/link'
-import type { RunItem } from './types'
+import type { JobItem, RunItem } from './types'
 import { formatDrawdownPct, formatPct, marketClassByDrawdown, marketClassByValue } from '../../lib/marketColors'
 import { StatusTag } from './statusLabels'
 
@@ -47,9 +47,40 @@ function getRecordColumns(onViewDetail: (runId: number) => void): ColumnsType<Ru
   ]
 }
 
+function ActiveJobCard({ job }: { job: JobItem }) {
+  const pct = Math.min(Math.max(Number(job.progress_pct || 0), 0), 100)
+  return (
+    <div className="rounded-[20px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.72)] px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-medium text-[var(--text-strong)]">
+            {job.name || job.job_id.slice(0, 8)}
+          </div>
+          {job.created_at ? (
+            <div className="text-sm text-[var(--text-dim)]">
+              {new Date(job.created_at).toLocaleString()}
+            </div>
+          ) : null}
+        </div>
+        <StatusTag status={job.status} />
+      </div>
+      <div className="mt-3">
+        <Progress
+          percent={pct}
+          size="small"
+          showInfo={false}
+          strokeColor={{ '0%': '#0f766e', '100%': '#0d9488' }}
+          trailColor="rgba(15,23,42,0.06)"
+        />
+      </div>
+    </div>
+  )
+}
+
 export function BacktestRecordsPanel({
   runs,
   runsLoading,
+  activeJobs,
   onRefresh,
   onViewDetail,
   total,
@@ -61,6 +92,7 @@ export function BacktestRecordsPanel({
 }: {
   runs: RunItem[]
   runsLoading: boolean
+  activeJobs: JobItem[]
   onRefresh: () => void
   onViewDetail: (runId: number) => void
   total: number
@@ -70,6 +102,8 @@ export function BacktestRecordsPanel({
   onPageSizeChange: (size: number) => void
   pollingActive?: boolean
 }) {
+  const isEmpty = activeJobs.length === 0 && runs.length === 0
+
   return (
     <section className="ve-panel">
       <div className="mb-5 flex flex-col gap-4 border-b border-[var(--border-subtle)] pb-4 md:flex-row md:items-start md:justify-between">
@@ -82,6 +116,16 @@ export function BacktestRecordsPanel({
         <Button type="default" onClick={onRefresh}>刷新</Button>
       </div>
 
+      {/* Active jobs — shown as cards in both desktop and mobile */}
+      {activeJobs.length > 0 && (
+        <div className="mb-4 space-y-3">
+          {activeJobs.map((j) => (
+            <ActiveJobCard key={j.job_id} job={j} />
+          ))}
+        </div>
+      )}
+
+      {/* Desktop: completed runs table */}
       <div className="hidden md:block">
         <Table<RunItem>
           rowKey="id"
@@ -90,7 +134,7 @@ export function BacktestRecordsPanel({
           columns={getRecordColumns(onViewDetail)}
           dataSource={runs}
           scroll={{ x: 1100 }}
-          locale={{ emptyText: '暂无回测记录，提交新的回测任务后结果将显示在这里' }}
+          locale={{ emptyText: isEmpty ? '暂无回测记录，提交新的回测任务后结果将显示在这里' : '暂无已完成记录' }}
           pagination={{
             current: page,
             pageSize,
@@ -106,6 +150,7 @@ export function BacktestRecordsPanel({
         />
       </div>
 
+      {/* Mobile: completed runs cards */}
       <div className="space-y-3 md:hidden">
         {runs.map((r) => (
           <div key={r.id} className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.75)] p-4">
@@ -129,7 +174,7 @@ export function BacktestRecordsPanel({
             </div>
           </div>
         ))}
-        {runs.length === 0 ? <div className="rounded-[20px] border border-dashed border-[var(--border)] px-4 py-8 text-sm text-[var(--text-dim)]">暂无回测记录</div> : null}
+        {isEmpty ? <div className="rounded-[20px] border border-dashed border-[var(--border)] px-4 py-8 text-sm text-[var(--text-dim)]">暂无回测记录，提交新的回测任务后结果将显示在这里</div> : null}
       </div>
     </section>
   )
