@@ -3,6 +3,13 @@
 import type { Strategy } from '../../backtest/components/types'
 import { BOARD_LABELS } from '../../backtest/components/types'
 
+/** Parameters that are only relevant for backtest execution, not for signal screening. */
+const EXECUTION_ONLY_PARAMS = new Set([
+  'position_size_pct',
+  'max_workers',
+  'hold_days',
+])
+
 export function ScreenerConfigPanel({
   strategyId,
   strategies,
@@ -65,29 +72,36 @@ export function ScreenerConfigPanel({
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {selectedStrategy.param_schema.map((p) => (
-              <div key={p.key}>
-                <label className="ve-field-label">
-                  {p.label}
-                  {p.min != null && p.max != null ? (
-                    <span className="ml-1 text-xs text-[var(--text-dim)]">
-                      ({p.min}–{p.max})
-                    </span>
-                  ) : null}
-                </label>
-                <input
-                  className="ve-input"
-                  type={p.type === 'int' || p.type === 'float' ? 'number' : 'text'}
-                  step={p.type === 'float' ? '0.01' : '1'}
-                  min={p.min}
-                  max={p.max}
-                  value={strategyParams[p.key] ?? ''}
-                  onChange={(e) => onStrategyParamChange(p.key, e.target.value)}
-                  placeholder={String(p.default ?? '')}
-                />
-              </div>
-            ))}
+            {selectedStrategy.param_schema
+              .filter((p) => !EXECUTION_ONLY_PARAMS.has(p.key))
+              .map((p) => (
+                <div key={p.key}>
+                  <label className="ve-field-label">
+                    {p.label}
+                    {p.min != null && p.max != null ? (
+                      <span className="ml-1 text-xs text-[var(--text-dim)]">
+                        ({p.min}–{p.max})
+                      </span>
+                    ) : null}
+                  </label>
+                  <input
+                    className="ve-input"
+                    type={p.type === 'int' || p.type === 'float' ? 'number' : 'text'}
+                    step={p.type === 'float' ? '0.01' : '1'}
+                    min={p.min}
+                    max={p.max}
+                    value={strategyParams[p.key] ?? ''}
+                    onChange={(e) => onStrategyParamChange(p.key, e.target.value)}
+                    placeholder={String(p.default ?? '')}
+                  />
+                </div>
+              ))}
           </div>
+          {selectedStrategy.param_schema.some((p) => EXECUTION_ONLY_PARAMS.has(p.key)) ? (
+            <p className="mt-3 text-xs text-[var(--text-dim)]">
+              已隐藏仅用于回测的参数（如仓位占比、持仓天数等），不影响选股信号计算。
+            </p>
+          ) : null}
 
           <div className="mt-5 rounded-[20px] border border-[var(--border-subtle)] bg-[rgba(248,250,252,0.84)] p-4">
             <div className="text-sm font-semibold text-[var(--text-strong)]">选股范围</div>

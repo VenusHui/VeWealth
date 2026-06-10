@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import axios from 'axios'
-import { Button, message, Popconfirm, Table, Tag } from 'antd'
+import { Button, message, Popconfirm, Table, Tag, Tooltip } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { getAuthHeader } from '../../lib/auth'
 import { getApiBaseUrl } from '../../lib/api'
@@ -21,14 +21,22 @@ export interface ScreenerResult {
   change_pct?: number | null
 }
 
+const SIGNAL_DESCRIPTIONS: Record<string, string> = {
+  gmm_volume_v1: '密度越低信号越强：当前价格处于历史成交稀疏区，均值回归概率较高。',
+  ma_cross_v1: '均线间距越大信号越强：短均线突破长均线的乖离率，趋势动量信号。',
+  volume_shrink_drop_v1: '缩量下跌后反弹信号：连续缩量回调后出现企稳迹象。',
+}
+
 export function ScreenerResultsTable({
   results,
   scanning,
   progress,
+  strategyId,
 }: {
   results: ScreenerResult[]
   scanning: boolean
   progress: { total: number; scanned: number; hits: number }
+  strategyId: string
 }) {
   const [addingCodes, setAddingCodes] = useState<Set<string>>(new Set())
 
@@ -104,7 +112,11 @@ export function ScreenerResultsTable({
         ),
     },
     {
-      title: '信号强度',
+      title: (
+        <Tooltip title={SIGNAL_DESCRIPTIONS[strategyId] || '信号越强，触发条件越显著。'}>
+          <span className="cursor-help border-b border-dotted border-[var(--text-dim)]">信号强度</span>
+        </Tooltip>
+      ),
       dataIndex: 'signal_strength',
       key: 'signal_strength',
       width: 110,
@@ -174,7 +186,7 @@ export function ScreenerResultsTable({
       ),
     },
   ],
-  [addingCodes, handleAddToWatchlist],
+  [addingCodes, handleAddToWatchlist, strategyId],
 )
 
   return (

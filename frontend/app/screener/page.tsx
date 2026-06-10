@@ -250,6 +250,7 @@ export default function ScreenerPage() {
         results={scan.results}
         scanning={scan.status === 'scanning'}
         progress={scan.progress}
+        strategyId={strategyId}
       />
     </AppPage>
   )
