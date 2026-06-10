@@ -40,9 +40,10 @@ cd backend && python -m unittest discover -s tests -p 'test_*.py'
 
 ### Docker
 ```bash
+./start.sh                                           # Starts backend (dev_server.py) + frontend (npm run dev)
 docker-compose up -d --build                        # Default ENV=local
 ENV=prod docker-compose up -d --build               # Production
-./docker-start.sh                                    # Alias for ENV=prod
+./docker-start.sh                                    # Alias for ENV=prod docker-compose up -d --build
 ```
 
 ## Architecture
@@ -55,10 +56,11 @@ ENV=prod docker-compose up -d --build               # Production
 
 **Core layers**:
 - `app/core/` — Infrastructure: `config.py` (settings), `database.py` (SQLAlchemy engine/session), `security.py` (JWT/password utils), `deps.py` (FastAPI dependencies like `get_current_user()`), `logger.py`
-- `app/routers/` — FastAPI API route modules: `auth.py`, `stock.py`, `watchlist.py`, `scheduler.py`, `backtest.py`
+- `app/routers/` — FastAPI API route modules: `auth.py`, `stock.py`, `watchlist.py`, `scheduler.py`, `backtest.py`, `alert.py`
 - `app/services/` — Business logic: `stock_service.py` (AKShare/Tushare fetching, GMM fitting), `data_collector.py`, `alert_service.py`, `wechat_service.py`, `scheduler.py` (APScheduler setup), `backtest/` (full backtesting subsystem)
-- `app/models/` — SQLAlchemy ORM models
-- `app/schemas/` — Pydantic request/response schemas
+- `app/providers/` — Market data source adapters: `base.py` (abstract interface), `akshare_provider.py`, `astock_provider.py` (TDX), `astock_data.py` (data types)
+- `app/models/` — SQLAlchemy ORM models: `user.py`, `watchlist.py`, `stock_data.py`, `backtest.py`, `backtest_job.py`, `alert_history.py`, `security_universe.py`
+- `app/schemas/` — Pydantic request/response schemas: `auth.py`, `stock.py`, `watchlist.py`, `backtest.py`, `alert.py`
 
 **Lifespan lifecycle** (`main.py`): On startup — init DB (creates tables from models), recover stale backtest jobs, start APScheduler. On shutdown — stop scheduler.
 
@@ -68,9 +70,9 @@ ENV=prod docker-compose up -d --build               # Production
 
 ### Frontend (`frontend/`)
 
-**Framework**: Next.js 14 with App Router. Pages live in `frontend/app/{page_name}/page.tsx`. Shared UI components in `frontend/app/components/`.
+**Framework**: Next.js 14 with App Router. Pages: `/` (dashboard), `/login`, `/depth` (Volume Profile + GMM), `/watchlist`, `/backtest`, `/alerts`. Shared UI components in `frontend/app/components/`. Backtest module has its own components in `frontend/app/backtest/components/`.
 
-**UI approach**: Hybrid — uses both Ant Design 6 components and Tailwind CSS utility classes. When adding UI, prefer shadcn/ui patterns (already refactored in). A-share color convention: red = up, green = down (non-Western convention).
+**UI approach**: Hybrid — uses both Ant Design 6 components and Tailwind CSS utility classes. A-share color convention: red = up, green = down (non-Western convention). Color helpers in `frontend/app/lib/marketColors.ts`.
 
 **API integration**: The API base URL is resolved at runtime by `frontend/app/lib/api.ts` (`getApiBaseUrl()`), not at build time. It derives the backend address from `window.location.hostname` with port 8001, so the same build works on localhost and any public IP. Frontend routes that need auth read the JWT from localStorage via `frontend/app/lib/auth.ts` helpers.
 
@@ -79,7 +81,7 @@ ENV=prod docker-compose up -d --build               # Production
 1. AKShare provides real-time/cached stock data (free, no auth)
 2. Data is stored in PostgreSQL for long-term history (突破 AKShare 5日限制)
 3. GMM is fitted on historical price data for distribution analysis
-4. APScheduler runs alert checks during trading hours (9:15-15:00 weekdays)
+4. APScheduler runs alert checks during trading hours (9:00-15:00 weekdays)
 5. WeChat notifications sent via wechatpy when price crosses thresholds
 
 ### Backtest Subsystem
@@ -89,9 +91,10 @@ ENV=prod docker-compose up -d --build               # Production
 - `service.py` — Orchestration layer
 - `job_manager.py` — Job lifecycle (create, run, poll results)
 - `registry.py` — Strategy registry
-- `strategies/` — Strategy implementations (MA cross, volume shrink/drop, etc.)
-- `validators/` — Strategy parameter validation
-- `policies/` — Policy definitions
+- `strategy_management_service.py` — Strategy management (availability, validation)
+- `strategies/` — Strategy implementations: `base.py`, `contracts.py` (V2 contracts), `ma_cross_v1.py`, `volume_shrink_drop_v1.py`, `gmm_volume_v1.py`
+- `validators/` — Strategy parameter validation: `strategy_validator.py`
+- `policies/` — Policy definitions: `base.py`, `registry.py`, `profiles.py`
 - `costs.py` — Transaction cost modeling
 - `metrics.py` — Performance metrics (Sharpe, max drawdown, etc.)
 

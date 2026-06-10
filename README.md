@@ -5,17 +5,24 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Node.js 20](https://img.shields.io/badge/node-20-green.svg)](https://nodejs.org/)
 
-一个基于 FastAPI 和 Next.js 的现代化A股股票数据分析平台，提供实时数据查询、价格分布分析、长期数据存储、智能预警和微信通知等功能。
+一个基于 FastAPI 和 Next.js 的现代化A股股票数据分析平台，提供实时数据查询、Volume Profile 深度分析、策略回测、智能预警和微信通知等功能。
 
 ## ✨ 核心功能
 
-### 📊 股票分析
-- **实时数据查询** - 通过 AKShare 获取A股分时数据
-- **价格分布分析** - 按价格聚合成交量，直观展示价格分布
-- **多峰正态分布拟合** - 使用 GMM（高斯混合模型）拟合价格分布曲线
-- **智能阈值可视化** - 可调节阈值滑块，高亮显示概率密度区间
-- **双轴图表** - 独立Y轴显示成交量和拟合曲线，避免量纲差异
-- **交互式图表** - 支持柱状图、折线图、拟合曲线的独立显隐控制
+### 📊 深度分析 (Depth / Volume Profile)
+- **Volume Profile** - 按价格聚合历史成交量，直观展示筹码分布
+- **GMM 多峰拟合** - 使用高斯混合模型（GMM）拟合成交量分布曲线，自动识别筹码密集区
+- **客户端实时拟合** - 浏览器端 GMM 计算，即时响应用户交互
+- **GMM 交易信号** - 基于成交量密度分布的多空交易信号
+
+### 🧪 策略回测 (Backtest)
+- **内置策略模板** - 均线交叉、缩量下跌、GMM 成交量密度等多套策略
+- **全市场扫描** - `strategy_select` 模式支持全 A 股扫描选股
+- **股票池筛选** - 支持按板块（主板/创业板/科创板/北交所）、ST 状态过滤
+- **异步任务** - 回测任务异步执行，支持进度查询与取消
+- **三级钻取详情** - 概览 → 成交明细 → 回合交易 → 持仓快照 → 策略配置
+- **CSV 导出** - 成交明细与回合交易支持导出
+- **策略管理** - 策略可用性校验、Policy 五件套架构（排名/选股/配仓/风控/执行）
 
 ### 👁️ 监控列表
 - **股票监控管理** - 添加关注的股票到个人监控列表
@@ -24,8 +31,9 @@
 - **个性化设置** - 每只股票可单独设置预警开关和阈值
 
 ### ⚡ 智能预警
-- **价格预警** - 当股票价格超过正态分布设定阈值时自动触发
+- **GMM 双向交易信号** - 基于成交量密度分布自动生成买卖预警
 - **微信通知** - 通过微信公众号实时推送预警消息
+- **预警历史** - 完整的预警历史记录，支持按方向（买/卖）筛选
 - **防重复通知** - 同一股票1小时内不重复预警
 - **交易时段监控** - 交易时间每5分钟检查一次
 
@@ -42,6 +50,7 @@
 - **PostgreSQL** - 关系型数据库，存储用户数据和历史分时数据
 - **APScheduler** - 定时任务调度
 - **AKShare** - 免费开源的股票数据接口
+- **mootdx** - TDX 数据接口（备用行情源）
 - **scikit-learn** - GMM 模型和机器学习
 - **wechatpy** - 微信公众号 SDK
 - **JWT** - Token 认证
@@ -49,7 +58,8 @@
 ### 前端
 - **Next.js 14** - React 框架（App Router）
 - **TypeScript** - 类型安全
-- **Tailwind CSS** - 现代化 UI 样式
+- **Ant Design 6** - 企业级 UI 组件库
+- **Tailwind CSS** - 页面布局与辅助样式
 - **Recharts** - 数据可视化图表库
 - **Axios** - HTTP 客户端
 
@@ -57,58 +67,99 @@
 
 ```
 VeWealth/
-├── backend/                    # 后端 FastAPI 项目
-│   ├── main.py                # 应用主入口
+├── backend/                          # 后端 FastAPI 项目
+│   ├── main.py                      # 应用主入口
+│   ├── dev_server.py                # 热重载开发服务器
 │   ├── app/
-│   │   ├── core/              # 核心配置
-│   │   │   ├── config.py      # 应用配置
-│   │   │   ├── database.py    # 数据库连接
-│   │   │   ├── security.py    # 安全认证
-│   │   │   └── deps.py        # 依赖注入
-│   │   ├── models/            # 数据库模型
-│   │   │   ├── user.py        # 用户模型
-│   │   │   ├── watchlist.py   # 监控列表模型
-│   │   │   └── stock_data.py  # 股票数据模型
-│   │   ├── schemas/           # Pydantic 模型
-│   │   │   ├── auth.py        # 认证相关
-│   │   │   ├── watchlist.py   # 监控列表相关
-│   │   │   └── stock.py       # 股票相关
-│   │   ├── routers/           # API 路由
-│   │   │   ├── auth.py        # 认证路由
-│   │   │   ├── watchlist.py   # 监控列表路由
-│   │   │   └── stock.py       # 股票数据路由
-│   │   ├── services/          # 业务逻辑
-│   │   │   ├── stock_service.py      # 股票服务
-│   │   │   ├── data_collector.py     # 数据采集
-│   │   │   ├── alert_service.py      # 预警服务
-│   │   │   ├── wechat_service.py     # 微信服务
-│   │   │   └── scheduler.py          # 定时任务
-│   │   └── utils/             # 工具函数
-│   │       └── data_processor.py     # 数据处理
-│   └── requirements.txt       # Python 依赖
+│   │   ├── core/                    # 核心配置
+│   │   │   ├── config.py           # 应用配置
+│   │   │   ├── database.py         # 数据库连接
+│   │   │   ├── security.py         # 安全认证
+│   │   │   ├── deps.py             # 依赖注入
+│   │   │   └── logger.py           # 日志配置
+│   │   ├── models/                 # 数据库模型
+│   │   │   ├── user.py             # 用户模型
+│   │   │   ├── watchlist.py        # 监控列表模型
+│   │   │   ├── stock_data.py       # 股票数据模型
+│   │   │   ├── backtest.py         # 回测记录模型
+│   │   │   ├── backtest_job.py     # 回测任务模型
+│   │   │   ├── alert_history.py    # 预警历史模型
+│   │   │   └── security_universe.py # 股票池模型
+│   │   ├── schemas/                # Pydantic 模型
+│   │   │   ├── auth.py             # 认证相关
+│   │   │   ├── watchlist.py        # 监控列表相关
+│   │   │   ├── stock.py            # 股票相关
+│   │   │   ├── backtest.py         # 回测相关
+│   │   │   └── alert.py            # 预警相关
+│   │   ├── routers/                # API 路由
+│   │   │   ├── auth.py             # 认证路由
+│   │   │   ├── watchlist.py        # 监控列表路由
+│   │   │   ├── stock.py            # 股票数据路由
+│   │   │   ├── backtest.py         # 回测路由
+│   │   │   ├── alert.py            # 预警历史路由
+│   │   │   └── scheduler.py        # 调度器管理路由
+│   │   ├── services/               # 业务逻辑
+│   │   │   ├── stock_service.py    # 股票服务
+│   │   │   ├── data_collector.py   # 数据采集
+│   │   │   ├── alert_service.py    # 预警服务
+│   │   │   ├── wechat_service.py   # 微信服务
+│   │   │   ├── scheduler.py        # 定时任务
+│   │   │   └── backtest/           # 回测子系统
+│   │   │       ├── engine.py       # 核心执行引擎
+│   │   │       ├── service.py      # 编排层
+│   │   │       ├── job_manager.py  # 任务生命周期
+│   │   │       ├── registry.py     # 策略注册表
+│   │   │       ├── costs.py        # 交易成本建模
+│   │   │       ├── metrics.py      # 绩效指标
+│   │   │       ├── strategy_management_service.py
+│   │   │       ├── strategies/     # 策略实现
+│   │   │       ├── policies/       # Policy 定义
+│   │   │       └── validators/     # 策略校验
+│   │   ├── providers/              # 行情数据源
+│   │   │   ├── base.py             # 抽象接口
+│   │   │   ├── akshare_provider.py # AKShare 实现
+│   │   │   └── astock_provider.py  # ASTock/TDX 实现
+│   │   └── utils/                  # 工具函数
+│   │       ├── data_processor.py   # GMM 数据处理
+│   │       └── stock_data_fetcher.py
+│   ├── scripts/                    # 维护脚本
+│   │   └── refresh_a_share_symbols.py
+│   ├── tests/                      # 单元测试
+│   ├── data/                       # 静态数据
+│   │   └── a_share_symbols.txt
+│   └── requirements.txt
 │
-├── frontend/                   # 前端 Next.js 项目
+├── frontend/                        # 前端 Next.js 项目
 │   ├── app/
-│   │   ├── page.tsx           # 首页
-│   │   ├── layout.tsx         # 根布局
-│   │   ├── login/             # 登录页面
-│   │   ├── analysis/          # 股票分析页面
-│   │   ├── watchlist/         # 监控列表页面
-│   │   ├── components/        # React 组件
-│   │   │   ├── Navbar.tsx     # 导航栏
-│   │   │   └── StockChart.tsx # 股票图表
-│   │   └── lib/               # 工具库
-│   │       └── auth.ts        # 认证工具
+│   │   ├── page.tsx                # 首页（仪表盘）
+│   │   ├── layout.tsx              # 根布局
+│   │   ├── login/page.tsx          # 登录/注册
+│   │   ├── depth/page.tsx          # 深度分析（Volume Profile + GMM）
+│   │   ├── watchlist/page.tsx      # 监控列表
+│   │   ├── backtest/page.tsx       # 策略回测
+│   │   ├── alerts/page.tsx         # 预警历史
+│   │   ├── components/             # 共享组件
+│   │   │   ├── Navbar.tsx          # 导航栏
+│   │   │   ├── ui-shell.tsx        # 页面布局壳
+│   │   │   ├── DepthChart.tsx      # Volume Profile 图表
+│   │   │   ├── DepthStatistics.tsx # 深度统计
+│   │   │   └── DepthToolbar.tsx    # 深度工具栏
+│   │   └── lib/                    # 工具库
+│   │       ├── api.ts              # API 地址解析
+│   │       ├── auth.ts             # 认证工具
+│   │       ├── depthChartUtils.ts  # 图表计算
+│   │       └── marketColors.ts     # A股配色
 │   ├── package.json
 │   └── tailwind.config.js
 │
+├── docs/                            # 设计文档
+│   ├── plans/                       # 架构设计计划
+│   └── frontend/                    # 前端迁移计划
 ├── README.md
 └── LICENSE
 ```
 
 ## 🚀 快速开始
-
-> **💡 提示**：项目已配置 GitHub Actions CI/CD 自动部署。查看 [CI/CD 快速配置指南](.github/QUICK_START.md) 了解如何设置自动部署到云服务器。
 
 ### 方式一：使用 Docker（推荐）🐳
 
@@ -131,14 +182,13 @@ cd VeWealth
 
 # 3. 启动服务
 # 启动本地开发环境（默认）
-./docker-start-local.sh
+ENV=local docker-compose up -d
 
-# 或启动生产环境
-./docker-start-prod.sh
+# 启动生产环境
+./docker-start.sh
 
 # 或手动指定环境
-ENV=local docker-compose up -d   # 本地环境
-ENV=prod docker-compose up -d    # 生产环境
+ENV=prod docker-compose up -d --build
 ```
 
 服务将在以下地址运行：
@@ -157,8 +207,8 @@ ENV=prod docker-compose up -d    # 生产环境
 
 #### 环境要求
 
-- Python 3.8+
-- Node.js 18+
+- Python 3.12+
+- Node.js 20+
 - PostgreSQL 12+
 
 #### 1. 克隆项目
@@ -168,7 +218,15 @@ git clone https://github.com/yourusername/VeWealth.git
 cd VeWealth
 ```
 
-#### 2. 数据库设置
+#### 2. 一键启动
+
+```bash
+./start.sh    # 同时启动后端 (dev_server.py) + 前端 (npm run dev)
+```
+
+#### 3. 数据库设置（手动）
+
+如果需要手动设置数据库：
 
 创建 PostgreSQL 数据库：
 
@@ -178,7 +236,7 @@ CREATE USER vewealth WITH PASSWORD 'vewealth123';
 GRANT ALL PRIVILEGES ON DATABASE vewealth TO vewealth;
 ```
 
-#### 3. 后端设置
+#### 4. 后端设置
 
 ```bash
 cd backend
@@ -190,11 +248,8 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 # 安装依赖
 pip install -r requirements.txt
 
-# 配置环境（本地开发环境配置已预设好）
-# 如需修改，请编辑 backend/settings/.local.env
-
 # 启动后端服务（默认使用 local 环境）
-python main.py
+python dev_server.py
 
 # 或指定环境
 ENV=local python main.py   # 本地环境
@@ -203,7 +258,7 @@ ENV=prod python main.py    # 生产环境
 
 后端将在 http://localhost:8001 运行
 
-#### 4. 前端设置
+#### 5. 前端设置
 
 ```bash
 cd frontend
@@ -276,46 +331,54 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 3. 输入用户名和主密钥（默认主密钥需在后端配置文件中设置）
 4. 注册成功后自动登录
 
-### 2. 添加监控股票
+### 2. 首页仪表盘
 
-1. 登录后点击导航栏的"监控列表"
-2. 点击"+ 添加股票"
-3. 输入股票代码（如：000001）
-4. 设置是否启用预警和预警阈值
-5. 点击"添加到监控列表"
+登录后首页展示三大指数实时行情、监控列表预览和最新预警记录。
 
-### 3. 数据采集
+### 3. 深度分析（Volume Profile）
 
-系统会在每个交易日 15:00 自动采集监控列表中所有股票的分时数据，无需手动操作。
+1. 点击导航栏的"深度分析"
+2. 输入股票代码（如：000001）查看 Volume Profile
+3. 图表展示价格-成交量分布及 GMM 多峰拟合曲线
+4. 查看基于成交量密度的多空交易信号
+5. 可调节参数控制 GMM 拟合行为
 
-### 4. 股票分析
+### 4. 监控列表
 
-1. 点击导航栏的"股票分析"
-2. 可以通过搜索功能找到股票并选择
-3. 选择日期范围
-4. 点击"查询股票数据"
-5. 查看价格分布图表和拟合曲线
-6. 调节阈值滑块查看不同概率密度区间
-7. 可以独立控制柱状图、折线图、拟合曲线的显示
+1. 点击导航栏的"监控列表"
+2. 点击"+ 添加股票"添加关注的股票
+3. 设置是否启用预警和预警阈值
+4. 系统会在每个交易日 15:00 自动采集分时数据
 
-### 5. 价格预警
+### 5. 策略回测
+
+1. 点击导航栏的"策略回测"
+2. 选择策略模板（均线交叉、缩量下跌、GMM 成交量密度等）
+3. 配置参数、选择股票池与回测区间
+4. 提交回测任务，查看实时进度
+5. 回测完成后查看概览、成交明细、回合交易、持仓快照、策略配置
+
+### 6. 价格预警
 
 1. 在监控列表中启用股票的预警功能
 2. 在用户设置中绑定微信 OpenID（需要关注公众号）
 3. 系统会在交易时间每 5 分钟检查一次
-4. 当价格超过设定阈值时，通过微信公众号发送通知
+4. 当触发 GMM 交易信号或价格超过阈值时，通过微信公众号发送通知
+5. 在"预警历史"页面查看所有历史预警记录
 
 ## 🎯 核心算法
 
-### 多峰正态分布拟合 (GMM)
+### Volume Profile 与 GMM 拟合
 
-系统使用高斯混合模型（Gaussian Mixture Model）对价格-成交量分布进行拟合：
+系统将指定时间窗口内的分时数据按价格聚合为 Volume Profile，并使用高斯混合模型（Gaussian Mixture Model）对成交量分布进行多峰拟合：
 
-1. **数据准备**：将分时数据按价格聚合，得到每个价格点的总成交量
+1. **数据准备**：将分时/日线数据按价格聚合，得到每个价格点的总成交量
 2. **模型选择**：通过 BIC（贝叶斯信息准则）自动选择最优的峰数（2-5个峰）
 3. **拟合计算**：使用 EM 算法拟合多峰正态分布
-4. **曲线生成**：在价格范围内生成拟合曲线点
-5. **阈值判断**：计算当前价格在分布中的密度百分位，与设定阈值比较
+4. **曲线生成**：在价格范围内生成拟合曲线点，叠加在 Volume Profile 柱状图上
+5. **交易信号**：基于当前价格在 GMM 分布中的密度位置，生成多空方向信号
+
+支持客户端（浏览器端）实时 GMM 拟合，即时响应用户参数调整。
 
 ## 📊 数据模型
 
@@ -346,6 +409,29 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 - volume: 成交量
 - created_at: 创建时间
 
+### 回测记录表 (backtest_runs)
+- user_id, name, status
+- strategy_id, strategy_params, symbols
+- start_date, end_date, initial_cash, benchmark
+- cost_config, summary, equity_curve, trades, warnings
+- created_at / updated_at
+
+### 回测任务表 (backtest_jobs)
+- job_id, user_id, status, progress
+- request_params, result_run_id
+- created_at / updated_at
+
+### 预警历史表 (alert_history)
+- user_id, stock_code, stock_name
+- alert_direction (buy/sell), current_price
+- created_at
+
+### 股票池表 (security_universe)
+- stock_code, stock_name
+- market (SH/SZ/BJ), board (main/gem/star/bse)
+- is_st, is_active
+- list_date, delist_date
+
 ## 🔧 API 接口
 
 ### 认证相关
@@ -361,27 +447,56 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 
 ### 股票数据
 - `GET /api/stock/search` - 搜索股票
-- `GET /api/stock/data` - 获取股票数据
+- `GET /api/stock/kline` - 获取 K 线数据
+- `GET /api/stock/volume-profile` - 获取 Volume Profile 数据
+- `GET /api/stock/depth` - 获取深度分析数据
+- `GET /api/stock/info` - 获取股票基本信息
+- `GET /api/stock/batch-quote` - 批量获取实时行情
+
+### 策略回测
+- `GET /api/backtest/strategies` - 获取可用策略列表
+- `POST /api/backtest/run` - 同步执行回测
+- `GET /api/backtest/runs` - 回测记录列表
+- `GET /api/backtest/runs/{id}` - 回测记录详情
+- `GET /api/backtest/runs/{id}/trades` - 成交明细
+- `GET /api/backtest/runs/{id}/rounds` - 回合交易
+- `GET /api/backtest/runs/{id}/snapshots` - 持仓快照
+- `GET /api/backtest/runs/{id}/strategy-config` - 策略配置
+- `POST /api/backtest/jobs` - 创建异步回测任务
+- `GET /api/backtest/jobs` - 查询任务列表
+- `GET /api/backtest/jobs/{id}` - 查询任务详情
+- `GET /api/backtest/strategies-management` - 策略管理列表
+
+### 预警历史
+- `GET /api/alerts` - 获取预警历史记录（支持按方向筛选）
+
+### 调度器管理
+- `POST /api/scheduler/run/collect-data` - 手动触发数据采集
+- `POST /api/scheduler/run/check-alerts` - 手动触发预警检查
 
 详细 API 文档：http://localhost:8001/docs
 
 ## 🎨 界面预览
 
-### 首页
-- 功能介绍
-- 技术栈展示
-- 快速导航
+### 首页仪表盘
+- 三大指数实时行情
+- 监控列表预览
+- 最新预警记录
 
-### 股票分析页面
-- 股票搜索
-- 日期范围选择
-- 交互式图表
-- 拟合曲线控制
+### 深度分析页面
+- Volume Profile 交互式图表
+- GMM 多峰拟合曲线叠加
+- 双向交易信号展示
+
+### 策略回测页面
+- 策略选择与参数配置
+- 回测记录列表与状态跟踪
+- 三级钻取详情（概览/成交/回合/快照/配置）
 
 ### 监控列表页面
 - 添加/删除股票
 - 预警设置
-- 状态管理
+- 实时状态管理
 
 ## 🧾 静态A股股票池维护（回测兜底）
 
@@ -425,8 +540,8 @@ python backend/scripts/refresh_a_share_symbols.py
 
 ### 前端无法连接后端
 - 检查后端是否正常运行
-- 检查 NEXT_PUBLIC_API_URL 配置
-- 检查 CORS 配置
+- 前端通过 `getApiBaseUrl()` 在运行时解析后端地址（`window.location.hostname:8001`）
+- 检查 CORS 配置是否包含当前访问域名
 
 ### 微信通知未收到
 - 检查微信公众号配置是否正确
@@ -442,26 +557,15 @@ python backend/scripts/refresh_a_share_symbols.py
 
 ### 自动部署（GitHub Actions CI/CD）
 
-本项目已配置完整的 CI/CD 流程，支持自动构建和部署到云服务器。
-
-- **[快速配置指南](.github/QUICK_START.md)** - 5 分钟快速设置
-- **[完整部署文档](.github/DEPLOYMENT.md)** - 详细配置、故障排除、监控等
+本项目已配置完整的 CI/CD 流程，推送代码到 `main` 或 `dev/**` 分支自动触发构建和部署。
 
 **工作流程**：
-1. 推送代码到 `main` 或 `dev/v1.0.0` 分支
-2. 自动执行代码检查和构建测试
+1. 推送代码到 `main` 或 `dev/**` 分支
+2. 自动执行代码检查（Black / ESLint）和 Docker 构建
 3. 通过 SSH 自动部署到服务器
 4. 执行健康检查确保服务正常
 
-**支持的部署分支**：
-- `main` - 生产环境
-- `dev/v1.0.0` - 开发环境
-
-**手动部署**：在 GitHub Actions 页面可以手动触发部署。
-
-### 传统部署
-
-参考上面的 Docker 部署步骤，或查看[完整部署文档](.github/DEPLOYMENT.md)。
+**手动部署**：在 GitHub Actions 页面可以手动触发部署（`manual-deploy.yml`）。
 
 ## 🤝 贡献指南
 
@@ -475,8 +579,7 @@ python backend/scripts/refresh_a_share_symbols.py
 
 **开发流程**：
 - 推送到 `main` 分支：自动部署到生产环境
-- 推送到 `dev/v1.0.0` 分支：自动部署到开发环境
-- 推送到其他 `dev/*` 分支：仅执行 CI 检查，不部署
+- 推送到 `dev/*` 分支：自动执行 CI 检查
 - 创建 Pull Request：自动运行测试
 
 **本地测试工具**：

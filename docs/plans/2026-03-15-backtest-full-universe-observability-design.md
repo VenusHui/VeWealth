@@ -1,5 +1,7 @@
 # VeWealth 回测改造设计：全市场强制扫描 + 结果可解释性
 
+> **Status: ✅ Implemented** — Full universe scanning is default, diagnostics fields are in results, static stock pool script exists.
+
 日期：2026-03-15
 
 ## 背景

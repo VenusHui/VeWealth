@@ -1,5 +1,7 @@
 # VeWealth 回测引擎 MVP 设计（方案1：轻量自研）
 
+> **Status: ✅ Implemented** — Backtest engine is live with strategies, async jobs, drilldown details, and CSV export.
+
 日期：2026-03-12  
 分支：`dev/v1.1.0`
 

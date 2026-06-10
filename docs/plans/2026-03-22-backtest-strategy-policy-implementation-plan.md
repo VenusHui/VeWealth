@@ -1,5 +1,11 @@
 # VeWealth 实施计划：Strategy + Policy 解耦（文件级任务清单）
 
+> **Status: 🚧 Partially Implemented** (as of 2026-06)
+> - ✅ P0: Contracts (`contracts.py`), policy base (`policies/base.py`), profiles (`policies/profiles.py`), registry (`policies/registry.py`), strategy validator (`validators/strategy_validator.py`), strategy management service done.
+> - 🚧 P1: Orchestrator (`orchestrator.py`) not yet created. Individual policy implementations (ranking/, selection/, allocation/, risk/, execution/) not yet created. `BacktestService` still uses legacy path.
+> - ❌ P2: Runtime validator not started.
+> - ❌ P3: Decision trace not started.
+
 基于设计文档：`2026-03-22-backtest-strategy-policy-architecture-design.md`
 
 ## 0. 实施原则

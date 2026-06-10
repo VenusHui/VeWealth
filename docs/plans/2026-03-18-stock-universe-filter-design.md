@@ -1,5 +1,7 @@
 # Stock Universe Filter Design (2026-03-18)
 
+> **Status: ✅ Implemented** — `security_universe` table, board/ST filtering, and frontend controls are live.
+
 ## Goal
 Add a unified stock-universe filter for strategy-based stock selection:
 - Default: keep main board only

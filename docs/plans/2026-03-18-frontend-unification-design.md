@@ -1,5 +1,7 @@
 # Frontend Unification Design (2026-03-18)
 
+> **Status: ✅ Implemented** — Ant Design v6.3.3 is the primary component system across all pages.
+
 ## Scope
 - Global UI component standardization with Ant Design v6.3.3.
 - Immediate fix for backtest detail table header/content misalignment.
