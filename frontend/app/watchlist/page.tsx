@@ -20,7 +20,7 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import { getAuthHeader, getUser, isAuthenticated } from '../lib/auth'
 import { getApiBaseUrl } from '../lib/api'
-import { AppPage, EmptyState, InfoPill, MetricCard, PageHeader, SurfaceCard } from '../components/ui-shell'
+import { AppPage, EmptyState, MetricCard, SurfaceCard } from '../components/ui-shell'
 import { marketClassByValue, formatPct } from '../lib/marketColors'
 
 const API_BASE_URL = getApiBaseUrl()
@@ -268,21 +268,11 @@ export default function WatchListPage() {
 
   return (
     <AppPage>
-      <PageHeader
-        eyebrow="Watchlist"
-        title="监控列表"
-        badges={(
-          <>
-            <InfoPill>默认阈值 {(userThreshold * 100).toFixed(0)}%</InfoPill>
-            <InfoPill>支持单股单独阈值</InfoPill>
-          </>
-        )}
-        actions={(
-          <button type="button" className="ve-button-primary" onClick={() => setShowAddForm((v) => !v)}>
-            {showAddForm ? '收起添加面板' : '添加监控股票'}
-          </button>
-        )}
-      />
+      <div className="flex justify-end">
+        <button type="button" className="ve-button-primary" onClick={() => setShowAddForm((v) => !v)}>
+          {showAddForm ? '收起添加面板' : '添加监控股票'}
+        </button>
+      </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4 xl:grid-cols-8">
         <MetricCard label="监控股票" value={watchlist.length.toLocaleString()} meta="当前监控池" tone="brand" icon="◌" />

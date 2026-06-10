@@ -9,7 +9,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { getAuthHeader, isAuthenticated } from '../lib/auth'
 import { getApiBaseUrl } from '../lib/api'
 import { marketClassByValue } from '../lib/marketColors'
-import { AppPage, EmptyState, InfoPill, MetricCard, PageHeader, SurfaceCard } from '../components/ui-shell'
+import { AppPage, EmptyState, MetricCard, SurfaceCard } from '../components/ui-shell'
 
 const API_BASE_URL = getApiBaseUrl()
 
@@ -158,17 +158,6 @@ export default function AlertsPage() {
 
   return (
     <AppPage>
-      <PageHeader
-        eyebrow="Alert History"
-        title="预警历史"
-        badges={
-          <>
-            <InfoPill>共 {total} 条记录</InfoPill>
-            <InfoPill>今日 {todayCount} 条</InfoPill>
-          </>
-        }
-      />
-
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-5">
         <MetricCard label="总预警" value={total.toLocaleString()} meta="历史累计" tone="brand" icon="!" />
         <MetricCard label="今日" value={todayCount.toLocaleString()} meta="今日触发" tone="warning" icon="⦿" />

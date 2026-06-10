@@ -7,7 +7,7 @@ import axios from 'axios'
 import { isAuthenticated, getAuthHeader } from './lib/auth'
 import { getApiBaseUrl } from './lib/api'
 import { marketClassByValue, formatPct } from './lib/marketColors'
-import { AppPage, EmptyState, InfoPill, MetricCard, PageHeader, QuickLinkCard, SurfaceCard } from './components/ui-shell'
+import { AppPage, EmptyState, MetricCard, QuickLinkCard, SurfaceCard } from './components/ui-shell'
 
 const API_BASE_URL = getApiBaseUrl()
 
@@ -120,22 +120,11 @@ export default function HomePage() {
   if (!isLoggedIn) {
     return (
       <AppPage>
-        <PageHeader
-          eyebrow="A-share workspace"
-          title="分析、监控与回测，一个工作台完成。"
-          badges={
-            <>
-              <InfoPill>价格分布</InfoPill>
-              <InfoPill>预警监控</InfoPill>
-              <InfoPill>策略回测</InfoPill>
-            </>
-          }
-          actions={
-            <Link href="/login" className="ve-button-primary">
-              登录 / 注册
-            </Link>
-          }
-        />
+        <div className="flex justify-end">
+          <Link href="/login" className="ve-button-primary">
+            登录 / 注册
+          </Link>
+        </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <QuickLinkCard
@@ -163,22 +152,10 @@ export default function HomePage() {
 
   return (
     <AppPage>
-      <PageHeader
-        eyebrow="Dashboard"
-        title="交易工作台"
-        badges={
-          <>
-            <InfoPill>自选 {watchlistPreview.length} 只</InfoPill>
-            <InfoPill>预警 {alertsPreview.length} 条</InfoPill>
-          </>
-        }
-        actions={
-          <div className="flex flex-wrap gap-2">
-            <Link href="/depth" className="ve-button-primary">深度分析</Link>
-            <Link href="/backtest" className="ve-button-secondary">创建回测</Link>
-          </div>
-        }
-      />
+      <div className="flex flex-wrap justify-end gap-2">
+        <Link href="/depth" className="ve-button-primary">深度分析</Link>
+        <Link href="/backtest" className="ve-button-secondary">创建回测</Link>
+      </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* Left 2/3: Market + Watchlist */}

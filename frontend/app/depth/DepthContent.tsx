@@ -7,7 +7,7 @@ import { Alert, Button, Input, Spin } from 'antd'
 import DepthChart from '../components/DepthChart'
 import DepthToolbar from '../components/DepthToolbar'
 import DepthStatistics from '../components/DepthStatistics'
-import { AppPage, EmptyState, InfoPill, MetricCard, PageHeader, SurfaceCard } from '../components/ui-shell'
+import { AppPage, EmptyState, InfoPill, MetricCard, SurfaceCard } from '../components/ui-shell'
 import { formatPct, marketClassByValue } from '../lib/marketColors'
 import { getApiBaseUrl } from '../lib/api'
 import { getAuthHeader, isAuthenticated } from '../lib/auth'
@@ -463,20 +463,6 @@ export default function DepthContent() {
 
   return (
     <AppPage>
-      <PageHeader
-        eyebrow="Depth Analysis"
-        title="深度数据 · 量价分布与筹码分析"
-        badges={
-          <>
-            <InfoPill>{period}</InfoPill>
-            <InfoPill>K 线 + 成交量分布</InfoPill>
-            <InfoPill>Volume Profile</InfoPill>
-            {showCYQ && <InfoPill>筹码分布</InfoPill>}
-            <InfoPill>Ctrl+K 搜索 · 1-6 切周期 · M/V/G/C 叠加</InfoPill>
-          </>
-        }
-      />
-
       {/* Search + Toolbar */}
       <div className="space-y-4">
         <SurfaceCard title="股票选择与参数">

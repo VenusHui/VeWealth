@@ -26,7 +26,7 @@ import type {
   StrategyManagementListItem,
   TradeRow,
 } from './components/types'
-import { AppPage, InfoPill, MetricCard, PageHeader } from '../components/ui-shell'
+import { AppPage, MetricCard } from '../components/ui-shell'
 
 const API_BASE_URL = getApiBaseUrl()
 
@@ -449,18 +449,6 @@ export default function BacktestPage() {
 
   return (
     <AppPage>
-      <PageHeader
-        eyebrow="Backtest"
-        title="策略回测工作台"
-        badges={(
-          <>
-            <InfoPill>{strategies.length} 个策略</InfoPill>
-            <InfoPill>{runsTotal} 条历史记录</InfoPill>
-            <InfoPill>{activeJobs.length} 个进行中任务</InfoPill>
-          </>
-        )}
-      />
-
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <MetricCard label="策略" value={strategies.length.toLocaleString()} meta="可选策略数" tone="brand" icon="◎" />
         <MetricCard label="历史记录" value={runsTotal.toLocaleString()} meta="已完成回测" icon="▤" />
