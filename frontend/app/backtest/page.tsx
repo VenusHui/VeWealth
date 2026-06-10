@@ -59,7 +59,7 @@ export default function BacktestPage() {
   const [runsLoading, setRunsLoading] = useState(false)
   const [runsTotal, setRunsTotal] = useState(0)
   const [runsPage, setRunsPage] = useState(1)
-  const [runsPageSize, setRunsPageSize] = useState(20)
+  const [runsPageSize, setRunsPageSize] = useState(10)
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null)
   const [runOverview, setRunOverview] = useState<BacktestOverview | null>(null)
   const [runTrades, setRunTrades] = useState<TradeRow[]>([])

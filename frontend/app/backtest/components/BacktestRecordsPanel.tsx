@@ -133,14 +133,14 @@ export function BacktestRecordsPanel({
           loading={runsLoading}
           columns={getRecordColumns(onViewDetail)}
           dataSource={runs}
-          scroll={{ x: 1100 }}
+          scroll={{ x: 1100, y: 480 }}
           locale={{ emptyText: isEmpty ? '暂无回测记录，提交新的回测任务后结果将显示在这里' : '暂无已完成记录' }}
           pagination={{
             current: page,
             pageSize,
             total,
             showSizeChanger: true,
-            pageSizeOptions: [20, 50, 100],
+            pageSizeOptions: [10, 20, 50],
             onChange: (nextPage, nextPageSize) => {
               if (nextPageSize !== pageSize) onPageSizeChange(nextPageSize)
               onPageChange(nextPage)
