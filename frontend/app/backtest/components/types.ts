@@ -14,6 +14,8 @@ export type Strategy = {
     label: string
     type: string
     default?: number | string
+    min?: number
+    max?: number
   }>
 }
 
