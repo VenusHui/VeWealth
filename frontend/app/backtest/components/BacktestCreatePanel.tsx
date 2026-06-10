@@ -1,11 +1,5 @@
 import type { Strategy } from './types'
-
-const BOARD_LABELS: Record<'main' | 'gem' | 'star' | 'bse', string> = {
-  main: '主板',
-  gem: '创业板',
-  star: '科创板',
-  bse: '北交所',
-}
+import { BOARD_LABELS } from './types'
 
 export function BacktestCreatePanel({
   name,
