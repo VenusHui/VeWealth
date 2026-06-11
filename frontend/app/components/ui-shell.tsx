@@ -116,6 +116,28 @@ export function InfoPill({ children }: { children: ReactNode }) {
   return <span className="ve-info-pill">{children}</span>
 }
 
+export function CompactStatCard({
+  label,
+  value,
+  tone = 'default',
+}: {
+  label: string
+  value: ReactNode
+  tone?: 'default' | 'brand' | 'positive' | 'negative'
+}) {
+  const valueColor =
+    tone === 'brand' ? 'text-[var(--brand)]' :
+    tone === 'positive' ? 'text-red-500' :
+    tone === 'negative' ? 'text-green-500' :
+    'text-[var(--text-strong)]'
+  return (
+    <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--panel)] px-3 py-2.5 text-center">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">{label}</div>
+      <div className={`mt-0.5 text-lg font-semibold tabular-nums ${valueColor}`}>{value}</div>
+    </div>
+  )
+}
+
 export function EmptyState({
   title,
   description,

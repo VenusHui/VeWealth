@@ -20,7 +20,7 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import { getAuthHeader, getUser, isAuthenticated } from '../lib/auth'
 import { getApiBaseUrl } from '../lib/api'
-import { AppPage, EmptyState, SurfaceCard } from '../components/ui-shell'
+import { AppPage, CompactStatCard, EmptyState, SurfaceCard } from '../components/ui-shell'
 import { marketClassByValue, formatPct } from '../lib/marketColors'
 
 const API_BASE_URL = getApiBaseUrl()
@@ -272,22 +272,10 @@ export default function WatchListPage() {
         {/* Left sidebar: add form + compact stats */}
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">监控</div>
-              <div className="mt-0.5 text-lg font-semibold text-[var(--text-strong)]">{watchlist.length}</div>
-            </div>
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">↑涨 ↓跌</div>
-              <div className="mt-0.5 text-lg font-semibold text-[var(--text-strong)]">{upCount}/{downCount}</div>
-            </div>
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">预警中</div>
-              <div className="mt-0.5 text-lg font-semibold text-[var(--brand)]">{enabledCount}</div>
-            </div>
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">信号</div>
-              <div className="mt-0.5 text-lg font-semibold text-[var(--text-strong)]">{buySignalCount}/{sellSignalCount}</div>
-            </div>
+            <CompactStatCard label="监控" value={watchlist.length} tone="brand" />
+            <CompactStatCard label="↑涨 ↓跌" value={`${upCount}/${downCount}`} />
+            <CompactStatCard label="预警中" value={enabledCount} tone="brand" />
+            <CompactStatCard label="信号" value={`${buySignalCount}/${sellSignalCount}`} />
           </div>
 
           <SurfaceCard title="添加监控" description="输入代码和预警阈值">

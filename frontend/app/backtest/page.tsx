@@ -25,7 +25,7 @@ import type {
   StrategyManagementListItem,
   TradeRow,
 } from './components/types'
-import { AppPage } from '../components/ui-shell'
+import { AppPage, CompactStatCard } from '../components/ui-shell'
 
 const API_BASE_URL = getApiBaseUrl()
 
@@ -452,18 +452,9 @@ export default function BacktestPage() {
         {/* Left sidebar: form + compact stats */}
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-2">
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">策略</div>
-              <div className="mt-0.5 text-lg font-semibold text-[var(--text-strong)]">{strategies.length}</div>
-            </div>
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">记录</div>
-              <div className="mt-0.5 text-lg font-semibold text-[var(--text-strong)]">{runsTotal}</div>
-            </div>
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">进行中</div>
-              <div className="mt-0.5 text-lg font-semibold text-[var(--brand)]">{activeJobs.length}</div>
-            </div>
+            <CompactStatCard label="策略" value={strategies.length} tone="brand" />
+            <CompactStatCard label="记录" value={runsTotal} />
+            <CompactStatCard label="进行中" value={activeJobs.length} tone="brand" />
           </div>
 
           <BacktestCreatePanel

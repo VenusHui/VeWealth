@@ -9,7 +9,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { getAuthHeader, isAuthenticated } from '../lib/auth'
 import { getApiBaseUrl } from '../lib/api'
 import { marketClassByValue } from '../lib/marketColors'
-import { AppPage, EmptyState, SurfaceCard } from '../components/ui-shell'
+import { AppPage, CompactStatCard, EmptyState, SurfaceCard } from '../components/ui-shell'
 
 const API_BASE_URL = getApiBaseUrl()
 
@@ -158,26 +158,14 @@ export default function AlertsPage() {
 
   return (
     <AppPage>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[280px_1fr]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[360px_1fr]">
         {/* Left sidebar: stats + filter */}
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">总预警</div>
-              <div className="mt-0.5 text-lg font-semibold text-[var(--brand)]">{total}</div>
-            </div>
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">今日</div>
-              <div className="mt-0.5 text-lg font-semibold text-[var(--text-strong)]">{todayCount}</div>
-            </div>
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">买入</div>
-              <div className="mt-0.5 text-lg font-semibold text-red-500">{buyCount}</div>
-            </div>
-            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">卖出</div>
-              <div className="mt-0.5 text-lg font-semibold text-green-500">{sellCount}</div>
-            </div>
+            <CompactStatCard label="总预警" value={total} tone="brand" />
+            <CompactStatCard label="今日" value={todayCount} />
+            <CompactStatCard label="买入" value={buyCount} tone="positive" />
+            <CompactStatCard label="卖出" value={sellCount} tone="negative" />
           </div>
 
           <SurfaceCard title="筛选">

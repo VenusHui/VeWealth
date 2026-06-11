@@ -70,33 +70,33 @@ export function BacktestCreatePanel({
 
         <div className="grid grid-cols-1 gap-4">
           <div>
-            <label className="ve-field-label">任务名称</label>
-            <input className="ve-input" value={name} onChange={(e) => onNameChange(e.target.value)} placeholder="例如：2025 主板趋势轮动" />
+            <label htmlFor="bt-task-name" className="ve-field-label">任务名称</label>
+            <input id="bt-task-name" className="ve-input" value={name} onChange={(e) => onNameChange(e.target.value)} placeholder="例如：2025 主板趋势轮动" />
           </div>
           <div>
-            <label className="ve-field-label">策略</label>
-            <select className="ve-select" value={strategyId} onChange={(e) => onStrategyChange(e.target.value)}>
+            <label htmlFor="bt-strategy" className="ve-field-label">策略</label>
+            <select id="bt-strategy" className="ve-select" value={strategyId} onChange={(e) => onStrategyChange(e.target.value)}>
               {strategies.map((s) => (
                 <option key={s.strategy_id} value={s.strategy_id}>{s.name}</option>
               ))}
             </select>
           </div>
           <div>
-            <label className="ve-field-label">回测模式</label>
-            <select className="ve-select" value={mode} onChange={(e) => onModeChange(e.target.value as 'manual_symbols' | 'strategy_select')}>
+            <label htmlFor="bt-mode" className="ve-field-label">回测模式</label>
+            <select id="bt-mode" className="ve-select" value={mode} onChange={(e) => onModeChange(e.target.value as 'manual_symbols' | 'strategy_select')}>
               <option value="manual_symbols">手工股票池</option>
               <option value="strategy_select">策略自动选股</option>
             </select>
           </div>
           {mode === 'manual_symbols' ? (
             <div>
-              <label className="ve-field-label">股票代码（逗号分隔）</label>
-              <input className="ve-input" value={symbols} onChange={(e) => onSymbolsChange(e.target.value)} placeholder="000001, 600519, 300750" />
+              <label htmlFor="bt-symbols" className="ve-field-label">股票代码（逗号分隔）</label>
+              <input id="bt-symbols" className="ve-input" value={symbols} onChange={(e) => onSymbolsChange(e.target.value)} placeholder="000001, 600519, 300750" />
             </div>
           ) : (
             <div>
-              <label className="ve-field-label">选股范围</label>
-              <select className="ve-select" value={universeType} onChange={(e) => onUniverseTypeChange(e.target.value as 'all' | 'custom')}>
+              <label htmlFor="bt-universe" className="ve-field-label">选股范围</label>
+              <select id="bt-universe" className="ve-select" value={universeType} onChange={(e) => onUniverseTypeChange(e.target.value as 'all' | 'custom')}>
                 <option value="all">全市场</option>
                 <option value="custom">自定义股票池</option>
               </select>
@@ -104,21 +104,21 @@ export function BacktestCreatePanel({
           )}
           {mode === 'strategy_select' && universeType === 'custom' ? (
             <div>
-              <label className="ve-field-label">自定义股票池</label>
-              <input className="ve-input" value={poolSymbols} onChange={(e) => onPoolSymbolsChange(e.target.value)} placeholder="用逗号分隔自定义股票池" />
+              <label htmlFor="bt-pool-symbols" className="ve-field-label">自定义股票池</label>
+              <input id="bt-pool-symbols" className="ve-input" value={poolSymbols} onChange={(e) => onPoolSymbolsChange(e.target.value)} placeholder="用逗号分隔自定义股票池" />
             </div>
           ) : null}
           <div>
-            <label className="ve-field-label">初始资金</label>
-            <input className="ve-input" value={initialCash} onChange={(e) => onInitialCashChange(e.target.value)} placeholder="100000" inputMode="decimal" />
+            <label htmlFor="bt-cash" className="ve-field-label">初始资金</label>
+            <input id="bt-cash" className="ve-input" value={initialCash} onChange={(e) => onInitialCashChange(e.target.value)} placeholder="100000" inputMode="decimal" />
           </div>
           <div>
-            <label className="ve-field-label">开始日期</label>
-            <input type="date" className="ve-date-input" value={startDate} onChange={(e) => onStartDateChange(e.target.value)} />
+            <label htmlFor="bt-start-date" className="ve-field-label">开始日期</label>
+            <input id="bt-start-date" type="date" className="ve-date-input" value={startDate} onChange={(e) => onStartDateChange(e.target.value)} />
           </div>
           <div>
-            <label className="ve-field-label">结束日期</label>
-            <input type="date" className="ve-date-input" value={endDate} onChange={(e) => onEndDateChange(e.target.value)} />
+            <label htmlFor="bt-end-date" className="ve-field-label">结束日期</label>
+            <input id="bt-end-date" type="date" className="ve-date-input" value={endDate} onChange={(e) => onEndDateChange(e.target.value)} />
           </div>
         </div>
 
@@ -134,8 +134,8 @@ export function BacktestCreatePanel({
             <div className="grid grid-cols-1 gap-4">
               {selectedStrategy.param_schema.map((p) => (
                 <div key={p.key}>
-                  <label className="ve-field-label">{p.label}</label>
-                  <input className="ve-input" value={strategyParams[p.key] ?? ''} onChange={(e) => onStrategyParamChange(p.key, e.target.value)} placeholder={String(p.default ?? '')} />
+                  <label htmlFor={`bt-param-${p.key}`} className="ve-field-label">{p.label}</label>
+                  <input id={`bt-param-${p.key}`} className="ve-input" value={strategyParams[p.key] ?? ''} onChange={(e) => onStrategyParamChange(p.key, e.target.value)} placeholder={String(p.default ?? '')} />
                 </div>
               ))}
             </div>

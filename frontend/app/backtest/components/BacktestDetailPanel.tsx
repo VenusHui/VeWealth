@@ -346,7 +346,7 @@ export function BacktestDetailPanel({
                       const pctClass = isDrawdown ? marketClassByDrawdown(v) : marketClassByValue(v)
                       return (
                         <Card key={k} size="small">
-                          <div className="text-xs text-gray-500">{k}</div>
+                          <div className="text-xs text-[var(--text-dim)]">{k}</div>
                           <div className={`font-semibold ${isPct ? pctClass : ''}`}>
                             {isPct ? pctText : String(v)}
                           </div>
@@ -407,11 +407,11 @@ export function BacktestDetailPanel({
                         <div>{r.datetime || '-'}</div>
                         <div>价格/数量：{r.price ?? '-'} / {r.qty ?? '-'}</div>
                         <div>金额/手续费：{r.amount ?? '-'} / {r.fee ?? '-'}</div>
-                        <div className="text-gray-500">{r.reason || '-'}</div>
+                        <div className="text-[var(--text-dim)]">{r.reason || '-'}</div>
                       </div>
                     </Card>
                   ))}
-                  {runTrades.length === 0 && <div className="text-sm text-gray-500">暂无成交数据</div>}
+                  {runTrades.length === 0 && <div className="text-sm text-[var(--text-dim)]">暂无成交数据</div>}
                 </div>
               </Space>
             )
@@ -458,11 +458,11 @@ export function BacktestDetailPanel({
                           {' / '}
                           <span className={marketClassByValue(r.pnl_amount)}>{r.pnl_amount ?? '-'}</span>
                         </div>
-                        <div className="text-gray-500">退出原因：{r.exit_reason || '-'}</div>
+                        <div className="text-[var(--text-dim)]">退出原因：{r.exit_reason || '-'}</div>
                       </div>
                     </Card>
                   ))}
-                  {runRounds.length === 0 && <div className="text-sm text-gray-500">暂无回合交易数据</div>}
+                  {runRounds.length === 0 && <div className="text-sm text-[var(--text-dim)]">暂无回合交易数据</div>}
                 </div>
               </Space>
             )
@@ -585,7 +585,7 @@ export function BacktestDetailPanel({
                         </Card>
                       ))}
                       {(currentSnapshotHoldings.length > 0 ? currentSnapshotHoldings : (currentSnapshot?.holdings || [])).length === 0 && (
-                        <div className="text-sm text-gray-500">空仓</div>
+                        <div className="text-sm text-[var(--text-dim)]">空仓</div>
                       )}
                     </div>
                   </Space>
@@ -621,11 +621,11 @@ export function BacktestDetailPanel({
                       children: (
                         <Space direction="vertical" size={8} className="w-full">
                           <Typography.Text strong>DSL</Typography.Text>
-                          <pre className="bg-gray-50 border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig?.filter_dsl || {}, null, 2)}</pre>
+                          <pre className="bg-[rgba(248,250,252,0.92)] border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig?.filter_dsl || {}, null, 2)}</pre>
                           <Typography.Text strong>SQL Preview</Typography.Text>
-                          <pre className="bg-gray-50 border rounded-lg p-3 text-xs overflow-auto">{String(runStrategyConfig?.sql_preview || '-')}</pre>
+                          <pre className="bg-[rgba(248,250,252,0.92)] border rounded-lg p-3 text-xs overflow-auto">{String(runStrategyConfig?.sql_preview || '-')}</pre>
                           <Typography.Text strong>完整配置（raw）</Typography.Text>
-                          <pre className="bg-gray-50 border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig || {}, null, 2)}</pre>
+                          <pre className="bg-[rgba(248,250,252,0.92)] border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig || {}, null, 2)}</pre>
                         </Space>
                       ),
                     },
