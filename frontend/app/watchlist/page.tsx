@@ -268,7 +268,7 @@ export default function WatchListPage() {
 
   return (
     <AppPage>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[360px_1fr]">
         {/* Left sidebar: add form + compact stats */}
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-2">

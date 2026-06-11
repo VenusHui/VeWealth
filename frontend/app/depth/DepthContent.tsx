@@ -463,7 +463,7 @@ export default function DepthContent() {
 
   return (
     <AppPage>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[380px_1fr]">
         {/* Left sidebar: search + toolbar + summary */}
         <div className="space-y-4">
           <SurfaceCard title="股票选择与参数">

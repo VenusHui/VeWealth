@@ -68,7 +68,7 @@ export function BacktestCreatePanel({
           <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">新建回测任务</h2>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4">
           <div>
             <label className="ve-field-label">任务名称</label>
             <input className="ve-input" value={name} onChange={(e) => onNameChange(e.target.value)} placeholder="例如：2025 主板趋势轮动" />
@@ -131,7 +131,7 @@ export function BacktestCreatePanel({
               </div>
               <div className="ve-info-pill">{selectedStrategy.strategy_id}</div>
             </div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4">
               {selectedStrategy.param_schema.map((p) => (
                 <div key={p.key}>
                   <label className="ve-field-label">{p.label}</label>
