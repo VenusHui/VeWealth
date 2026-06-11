@@ -25,12 +25,12 @@ import type {
   StrategyManagementListItem,
   TradeRow,
 } from './components/types'
-import { AppPage, MetricCard } from '../components/ui-shell'
+import { AppPage } from '../components/ui-shell'
 
 const API_BASE_URL = getApiBaseUrl()
 
 export default function BacktestPage() {
-  const [mainTab, setMainTab] = useState<MainTab>('create')
+  const [mainTab, setMainTab] = useState<MainTab>('records')
   const [detailTab, setDetailTab] = useState<DetailTab>('overview')
   const [mounted, setMounted] = useState(false)
 
@@ -448,140 +448,155 @@ export default function BacktestPage() {
 
   return (
     <AppPage>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <MetricCard label="策略" value={strategies.length.toLocaleString()} meta="可选策略数" tone="brand" icon="◎" />
-        <MetricCard label="历史记录" value={runsTotal.toLocaleString()} meta="已完成回测" icon="▤" />
-        <MetricCard label="进行中" value={activeJobs.length.toLocaleString()} meta={job ? job.name || job.job_id : '无活跃任务'} tone="warning" icon="↻" />
-      </div>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
+        {/* Left sidebar: form + compact stats */}
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">策略</div>
+              <div className="mt-0.5 text-lg font-semibold text-[var(--text-strong)]">{strategies.length}</div>
+            </div>
+            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">记录</div>
+              <div className="mt-0.5 text-lg font-semibold text-[var(--text-strong)]">{runsTotal}</div>
+            </div>
+            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">进行中</div>
+              <div className="mt-0.5 text-lg font-semibold text-[var(--brand)]">{activeJobs.length}</div>
+            </div>
+          </div>
 
-      <MainTabSwitcher activeTab={mainTab} onChange={setMainTab} />
-
-      {mainTab === 'create' ? (
-        <BacktestCreatePanel
-          name={name}
-          strategyId={strategyId}
-          strategies={strategies}
-          mode={mode}
-          universeType={universeType}
-          symbols={symbols}
-          poolSymbols={poolSymbols}
-          initialCash={initialCash}
-          startDate={startDate}
-          endDate={endDate}
-          selectedStrategy={selectedStrategy}
-          strategyParams={strategyParams}
-          boardFilters={boardFilters}
-          excludeSt={excludeSt}
-          loading={loading}
-          error={error}
-          onNameChange={setName}
-          onStrategyChange={setStrategyId}
-          onModeChange={setMode}
-          onUniverseTypeChange={setUniverseType}
-          onSymbolsChange={setSymbols}
-          onPoolSymbolsChange={setPoolSymbols}
-          onInitialCashChange={setInitialCash}
-          onStartDateChange={setStartDate}
-          onEndDateChange={setEndDate}
-          onBoardFilterChange={(board, checked) => {
-            setBoardFilters((prev) => {
-              if (checked) {
-                if (prev.includes(board)) return prev
-                return [...prev, board]
-              }
-              return prev.filter((b) => b !== board)
-            })
-          }}
-          onExcludeStChange={setExcludeSt}
-          onStrategyParamChange={(k, v) => setStrategyParams((prev) => ({ ...prev, [k]: v }))}
-          onSubmit={handleRun}
-        />
-      ) : null}
-
-      {mainTab === 'records' ? (
-        <BacktestRecordsPanel
-          runs={runs}
-          runsLoading={runsLoading}
-          activeJobs={activeJobs}
-          pollingActive={recordsPolling}
-          onRefresh={() => {
-            fetchJobs(false)
-            fetchRuns(runsPage, runsPageSize)
-          }}
-          onViewDetail={loadRunDetail}
-          total={runsTotal}
-          page={runsPage}
-          pageSize={runsPageSize}
-          onPageChange={setRunsPage}
-          onPageSizeChange={(size) => {
-            setRunsPageSize(size)
-            setRunsPage(1)
-          }}
-        />
-      ) : null}
-
-      {mainTab === 'detail' ? (
-        <BacktestDetailPanel
-          selectedRunId={selectedRunId}
-          detailTab={detailTab}
-          onChangeDetailTab={setDetailTab}
-          detailLoading={detailLoading}
-          runOverview={runOverview}
-          runTrades={runTrades}
-          runRounds={runRounds}
-          runSnapshots={runSnapshots}
-          runFacts={runFacts}
-          allRuns={runs}
-          benchmarkCode={snapshotBenchmarkCode}
-          compareRunId={snapshotCompareRunId}
-          onChangeSnapshotComparison={changeSnapshotComparison}
-          runStrategyConfig={runStrategyConfig}
-          onDownloadCsv={downloadCsv}
-          apiBaseUrl={API_BASE_URL}
-          tradesTotal={runTradesTotal}
-          tradesPage={runTradesPage}
-          tradesPageSize={runTradesPageSize}
-          onTradesPageChange={changeTradesPage}
-          onTradesPageSizeChange={changeTradesPageSize}
-          roundsTotal={runRoundsTotal}
-          roundsPage={runRoundsPage}
-          roundsPageSize={runRoundsPageSize}
-          onRoundsPageChange={changeRoundsPage}
-          onRoundsPageSizeChange={changeRoundsPageSize}
-        />
-      ) : null}
-
-      {mainTab === 'strategies' ? (
-        <StrategyManagementPanel
-          loading={strategyManagementLoading}
-          items={strategyManagementItems}
-          query={strategyManagementQuery}
-          usableFilter={strategyManagementUsable}
-          total={strategyManagementTotal}
-          page={strategyManagementPage}
-          pageSize={strategyManagementPageSize}
-          onRefresh={() => fetchStrategyManagementList(strategyManagementPage, strategyManagementPageSize, strategyManagementQuery, strategyManagementUsable)}
-          onQueryChange={(value) => {
-            setStrategyManagementQuery(value)
-            setStrategyManagementPage(1)
-          }}
-          onUsableFilterChange={(value) => {
-            setStrategyManagementUsable(value)
-            setStrategyManagementPage(1)
-          }}
-          onPageChange={setStrategyManagementPage}
-          onPageSizeChange={(size) => {
-            setStrategyManagementPageSize(size)
-            setStrategyManagementPage(1)
-          }}
-        />
-      ) : null}
-
-      {result ? (
-        <div className="rounded-[24px] border border-[rgba(21,128,61,0.16)] bg-[rgba(240,253,244,0.92)] px-5 py-4 text-sm text-green-800">
-          回测完成：Run #{result.run_id}，共 {result.trades?.length || 0} 笔交易。
+          <BacktestCreatePanel
+            name={name}
+            strategyId={strategyId}
+            strategies={strategies}
+            mode={mode}
+            universeType={universeType}
+            symbols={symbols}
+            poolSymbols={poolSymbols}
+            initialCash={initialCash}
+            startDate={startDate}
+            endDate={endDate}
+            selectedStrategy={selectedStrategy}
+            strategyParams={strategyParams}
+            boardFilters={boardFilters}
+            excludeSt={excludeSt}
+            loading={loading}
+            error={error}
+            onNameChange={setName}
+            onStrategyChange={setStrategyId}
+            onModeChange={setMode}
+            onUniverseTypeChange={setUniverseType}
+            onSymbolsChange={setSymbols}
+            onPoolSymbolsChange={setPoolSymbols}
+            onInitialCashChange={setInitialCash}
+            onStartDateChange={setStartDate}
+            onEndDateChange={setEndDate}
+            onBoardFilterChange={(board, checked) => {
+              setBoardFilters((prev) => {
+                if (checked) {
+                  if (prev.includes(board)) return prev
+                  return [...prev, board]
+                }
+                return prev.filter((b) => b !== board)
+              })
+            }}
+            onExcludeStChange={setExcludeSt}
+            onStrategyParamChange={(k, v) => setStrategyParams((prev) => ({ ...prev, [k]: v }))}
+            onSubmit={handleRun}
+          />
         </div>
-      ) : null}
+
+        {/* Right: results area */}
+        <div className="space-y-4 min-w-0">
+          <MainTabSwitcher activeTab={mainTab} onChange={setMainTab} />
+
+          {mainTab === 'records' ? (
+            <BacktestRecordsPanel
+              runs={runs}
+              runsLoading={runsLoading}
+              activeJobs={activeJobs}
+              pollingActive={recordsPolling}
+              onRefresh={() => {
+                fetchJobs(false)
+                fetchRuns(runsPage, runsPageSize)
+              }}
+              onViewDetail={loadRunDetail}
+              total={runsTotal}
+              page={runsPage}
+              pageSize={runsPageSize}
+              onPageChange={setRunsPage}
+              onPageSizeChange={(size) => {
+                setRunsPageSize(size)
+                setRunsPage(1)
+              }}
+            />
+          ) : null}
+
+          {mainTab === 'detail' ? (
+            <BacktestDetailPanel
+              selectedRunId={selectedRunId}
+              detailTab={detailTab}
+              onChangeDetailTab={setDetailTab}
+              detailLoading={detailLoading}
+              runOverview={runOverview}
+              runTrades={runTrades}
+              runRounds={runRounds}
+              runSnapshots={runSnapshots}
+              runFacts={runFacts}
+              allRuns={runs}
+              benchmarkCode={snapshotBenchmarkCode}
+              compareRunId={snapshotCompareRunId}
+              onChangeSnapshotComparison={changeSnapshotComparison}
+              runStrategyConfig={runStrategyConfig}
+              onDownloadCsv={downloadCsv}
+              apiBaseUrl={API_BASE_URL}
+              tradesTotal={runTradesTotal}
+              tradesPage={runTradesPage}
+              tradesPageSize={runTradesPageSize}
+              onTradesPageChange={changeTradesPage}
+              onTradesPageSizeChange={changeTradesPageSize}
+              roundsTotal={runRoundsTotal}
+              roundsPage={runRoundsPage}
+              roundsPageSize={runRoundsPageSize}
+              onRoundsPageChange={changeRoundsPage}
+              onRoundsPageSizeChange={changeRoundsPageSize}
+            />
+          ) : null}
+
+          {mainTab === 'strategies' ? (
+            <StrategyManagementPanel
+              loading={strategyManagementLoading}
+              items={strategyManagementItems}
+              query={strategyManagementQuery}
+              usableFilter={strategyManagementUsable}
+              total={strategyManagementTotal}
+              page={strategyManagementPage}
+              pageSize={strategyManagementPageSize}
+              onRefresh={() => fetchStrategyManagementList(strategyManagementPage, strategyManagementPageSize, strategyManagementQuery, strategyManagementUsable)}
+              onQueryChange={(value) => {
+                setStrategyManagementQuery(value)
+                setStrategyManagementPage(1)
+              }}
+              onUsableFilterChange={(value) => {
+                setStrategyManagementUsable(value)
+                setStrategyManagementPage(1)
+              }}
+              onPageChange={setStrategyManagementPage}
+              onPageSizeChange={(size) => {
+                setStrategyManagementPageSize(size)
+                setStrategyManagementPage(1)
+              }}
+            />
+          ) : null}
+
+          {result ? (
+            <div className="rounded-[24px] border border-[rgba(21,128,61,0.16)] bg-[rgba(240,253,244,0.92)] px-5 py-4 text-sm text-green-800">
+              回测完成：Run #{result.run_id}，共 {result.trades?.length || 0} 笔交易。
+            </div>
+          ) : null}
+        </div>
+      </div>
     </AppPage>
   )
 }

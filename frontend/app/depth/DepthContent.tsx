@@ -463,124 +463,118 @@ export default function DepthContent() {
 
   return (
     <AppPage>
-      {/* Search + Toolbar */}
-      <div className="space-y-4">
-        <SurfaceCard title="股票选择与参数">
-          <div className="space-y-4">
-            {/* Unified search: code or name */}
-            <div>
-              <label className="ve-field-label">
-                {stockName && stockCode ? `${stockName}（${stockCode}）` : '搜索股票'}
-              </label>
-              <div className="flex gap-2">
-                <Input
-                  id="depth-search-input"
-                  value={searchKeyword}
-                  onChange={(e) => setSearchKeyword(e.target.value)}
-                  onPressEnter={handleUnifiedInput}
-                  placeholder={stockCode || '输入代码或名称，如：贵州茅台 / 600519'}
-                  className="flex-1"
-                />
-                <Button onClick={handleUnifiedInput} loading={searchLoading || loading}>
-                  查询
-                </Button>
-                {watchlistStocks.length > 0 && (
-                  <Select
-                    className="w-28"
-                    value={undefined}
-                    placeholder="自选股"
-                    onChange={(code) => {
-                      const selected = watchlistStocks.find((s) => s.code === code)
-                      if (selected) handleQuickSwitch(selected.code, selected.name)
-                    }}
-                    options={watchlistStocks.map((s) => ({
-                      value: s.code,
-                      label: s.name || s.code,
-                    }))}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
+        {/* Left sidebar: search + toolbar + summary */}
+        <div className="space-y-4">
+          <SurfaceCard title="股票选择与参数">
+            <div className="space-y-4">
+              <div>
+                <label className="ve-field-label">
+                  {stockName && stockCode ? `${stockName}（${stockCode}）` : '搜索股票'}
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    id="depth-search-input"
+                    value={searchKeyword}
+                    onChange={(e) => setSearchKeyword(e.target.value)}
+                    onPressEnter={handleUnifiedInput}
+                    placeholder={stockCode || '输入代码或名称，如：贵州茅台 / 600519'}
+                    className="flex-1"
                   />
+                  <Button onClick={handleUnifiedInput} loading={searchLoading || loading}>
+                    查询
+                  </Button>
+                  {watchlistStocks.length > 0 && (
+                    <Select
+                      className="w-28"
+                      value={undefined}
+                      placeholder="自选股"
+                      onChange={(code) => {
+                        const selected = watchlistStocks.find((s) => s.code === code)
+                        if (selected) handleQuickSwitch(selected.code, selected.name)
+                      }}
+                      options={watchlistStocks.map((s) => ({
+                        value: s.code,
+                        label: s.name || s.code,
+                      }))}
+                    />
+                  )}
+                </div>
+
+                {recentSymbols.length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[var(--text-dim)]">最近</span>
+                    {recentSymbols.map((s) => (
+                      <button
+                        key={s.code}
+                        type="button"
+                        onClick={() => handleQuickSwitch(s.code, s.name)}
+                        className="ve-info-pill cursor-pointer hover:bg-[rgba(15,118,110,0.08)] transition-colors"
+                      >
+                        {s.name || s.code}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
 
-              {/* Recent symbols */}
-              {recentSymbols.length > 0 && (
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[var(--text-dim)]">最近</span>
-                  {recentSymbols.map((s) => (
-                    <button
-                      key={s.code}
-                      type="button"
-                      onClick={() => handleQuickSwitch(s.code, s.name)}
-                      className="ve-info-pill cursor-pointer hover:bg-[rgba(15,118,110,0.08)] transition-colors"
-                    >
-                      {s.name || s.code}
-                    </button>
-                  ))}
+              {showSearchResults && (
+                <div className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.78)] p-3">
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-dim)]">候选结果</div>
+                  <div className="space-y-2">
+                    {searchResults.length > 0 ? (
+                      searchResults.map((stock) => (
+                        <button
+                          key={stock.code}
+                          type="button"
+                          onClick={() => handleSelectStock(stock)}
+                          className="flex w-full items-center justify-between rounded-2xl border border-transparent bg-[rgba(248,250,252,0.88)] px-4 py-3 text-left transition hover:border-[var(--brand-line)] hover:bg-white"
+                        >
+                          <div>
+                            <div className="font-medium text-[var(--text-strong)]">{stock.name}</div>
+                            <div className="text-sm text-[var(--text-dim)]">代码 {stock.code}</div>
+                          </div>
+                          <div className="text-sm font-semibold text-[var(--text-strong)]">¥{stock.current_price.toFixed(2)}</div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-[var(--border)] px-4 py-6 text-sm text-[var(--text-dim)]">
+                        未找到相关股票
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
+
+              <DepthToolbar
+                period={period}
+                onPeriodChange={(p) => setPeriod(p)}
+                adjust={adjust}
+                onAdjustChange={setAdjust}
+                showMA={showMA}
+                onShowMAToggle={() => setShowMA(!showMA)}
+                showVWAP={showVWAP}
+                onShowVWAPToggle={() => setShowVWAP(!showVWAP)}
+                showGMM={showGMM}
+                onShowGMMToggle={() => setShowGMM(!showGMM)}
+                showCYQ={showCYQ}
+                onShowCYQToggle={() => setShowCYQ(!showCYQ)}
+              />
+
+              {error && <Alert type="error" showIcon message={error} />}
             </div>
+          </SurfaceCard>
 
-            {showSearchResults && (
-              <div className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.78)] p-3">
-                <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-dim)]">候选结果</div>
-                <div className="space-y-2">
-                  {searchResults.length > 0 ? (
-                    searchResults.map((stock) => (
-                      <button
-                        key={stock.code}
-                        type="button"
-                        onClick={() => handleSelectStock(stock)}
-                        className="flex w-full items-center justify-between rounded-2xl border border-transparent bg-[rgba(248,250,252,0.88)] px-4 py-3 text-left transition hover:border-[var(--brand-line)] hover:bg-white"
-                      >
-                        <div>
-                          <div className="font-medium text-[var(--text-strong)]">{stock.name}</div>
-                          <div className="text-sm text-[var(--text-dim)]">代码 {stock.code}</div>
-                        </div>
-                        <div className="text-sm font-semibold text-[var(--text-strong)]">¥{stock.current_price.toFixed(2)}</div>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-[var(--border)] px-4 py-6 text-sm text-[var(--text-dim)]">
-                      未找到相关股票
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            <DepthToolbar
-              period={period}
-              onPeriodChange={(p) => setPeriod(p)}
-              adjust={adjust}
-              onAdjustChange={setAdjust}
-              showMA={showMA}
-              onShowMAToggle={() => setShowMA(!showMA)}
-              showVWAP={showVWAP}
-              onShowVWAPToggle={() => setShowVWAP(!showVWAP)}
-              showGMM={showGMM}
-              onShowGMMToggle={() => setShowGMM(!showGMM)}
-              showCYQ={showCYQ}
-              onShowCYQToggle={() => setShowCYQ(!showCYQ)}
-            />
-
-            {error && <Alert type="error" showIcon message={error} />}
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-1">
+            {summaryCards.map((item) => (
+              <MetricCard key={item.label} {...item} />
+            ))}
           </div>
-        </SurfaceCard>
-      </div>
+        </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-        {summaryCards.map((item) => (
-          <MetricCard key={item.label} {...item} />
-        ))}
-      </div>
-
-      {/* Depth statistics */}
-      {volumeProfile && volumeProfile.poc && volumeProfile.poc.price > 0 && (
-        <DepthStatistics volumeProfile={volumeProfile} />
-      )}
-
-      {/* Main chart */}
-      {klines.length > 0 ? (
+        {/* Right: chart + statistics */}
+        <div className="space-y-4 min-w-0">
+          {klines.length > 0 ? (
         <SurfaceCard
           title={
             <div className="flex flex-wrap items-center gap-2">
@@ -629,6 +623,10 @@ export default function DepthContent() {
         <SurfaceCard title="深度数据图表" description="查询完成后，这里会出现多周期 K 线 + 成交量分布叠加视图。">
           <EmptyState title="还没有深度数据" description="输入股票代码并选择周期后执行查询，图表自动加载最大可用数据范围。" />
         </SurfaceCard>
+      )}
+
+      {volumeProfile && volumeProfile.poc && volumeProfile.poc.price > 0 && (
+        <DepthStatistics volumeProfile={volumeProfile} />
       )}
 
       {/* CYQ info cards */}
@@ -742,6 +740,8 @@ export default function DepthContent() {
           </div>
         </SurfaceCard>
       )}
+        </div>
+      </div>
     </AppPage>
   )
 }

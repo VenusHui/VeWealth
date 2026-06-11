@@ -9,7 +9,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { getAuthHeader, isAuthenticated } from '../lib/auth'
 import { getApiBaseUrl } from '../lib/api'
 import { marketClassByValue } from '../lib/marketColors'
-import { AppPage, EmptyState, MetricCard, SurfaceCard } from '../components/ui-shell'
+import { AppPage, EmptyState, SurfaceCard } from '../components/ui-shell'
 
 const API_BASE_URL = getApiBaseUrl()
 
@@ -158,91 +158,104 @@ export default function AlertsPage() {
 
   return (
     <AppPage>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-5">
-        <MetricCard label="总预警" value={total.toLocaleString()} meta="历史累计" tone="brand" icon="!" />
-        <MetricCard label="今日" value={todayCount.toLocaleString()} meta="今日触发" tone="warning" icon="⦿" />
-        <MetricCard label="买入信号" value={buyCount.toLocaleString()} meta="GMM低密度区" icon="▲" />
-        <MetricCard label="卖出信号" value={sellCount.toLocaleString()} meta="GMM高密度区" icon="▼" />
-        <MetricCard label="涉及标的" value={[...new Set(alerts.map((a) => a.stock_code))].length.toLocaleString()} meta="不同股票" icon="◌" />
-      </div>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[280px_1fr]">
+        {/* Left sidebar: stats + filter */}
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">总预警</div>
+              <div className="mt-0.5 text-lg font-semibold text-[var(--brand)]">{total}</div>
+            </div>
+            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">今日</div>
+              <div className="mt-0.5 text-lg font-semibold text-[var(--text-strong)]">{todayCount}</div>
+            </div>
+            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">买入</div>
+              <div className="mt-0.5 text-lg font-semibold text-red-500">{buyCount}</div>
+            </div>
+            <div className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 text-center">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">卖出</div>
+              <div className="mt-0.5 text-lg font-semibold text-green-500">{sellCount}</div>
+            </div>
+          </div>
 
-      <SurfaceCard title="预警记录">
-        <div className="mb-4">
-          <Segmented
-            options={[
-              { label: '全部', value: 'all' },
-              { label: '买入', value: 'buy' },
-              { label: '卖出', value: 'sell' },
-            ]}
-            value={directionFilter}
-            onChange={(v) => { setDirectionFilter(v as string); setPage(1); }}
-          />
+          <SurfaceCard title="筛选">
+            <Segmented
+              block
+              options={[
+                { label: '全部', value: 'all' },
+                { label: '买入', value: 'buy' },
+                { label: '卖出', value: 'sell' },
+              ]}
+              value={directionFilter}
+              onChange={(v) => { setDirectionFilter(v as string); setPage(1); }}
+            />
+          </SurfaceCard>
         </div>
-        {loading ? (
-          <div className="py-16 text-center"><Spin /></div>
-        ) : alerts.length > 0 ? (
-          <>
-            <div className="hidden md:block">
-              <Table<AlertItem>
-                rowKey="id"
-                size="small"
-                columns={columns}
-                dataSource={alerts}
-                pagination={{
-                  current: page,
-                  pageSize,
-                  total,
-                  showSizeChanger: true,
-                  pageSizeOptions: [20, 50, 100],
-                  onChange: (p, ps) => {
-                    setPage(p)
-                    setPageSize(ps)
-                  },
-                }}
-                scroll={{ x: 800 }}
-              />
-            </div>
 
-            <div className="space-y-3 md:hidden">
-              {alerts.map((item) => (
-                <div key={item.id} className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.75)] p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="font-semibold text-[var(--text-strong)]">{item.stock_name || item.stock_code}</div>
-                      <div className="text-sm text-[var(--text-dim)]">{item.stock_code}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-semibold text-[var(--text-strong)]">¥{item.current_price.toFixed(2)}</div>
-                      {item.change_pct != null && (
-                        <div className={marketClassByValue(item.change_pct)}>
-                          {item.change_pct > 0 ? '+' : ''}{item.change_pct.toFixed(2)}%
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[var(--text-dim)]">
-                        阈值 {item.alert_threshold != null ? `${(Number(item.alert_threshold) * 100).toFixed(0)}%` : '-'}
-                      </span>
-                      {item.alert_direction === 'buy' && <Tag color="red">买入</Tag>}
-                      {item.alert_direction === 'sell' && <Tag color="green">卖出</Tag>}
-                    </div>
-                    <Tag>{new Date(item.created_at).toLocaleString()}</Tag>
-                  </div>
-                  <div className="mt-3">
-                    <Link href={`/depth?code=${item.stock_code}`} className="ve-tab-button text-xs px-2 py-1">
-                      深度分析 →
-                    </Link>
-                  </div>
+        {/* Right: table */}
+        <div className="min-w-0">
+          <SurfaceCard title="预警记录">
+            {loading ? (
+              <div className="py-16 text-center"><Spin /></div>
+            ) : alerts.length > 0 ? (
+              <>
+                <div className="hidden md:block">
+                  <Table<AlertItem>
+                    rowKey="id"
+                    size="small"
+                    columns={columns}
+                    dataSource={alerts}
+                    pagination={{
+                      current: page,
+                      pageSize,
+                      total,
+                      showSizeChanger: true,
+                      pageSizeOptions: [20, 50, 100],
+                      onChange: (p, ps) => { setPage(p); setPageSize(ps); },
+                    }}
+                    scroll={{ x: 800, y: 480 }}
+                  />
                 </div>
-              ))}
-            </div>
-          </>
-        ) : (
-          <EmptyState title="暂无预警记录" description="当自选股价格触发阈值时，预警记录会自动保存在这里。" action={<Link href="/watchlist" className="ve-button-primary">前往监控台</Link>} />
-        )}
-      </SurfaceCard>
+                <div className="space-y-3 md:hidden">
+                  {alerts.map((item) => (
+                    <div key={item.id} className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.75)] p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="font-semibold text-[var(--text-strong)]">{item.stock_name || item.stock_code}</div>
+                          <div className="text-sm text-[var(--text-dim)]">{item.stock_code}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-semibold text-[var(--text-strong)]">¥{item.current_price.toFixed(2)}</div>
+                          {item.change_pct != null && (
+                            <div className={marketClassByValue(item.change_pct)}>
+                              {item.change_pct > 0 ? '+' : ''}{item.change_pct.toFixed(2)}%
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-3 flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[var(--text-dim)]">阈值 {item.alert_threshold != null ? `${(Number(item.alert_threshold) * 100).toFixed(0)}%` : '-'}</span>
+                          {item.alert_direction === 'buy' && <Tag color="red">买入</Tag>}
+                          {item.alert_direction === 'sell' && <Tag color="green">卖出</Tag>}
+                        </div>
+                        <Tag>{new Date(item.created_at).toLocaleString()}</Tag>
+                      </div>
+                      <div className="mt-3">
+                        <Link href={`/depth?code=${item.stock_code}`} className="ve-tab-button text-xs px-2 py-1">深度分析 →</Link>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <EmptyState title="暂无预警记录" description="当自选股价格触发阈值时，预警记录会自动保存在这里。" action={<Link href="/watchlist" className="ve-button-primary">前往监控台</Link>} />
+            )}
+          </SurfaceCard>
+        </div>
+      </div>
     </AppPage>
   )
 }
