@@ -26,6 +26,7 @@ import type {
   TradeRow,
 } from './components/types'
 import { AppPage, CompactStatCard } from '../components/ui-shell'
+import { parseStrategyParams } from './calc'
 
 const API_BASE_URL = getApiBaseUrl()
 
@@ -378,11 +379,7 @@ export default function BacktestPage() {
       setLoading(true)
       setError('')
       setResult(null)
-      const castParams: Record<string, unknown> = {}
-      Object.keys(strategyParams).forEach((k) => {
-        const val = strategyParams[k]
-        castParams[k] = /^-?\d+(\.\d+)?$/.test(val) ? Number(val) : val
-      })
+      const castParams = parseStrategyParams(strategyParams)
       if (mode === 'strategy_select' && boardFilters.length === 0) {
         setError('请至少选择一个板块')
         return
