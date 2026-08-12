@@ -32,6 +32,7 @@ export default function Navbar() {
       { href: '/watchlist', label: '监控台', requireAuth: true },
       { href: '/alerts', label: '预警', requireAuth: true },
       { href: '/backtest', label: '回测中心', requireAuth: true },
+      { href: '/settings', label: '设置', requireAuth: true },
     ],
     [],
   )
