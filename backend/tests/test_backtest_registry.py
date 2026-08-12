@@ -26,9 +26,11 @@ class StrategyRegistryTests(unittest.TestCase):
 
     def test_list_strategies_returns_all(self):
         result = list_strategies()
-        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result), 3)
         ids = {s["strategy_id"] for s in result}
-        self.assertSetEqual(ids, {"ma_cross_v1", "volume_shrink_drop_v1"})
+        self.assertSetEqual(
+            ids, {"ma_cross_v1", "volume_shrink_drop_v1", "gmm_volume_v1"}
+        )
 
     def test_list_strategies_fields(self):
         for s in list_strategies():

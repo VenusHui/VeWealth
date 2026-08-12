@@ -38,11 +38,26 @@ jobs:
           echo "跳过测试: ${{ inputs.skip_tests }}"
           echo "=========================================="
 
-      - name: Run tests
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python dependencies
         if: ${{ !inputs.skip_tests }}
+        working-directory: ./backend
         run: |
-          echo "⏭️  跳过测试已禁用，正在运行测试..."
-          echo "如需完整测试，请查看主 CI/CD 工作流"
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run backend unit tests
+        if: ${{ !inputs.skip_tests }}
+        working-directory: ./backend
+        run: |
+          # 任一测试失败都会使该步骤失败，从而阻止部署
+          python -m pytest tests -v
 
       - name: Deploy to Server
         uses: appleboy/ssh-action@v1.0.0

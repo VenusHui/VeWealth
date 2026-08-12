@@ -103,9 +103,11 @@ class MyStrategy(BaseStrategyV2):
         mock_stat.return_value.st_mtime = 1711200000.0
 
         items = self.service._build_all_items(MagicMock())
-        self.assertEqual(len(items), 2)
+        self.assertEqual(len(items), 3)
         ids = {item["strategy_id"] for item in items}
-        self.assertSetEqual(ids, {"ma_cross_v1", "volume_shrink_drop_v1"})
+        self.assertSetEqual(
+            ids, {"ma_cross_v1", "volume_shrink_drop_v1", "gmm_volume_v1"}
+        )
 
         for item in items:
             self.assertIn("strategy_id", item)
