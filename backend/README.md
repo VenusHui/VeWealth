@@ -225,6 +225,40 @@ pytest tests/
 - 分钟数据: `stock_zh_a_hist_min_em()`
 - 实时行情: `stock_zh_a_spot_em()`
 
+## 🩺 数据源健康检查与降级观测
+
+多数据源（mootdx / Tushare / AKShare / 腾讯 / 东财）默认按 try/except 静默降级。
+后端内置了源级探针 + 健康检查 / 监控 + 降级事件日志 / 告警，使数据源异常不再静默。
+
+### 观测入口（`/api/health`）
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/health` | 总体健康状态（ok / degraded / unhealthy / unknown） |
+| `GET /api/health/sources?refresh=true` | 各数据源探针与运行状态快照（`refresh=true` 触发一轮实时探针） |
+| `GET /api/health/metrics` | 按数据源聚合的监控指标（请求量 / 成功率 / 平均耗时） |
+| `GET /api/health/events` | 最近的降级事件（失败 / 回退 / 恢复） |
+
+### 工作原理
+
+- **源级探针**：`app/providers/probes.py` 对每个数据源做轻量只读可达性检查
+  （东财 / 腾讯拉取 3 根样本日 K，mootdx TCP 取 3 根，Tushare / AKShare 走最小查询）；
+  未启用 / 依赖缺失的数据源标记为 `skipped`，不计入故障。
+- **健康状态**：`app/core/source_health.py` 维护每个数据源的 up / down / skipped
+  状态、连续失败次数、成功率与耗时 EMA；连续失败达到阈值自动升级为 ERROR 日志告警。
+- **降级事件**：失败 / 回退 / 恢复事件写入有界环形缓冲，并输出结构化日志
+  （`[data-source] event_type source=... detail=...`），供日志采集 / 告警系统消费。
+- **定时检查**：APScheduler 按 `SOURCE_HEALTH_PROBE_CRON`（默认每 5 分钟）执行一轮探针。
+
+### 配置
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `SOURCE_HEALTH_PROBE_CRON` | `*/5 * * * *` | 探针运行周期 |
+| `SOURCE_HEALTH_EVENT_LIMIT` | `200` | 降级事件环形缓冲上限 |
+| `SOURCE_HEALTH_FAIL_THRESHOLD` | `3` | 连续失败升级为 ERROR 告警的阈值 |
+| `SOURCE_HEALTH_PROBE_SYMBOL` | `000001` | 探针使用的样本股票代码 |
+
 ## 🔒 安全性
 
 - CORS配置限制跨域访问

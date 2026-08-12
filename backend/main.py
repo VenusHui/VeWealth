@@ -16,6 +16,7 @@ from app.routers import (
     backtest_router,
     alert_router,
     screener_router,
+    health_router,
 )
 from app.routers.scheduler import router as scheduler_router
 from app.services.scheduler import app_scheduler
@@ -79,6 +80,7 @@ app.include_router(auth_router, prefix=settings.API_PREFIX)
 app.include_router(watchlist_router, prefix=settings.API_PREFIX)
 app.include_router(backtest_router, prefix=settings.API_PREFIX)
 app.include_router(alert_router, prefix=settings.API_PREFIX)
+app.include_router(health_router, prefix=settings.API_PREFIX)
 app.include_router(scheduler_router, prefix=settings.API_PREFIX)
 app.include_router(screener_router, prefix=settings.API_PREFIX)
 

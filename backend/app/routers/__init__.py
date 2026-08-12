@@ -6,6 +6,7 @@ from .watchlist import router as watchlist_router
 from .backtest import router as backtest_router
 from .alert import router as alert_router
 from .screener import router as screener_router
+from .health import router as health_router
 
 __all__ = [
     "stock_router",
@@ -14,4 +15,5 @@ __all__ = [
     "backtest_router",
     "alert_router",
     "screener_router",
+    "health_router",
 ]

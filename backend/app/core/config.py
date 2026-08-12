@@ -93,6 +93,12 @@ class Settings(BaseSettings):
     DATA_COLLECT_CRON: str = "0 20 * * 1-5"  # 每周一到周五的20:00执行
     ALERT_CHECK_CRON: str = "*/5 9-15 * * 1-5"
 
+    # 数据源健康检查 / 监控配置
+    SOURCE_HEALTH_PROBE_CRON: str = "*/5 * * * *"  # 源级探针运行周期（每5分钟）
+    SOURCE_HEALTH_EVENT_LIMIT: int = 200  # 降级事件环形缓冲上限
+    SOURCE_HEALTH_FAIL_THRESHOLD: int = 3  # 连续失败升级为 ERROR 告警的阈值
+    SOURCE_HEALTH_PROBE_SYMBOL: str = "000001"  # 探针使用的样本股票代码
+
     # 预警配置
     DEFAULT_ALERT_THRESHOLD: float = 0.7
 
