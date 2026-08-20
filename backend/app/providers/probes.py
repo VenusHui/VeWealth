@@ -168,9 +168,7 @@ def probe_mootdx() -> ProbeResult:
         )
 
     try:
-        df = _mootdx_client.bars(
-            symbol=_probe_symbol(), frequency=4, start=0, offset=3
-        )
+        df = _mootdx_client.bars(symbol=_probe_symbol(), frequency=4, start=0, offset=3)
         ok = df is not None and not df.empty
         duration_ms = (time.monotonic() - start) * 1000
         source_monitor.record_attempt(

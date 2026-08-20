@@ -153,9 +153,9 @@ class ScreenerService:
         try:
             strategy = get_strategy(strategy_id, require_usable=False)
             end_date = datetime.utcnow().strftime("%Y-%m-%d")
-            start_date = (datetime.utcnow() - timedelta(days=_SCREENER_LOOKBACK_DAYS)).strftime(
-                "%Y-%m-%d"
-            )
+            start_date = (
+                datetime.utcnow() - timedelta(days=_SCREENER_LOOKBACK_DAYS)
+            ).strftime("%Y-%m-%d")
 
             # Phase 1: parallel data fetching (chunked to bound memory)
             symbol_dfs: dict[str, pd.DataFrame] = {}
@@ -265,9 +265,7 @@ class ScreenerService:
                         all_candidates.extend(cand_df.to_dict("records"))
                 except Exception:
                     logger.exception("GMM generate_candidates batch failed")
-                self._update_progress(
-                    scan_id, total, total, len(all_candidates)
-                )
+                self._update_progress(scan_id, total, total, len(all_candidates))
         else:
             # MA Cross, VSD: per-stock processing (fast enough)
             processed = 0
@@ -280,9 +278,7 @@ class ScreenerService:
                     logger.warning(f"策略计算失败 {symbol}")
                 processed += 1
                 if processed % 100 == 0:
-                    self._update_progress(
-                        scan_id, total, total, len(all_candidates)
-                    )
+                    self._update_progress(scan_id, total, total, len(all_candidates))
 
         # Filter to latest trade_date only
         if not all_candidates:
@@ -307,9 +303,7 @@ class ScreenerService:
             if not sym:
                 continue
             strength = float(c.get("signal_strength", 0))
-            if sym not in seen or strength > float(
-                seen[sym].get("signal_strength", 0)
-            ):
+            if sym not in seen or strength > float(seen[sym].get("signal_strength", 0)):
                 seen[sym] = c
 
         return list(seen.values())
@@ -339,9 +333,7 @@ class ScreenerService:
             db: Session = SessionLocal()
             try:
                 rows = (
-                    db.query(
-                        SecurityUniverse.stock_code, SecurityUniverse.stock_name
-                    )
+                    db.query(SecurityUniverse.stock_code, SecurityUniverse.stock_name)
                     .filter(SecurityUniverse.stock_code.in_(unique_symbols))
                     .all()
                 )
@@ -389,9 +381,7 @@ class ScreenerService:
             if state:
                 state["status"] = "failed"
                 state["error"] = error
-                state["completed_at"] = datetime.utcnow().strftime(
-                    "%Y-%m-%dT%H:%M:%S"
-                )
+                state["completed_at"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
 
     def _state_to_response(self, state: dict) -> dict:
         return {

@@ -8,6 +8,7 @@ on:
   pull_request:
     branches:
       - main
+      - dev/**
 
 concurrency:
   group: ci-cd-${{ github.ref }}
@@ -38,7 +39,8 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install black
+          # 锁定 black 版本，避免格式检查随版本漂移（VEW-12）
+          pip install black==26.5.1
 
       - name: Run Python linting
         working-directory: ./backend

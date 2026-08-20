@@ -4,6 +4,7 @@ DEPRECATED: 此模块已迁移到 app.providers 包。
     from app.providers import get_data_provider
     provider = get_data_provider()
 """
+
 import warnings
 
 from app.providers import get_data_provider  # noqa: F401
