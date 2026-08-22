@@ -26,6 +26,13 @@ import {
 import { LoadingHint } from './LoadingHint'
 import { BacktestTable } from './BacktestTable'
 import { formatDrawdownPct, formatPct, marketClassByDrawdown, marketClassByValue } from '../../lib/marketColors'
+import {
+  buildComparisonChartData,
+  clampIndex,
+  compareSnapshotHoldings,
+  fmtSymbolLabel,
+  normalizeEquityByDate,
+} from '../calc'
 import type {
   BacktestOverview,
   DetailTab,
@@ -77,12 +84,6 @@ class SnapshotErrorBoundary extends Component<
     }
     return this.props.children
   }
-}
-
-function fmtSymbolLabel(symbol?: string, stockName?: string): string {
-  const code = symbol || '-'
-  if (stockName) return `${stockName} (${code})`
-  return code
 }
 
 const tradeColumns: ColumnsType<TradeRow> = [
@@ -259,37 +260,18 @@ export function BacktestDetailPanel({
     }
     return map
   }, [runFacts])
-  const mainNormByDate = useMemo(() => {
-    const map = new Map<string, number>()
-    const first = factsCurve.find((x) => Number(x.equity) > 0)
-    const base = first ? Number(first.equity) : 0
-    for (const p of factsCurve) {
-      if (base > 0) map.set(p.trade_date, Number((Number(p.equity) / base).toFixed(6)))
-    }
-    return map
-  }, [factsCurve])
-  const comparisonChartData = useMemo(() => {
-    return snapshotDateItems
-      .map((d) => {
-        const mainNorm = mainNormByDate.get(d)
-        const benchmarkNorm = benchmarkByDate.get(d)
-        const compareNorm = compareByDate.get(d)
-        return {
-          trade_date: d,
-          main_norm: Number.isFinite(mainNorm as number) ? (mainNorm as number) : null,
-          benchmark_norm: Number.isFinite(benchmarkNorm as number) ? (benchmarkNorm as number) : null,
-          compare_norm: Number.isFinite(compareNorm as number) ? (compareNorm as number) : null,
-        }
-      })
-      .filter((row) => row.main_norm != null)
-  }, [snapshotDateItems, mainNormByDate, benchmarkByDate, compareByDate])
+  const mainNormByDate = useMemo(() => normalizeEquityByDate(factsCurve), [factsCurve])
+  const comparisonChartData = useMemo(
+    () => buildComparisonChartData(snapshotDateItems, mainNormByDate, benchmarkByDate, compareByDate),
+    [snapshotDateItems, mainNormByDate, benchmarkByDate, compareByDate],
+  )
 
   const timelineDates = useMemo(
     () => (hasFactsTimeline ? comparisonChartData.map((x) => x.trade_date) : snapshotItems.map((x) => x.snapshot_time || '')),
     [hasFactsTimeline, comparisonChartData, snapshotItems]
   )
   const maxTimelineIndex = Math.max(timelineDates.length - 1, 0)
-  const safeSnapshotIndex = Math.min(Math.max(snapshotIndex, 0), maxTimelineIndex)
+  const safeSnapshotIndex = clampIndex(snapshotIndex, maxTimelineIndex)
 
   const currentTradeDate = timelineDates[safeSnapshotIndex]
   const currentCurvePoint = factsCurve.find((x) => x.trade_date === currentTradeDate)
@@ -305,12 +287,7 @@ export function BacktestDetailPanel({
     if (!currentTradeDate) return []
     return factsPositions
       .filter((x) => x.trade_date === currentTradeDate)
-      .sort((a, b) => {
-        const sa = a.position_status === 'closed_today' ? 1 : 0
-        const sb = b.position_status === 'closed_today' ? 1 : 0
-        if (sa !== sb) return sa - sb
-        return Number(b.market_value || 0) - Number(a.market_value || 0)
-      })
+      .sort(compareSnapshotHoldings)
       .map((x) => ({ ...x, trade_date: currentTradeDate }))
   }, [factsPositions, currentTradeDate])
 

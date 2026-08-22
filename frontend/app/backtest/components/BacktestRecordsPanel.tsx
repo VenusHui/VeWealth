@@ -4,6 +4,7 @@ import Link from 'next/link'
 import type { JobItem, RunItem } from './types'
 import { formatDrawdownPct, formatPct, marketClassByDrawdown, marketClassByValue } from '../../lib/marketColors'
 import { StatusTag } from './statusLabels'
+import { clampPct } from '../calc'
 
 function getRecordColumns(onViewDetail: (runId: number) => void): ColumnsType<RunItem> {
   return [
@@ -48,7 +49,7 @@ function getRecordColumns(onViewDetail: (runId: number) => void): ColumnsType<Ru
 }
 
 function ActiveJobCard({ job }: { job: JobItem }) {
-  const pct = Math.min(Math.max(Number(job.progress_pct || 0), 0), 100)
+  const pct = clampPct(job.progress_pct)
   return (
     <div className="rounded-[20px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.72)] px-4 py-3">
       <div className="flex items-center justify-between gap-3">
