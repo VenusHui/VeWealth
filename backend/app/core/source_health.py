@@ -28,10 +28,10 @@ from app.core.logger import get_module_logger
 logger = get_module_logger("source_health")
 
 # 事件类型
-EVENT_FAILURE = "failure"    # 单次请求失败
+EVENT_FAILURE = "failure"  # 单次请求失败
 EVENT_FALLBACK = "fallback"  # 主动降级到备源
 EVENT_RECOVERY = "recovery"  # 数据源恢复
-EVENT_SKIPPED = "skipped"    # 未配置 / 依赖缺失，未纳入健康判断
+EVENT_SKIPPED = "skipped"  # 未配置 / 依赖缺失，未纳入健康判断
 
 # 状态值
 STATUS_UP = "up"
@@ -309,9 +309,7 @@ class SourceHealthMonitor:
     def snapshot(self) -> dict[str, Any]:
         """返回全部数据源健康快照（含总体状态）。"""
         with self._lock:
-            sources = {
-                name: st.to_dict() for name, st in sorted(self._states.items())
-            }
+            sources = {name: st.to_dict() for name, st in sorted(self._states.items())}
         return {
             "overall_status": self.overall_status(),
             "checked_at": _now_iso(),
@@ -327,9 +325,7 @@ class SourceHealthMonitor:
         - unknown:   尚未执行任何探针 / 请求
         """
         with self._lock:
-            active = [
-                st for st in self._states.values() if st.status != STATUS_SKIPPED
-            ]
+            active = [st for st in self._states.values() if st.status != STATUS_SKIPPED]
             if not active:
                 return STATUS_UNKNOWN
             down = [st for st in active if st.status == STATUS_DOWN]

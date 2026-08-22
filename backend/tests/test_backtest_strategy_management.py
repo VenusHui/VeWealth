@@ -47,7 +47,7 @@ class StrategyManagementServiceTests(unittest.TestCase):
         self.assertIsNone(path)
 
     def test_extract_core_snippet_finds_class(self):
-        source = '''
+        source = """
 class MyStrategy(BaseStrategyV2):
     strategy_id = "my_test"
 
@@ -68,7 +68,7 @@ class MyStrategy(BaseStrategyV2):
 
     def generate_candidates(self, df, params):
         return df
-'''
+"""
         snippet = self.service._extract_core_snippet(source, "MyStrategy")
         self.assertIn("class MyStrategy", snippet)
         self.assertIn("param_schema", snippet)

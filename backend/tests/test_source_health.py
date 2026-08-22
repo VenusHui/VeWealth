@@ -73,9 +73,7 @@ class SourceHealthMonitorTests(unittest.TestCase):
         self.assertEqual(events[0]["level"], "WARNING")
 
     def test_fallback_event(self):
-        self.monitor.record_fallback(
-            "eastmoney", "tushare", reason="kline empty"
-        )
+        self.monitor.record_fallback("eastmoney", "tushare", reason="kline empty")
         events = self.monitor.events_recent()
         self.assertEqual(events[0]["event_type"], EVENT_FALLBACK)
         self.assertIn("tushare", events[0]["message"])

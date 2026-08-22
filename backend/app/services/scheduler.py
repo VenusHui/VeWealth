@@ -116,9 +116,7 @@ class AppScheduler:
             name="数据源健康探针",
             replace_existing=True,
         )
-        logger.info(
-            f"已添加任务: 数据源健康探针 ({settings.SOURCE_HEALTH_PROBE_CRON})"
-        )
+        logger.info(f"已添加任务: 数据源健康探针 ({settings.SOURCE_HEALTH_PROBE_CRON})")
 
     def start(self):
         """启动调度器"""

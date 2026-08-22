@@ -63,6 +63,7 @@ def _http_get_json(url: str, timeout: int = 15, record: bool = True) -> Any:
 def _build_url(base: str, params: dict[str, str]) -> str:
     """Build a URL with query parameters."""
     from urllib.parse import urlencode
+
     return f"{base}?{urlencode(params)}"
 
 
@@ -348,9 +349,7 @@ def eastmoney_kline(
     df = df.rename(columns=_DAILY_RENAME)
 
     if "datetime" in df.columns:
-        df["datetime"] = pd.to_datetime(df["datetime"]).dt.strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
+        df["datetime"] = pd.to_datetime(df["datetime"]).dt.strftime("%Y-%m-%d %H:%M:%S")
 
     return df
 
