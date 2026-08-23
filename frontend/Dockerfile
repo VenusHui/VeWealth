@@ -13,8 +13,8 @@ ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 # 复制 package.json 和 package-lock.json
 COPY package*.json ./
 
-# 安装依赖
-RUN npm install
+# 安装依赖（npm ci 依赖 package-lock.json，安装更快速且可复现）
+RUN npm ci
 
 # 复制应用代码
 COPY . .

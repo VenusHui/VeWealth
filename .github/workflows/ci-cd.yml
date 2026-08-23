@@ -159,6 +159,9 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT || 22 }}
+          # 镜像构建（npm ci + next build）通常超过默认 10 分钟，超时会导致
+          # docker-compose down 后构建中途被杀、生产容器停止（VEW-15）
+          command_timeout: 30m
           script: |
             echo "=========================================="
             echo "🚀 开始部署 VeWealth"
