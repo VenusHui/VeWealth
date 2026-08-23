@@ -66,6 +66,8 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT || 22 }}
+          # 与 ci-cd.yml 保持一致：镜像构建可能超过默认 10 分钟（VEW-15）
+          command_timeout: 30m
           script: |
             echo "=========================================="
             echo "🚀 手动部署 VeWealth - ${{ inputs.environment }}"
