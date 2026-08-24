@@ -63,6 +63,11 @@ jobs:
         working-directory: ./frontend
         run: npm run lint
 
+      # 前端纯计算逻辑单元测试（vitest，复用上方 npm ci 的依赖产物）
+      - name: Run frontend unit tests
+        working-directory: ./frontend
+        run: npm run test
+
   # 后端单元测试
   test:
     name: Backend Unit Tests
