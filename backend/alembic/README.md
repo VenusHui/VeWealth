@@ -12,14 +12,23 @@ v1.2.0 发布后基线稳定，将当前完整 schema 固化为第一个迁移�
 
 ## 与 init_db() 的关系
 
-- `init_db()`（`app/core/database.py`）在应用启动时按 ORM 模型 `create_all` 建表，
-  作为全新部署的快速路径保留。
-- `init_db()` 建表后会自动把数据库标记到 Alembic 基线
-  （`stamp_alembic_head_if_unversioned`）：仅当数据库尚无 `alembic_version` 表时
-  stamp head，避免干预已纳入 Alembic 管理的库、也避免跳过未应用的迁移。
-- 两者描述的是同一份 schema：`alembic upgrade head` 与 `init_db()` 产出的表结构一致。
-  新增/修改模型时，除了更新 ORM 模型，还必须生成对应的 Alembic 迁移，
-  保证迁移链始终能重建当前 schema。
+`init_db()`（`app/core/database.py`）在应用启动（lifespan）时执行，与 Alembic 并存：
+
+- **数据库已纳入 Alembic 管理**（存在 `alembic_version` 表）：执行
+  `alembic upgrade head` 应用待执行迁移。这是 schema 变更在生产部署路径上生效的入口
+  （`docker-compose up -d --build` → `python main.py` → lifespan `init_db()`），
+  新增迁移无需额外手工步骤。
+- **数据库未纳入 Alembic 管理**：按 ORM 模型 `create_all` 建表（全新部署的快速路径），
+  随后 `stamp head` 把基线标记为已应用，避免后续 `upgrade` 重复建表。
+- 两种路径产出的都是同一份 schema：`alembic upgrade head` 与 `init_db()` 的
+  `create_all` 结果逐表/列/索引/约束一致（含列注释）。
+- 多 worker 并发启动时，用 postgres advisory lock 串行化迁移/建表，避免竞争。
+
+> ⚠️ 若已纳入 Alembic 管理的库存在待执行迁移，`init_db()` 会执行 `upgrade head`；
+> 迁移失败会直接抛出并阻止应用启动（避免在缺列的 schema 上运行期报错）。
+
+新增/修改模型时，除了更新 ORM 模型，还必须生成对应的 Alembic 迁移，
+保证迁移链始终能重建当前 schema（`alembic check` 应无漂移）。
 
 ## 使用前提
 
@@ -27,7 +36,8 @@ v1.2.0 发布后基线稳定，将当前完整 schema 固化为第一个迁移�
 2. 数据库连接配置与后端一致：
    - 默认读取 `backend/settings/.local.env`（`ENV=local`）或 `backend/settings/.prod.env`（`ENV=prod`）；
    - 或直接设置环境变量 `DATABASE_URL`（优先级最高）。
-3. 所有命令在 `backend/` 目录下执行。
+3. 所有命令在 `backend/` 目录下执行。`alembic.ini` 已配置 `prepend_sys_path = .`，
+   裸 `alembic` 命令可直接 `import app`（无需 PYTHONPATH / `python -m alembic`）。
 
 ## 常用命令
 
@@ -52,6 +62,11 @@ alembic stamp head
 
 > 判断标准：库内 `alembic_version` 表是否存在。不存在则执行 `stamp head`；
 > 若通过 `init_db()` 启动过，该表通常已自动标记，无需手动操作。
+>
+> ⚠️ **此方式隐含假设：存量库已具备完整 v1.2.0 schema**（所有表/字段/索引与
+> `0001_initial_baseline` 一致）。若存量库缺少个别字段或约束，`stamp head` 会
+> 让 Alembic 误以为基线已应用，后续新增迁移可能因底层对象缺失而失败。此类库应
+> 先补齐与基线一致的 schema，或在迁移链中添加一次显式补齐迁移，再 `stamp head`。
 
 ### 3. 新增一次 schema 变更
 
