@@ -616,7 +616,7 @@ python backend/scripts/refresh_a_share_symbols.py
 
 **工作流程**：
 1. 推送代码到 `main` 或 `dev/**` 分支
-2. 自动执行代码检查（Black / ESLint）和单元测试（后端 pytest / 前端 Vitest）
+2. 自动执行代码检查（Black / ESLint）和后端单元测试（pytest）
 3. 自动执行 Docker 构建
 4. 通过 SSH 自动部署到服务器
 5. 执行健康检查确保服务正常
