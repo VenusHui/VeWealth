@@ -101,7 +101,7 @@ ENV=prod docker-compose up -d --build               # Production
 ## Key Conventions
 
 - **API prefix**: All API routes are prefixed with `/api` (from `settings.API_PREFIX`)
-- **Database**: Auto-creates tables on startup via `init_db()` — no manual migration needed for development. Use Alembic (`backend/migration/db/`) for schema changes that need version tracking.
+- **Database**: Auto-creates tables on startup via `init_db()` — no manual migration needed for development. Schema changes are tracked via Alembic (`backend/alembic/`, config `backend/alembic.ini`); the initial baseline `0001_initial_baseline` snapshots the v1.2.0 schema. See `backend/alembic/README.md` for usage/rollback.
 - **Stock codes**: A-share format (e.g., `000001.XSHE`, `600519.XSHG` for Shanghai/Shenzhen exchange)
 - **Backend lint**: Black formatter with 4-space indent; Python modules/functions in `snake_case`
 - **Frontend lint**: Next.js ESLint defaults; existing code uses 2-space indent and single quotes
