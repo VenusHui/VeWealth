@@ -25,6 +25,7 @@ from app.schemas.backtest import (
     BacktestRunStrategyConfigResponse,
     BacktestRunFactsResponse,
     BacktestUniverseStatsResponse,
+    BacktestObservabilityResponse,
     BacktestStrategyManagementListResponse,
     BacktestStrategyManagementDetailResponse,
 )
@@ -126,6 +127,16 @@ async def get_universe_stats(
 ):
     data = backtest_service.get_universe_stats(db=db)
     return BacktestUniverseStatsResponse(data=data)
+
+
+@router.get("/observability", response_model=BacktestObservabilityResponse)
+async def get_backtest_observability(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """全市场扫描运行观测：聚合股票池覆盖、进行中任务、最近扫描结果与计数。"""
+    data = backtest_service.get_scan_observability(current_user=current_user, db=db)
+    return BacktestObservabilityResponse(data=data)
 
 
 @router.post("/run", response_model=BacktestRunResponse)

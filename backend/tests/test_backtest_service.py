@@ -322,6 +322,214 @@ class BacktestServiceUnitTests(unittest.TestCase):
         self.assertIn("symbols", result)
         self.assertEqual(result["symbols"], ["000001"])
 
+    # run_backtest diagnostics persistence tests
+    def test_run_backtest_persists_scan_diagnostics_in_summary(self):
+        diagnostics = {
+            "universe_size": 5000,
+            "data_available_count": 4800,
+            "data_empty_count": 200,
+            "candidate_count": 50,
+            "selected_count": 10,
+            "event_count": 8,
+            "policy_profile": "default",
+            "effective_universe_filter": {"boards": ["main"], "exclude_st": True},
+        }
+        mode_result = {
+            "summary": {
+                "total_return": 0.1,
+                "annual_return": 0.2,
+                "max_drawdown": -0.05,
+                "sharpe": 1.5,
+                "win_rate": 0.6,
+                "profit_loss_ratio": 1.5,
+                "turnover": 1.0,
+                "total_trades": 8,
+            },
+            "equity_curve": [],
+            "trades": [],
+            "warnings": [
+                "strategy_select 扫描股票数: 5000，有效行情股票数: 4800，候选数: 50，执行事件数: 8"
+            ],
+            "positions_snapshot": [],
+            "symbols": ["000001", "600519"],
+            "diagnostics": diagnostics,
+        }
+        mock_cost_config = MagicMock()
+        mock_cost_config.model_dump.return_value = {
+            "commission_rate": 0.0003,
+            "min_commission": 5.0,
+            "stamp_tax_rate": 0.001,
+            "slippage_rate": 0.0005,
+        }
+        request = self._make_request(
+            mode="strategy_select", cost_config=mock_cost_config
+        )
+        db = MagicMock()
+        db.refresh.side_effect = lambda obj: obj
+
+        with patch.object(
+            BacktestService,
+            "_run_strategy_select_mode",
+            return_value=mode_result,
+        ):
+            self.service.run_backtest(request, MagicMock(), db)
+
+        run = db.add.call_args[0][0]
+        self.assertEqual(run.summary["diagnostics"], diagnostics)
+        self.assertEqual(run.summary["mode"], "strategy_select")
+
+    def test_run_backtest_manual_mode_marks_mode_without_diagnostics(self):
+        mode_result = {
+            "summary": {
+                "total_return": 0.0,
+                "annual_return": 0.0,
+                "max_drawdown": 0.0,
+                "sharpe": 0.0,
+                "win_rate": 0.0,
+                "profit_loss_ratio": 0.0,
+                "turnover": 0.0,
+                "total_trades": 0,
+            },
+            "equity_curve": [],
+            "trades": [],
+            "warnings": [],
+            "positions_snapshot": [],
+            "symbols": ["000001"],
+        }
+        mock_cost_config = MagicMock()
+        mock_cost_config.model_dump.return_value = {
+            "commission_rate": 0.0003,
+            "min_commission": 5.0,
+            "stamp_tax_rate": 0.001,
+            "slippage_rate": 0.0005,
+        }
+        request = self._make_request(
+            mode="manual_symbols", cost_config=mock_cost_config
+        )
+        db = MagicMock()
+        db.refresh.side_effect = lambda obj: obj
+
+        with patch.object(
+            BacktestService,
+            "_run_manual_symbols_mode",
+            return_value=mode_result,
+        ):
+            self.service.run_backtest(request, MagicMock(), db)
+
+        run = db.add.call_args[0][0]
+        self.assertEqual(run.summary["mode"], "manual_symbols")
+        self.assertNotIn("diagnostics", run.summary)
+
+    # get_scan_observability aggregation tests
+    def test_get_scan_observability_aggregates_jobs_runs_and_universe(self):
+        universe_stats = {
+            "total_active": 5000,
+            "st_active": 100,
+            "non_st_active": 4900,
+            "by_board": {"main": 3000, "gem": 1200, "star": 500, "bse": 300},
+            "by_board_exclude_st": {
+                "main": 2900,
+                "gem": 1180,
+                "star": 490,
+                "bse": 280,
+            },
+            "defaults": {"boards": ["main"], "exclude_st": True},
+        }
+
+        job1 = SimpleNamespace(
+            job_id="job1",
+            request_payload={"name": "全市场扫描", "strategy_id": "ma_cross_v1"},
+            status="running",
+            stage="running",
+            progress_pct=50.0,
+            total_symbols=100,
+            processed_symbols=50,
+            eta_seconds=None,
+            created_at=datetime(2026, 1, 1),
+            updated_at=datetime(2026, 1, 1),
+        )
+        scan_run = SimpleNamespace(
+            id=101,
+            name="扫描001",
+            strategy_id="gmm_volume_v1",
+            status="completed",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 31),
+            summary={
+                "total_return": 0.1,
+                "diagnostics": {
+                    "universe_size": 100,
+                    "data_available_count": 95,
+                    "data_empty_count": 5,
+                },
+            },
+            warnings=["无可用日线数据股票数: 5/100"],
+            created_at=datetime(2026, 1, 1),
+        )
+        manual_run = SimpleNamespace(
+            id=100,
+            name="手工回测",
+            strategy_id="ma_cross_v1",
+            status="completed",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 31),
+            summary={"total_return": 0.05},
+            warnings=[],
+            created_at=datetime(2026, 1, 1),
+        )
+
+        job_query = MagicMock()
+        job_chain = job_query.filter.return_value.order_by.return_value
+        job_chain = job_chain.limit.return_value
+        job_chain.all.return_value = [job1]
+        job_count_query = MagicMock()
+        job_count_query.filter.return_value.group_by.return_value.all.return_value = [
+            ("running", 1),
+            ("success", 2),
+        ]
+        run_query = MagicMock()
+        run_chain = run_query.options.return_value.filter.return_value
+        run_chain = run_chain.order_by.return_value.limit.return_value
+        run_chain.all.return_value = [scan_run, manual_run]
+        run_count_query = MagicMock()
+        run_count_query.filter.return_value.scalar.return_value = 3
+
+        db = MagicMock()
+        db.query.side_effect = [
+            job_query,
+            job_count_query,
+            run_query,
+            run_count_query,
+        ]
+
+        with patch.object(
+            BacktestService, "get_universe_stats", return_value=universe_stats
+        ):
+            result = self.service.get_scan_observability(
+                MagicMock(id=7), db, recent_limit=50
+            )
+
+        self.assertEqual(result["universe"], universe_stats)
+        self.assertIn("generated_at", result)
+
+        self.assertEqual(len(result["active_jobs"]), 1)
+        self.assertEqual(result["active_jobs"][0]["job_id"], "job1")
+        self.assertEqual(result["active_jobs"][0]["strategy_id"], "ma_cross_v1")
+        self.assertEqual(result["active_jobs"][0]["status"], "running")
+
+        self.assertEqual(len(result["recent_scan_runs"]), 1)
+        self.assertEqual(result["recent_scan_runs"][0]["run_id"], 101)
+        self.assertEqual(
+            result["recent_scan_runs"][0]["diagnostics"]["universe_size"], 100
+        )
+
+        self.assertEqual(
+            result["counters"]["jobs"],
+            {"pending": 0, "running": 1, "success": 2, "failed": 0, "cancelled": 0},
+        )
+        self.assertEqual(result["counters"]["runs"]["total"], 3)
+        self.assertEqual(result["counters"]["runs"]["recent_scan_count"], 1)
+
 
 class CostModelTests(unittest.TestCase):
     def test_default_cost_model(self):
