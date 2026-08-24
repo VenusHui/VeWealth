@@ -6,11 +6,13 @@ from app.services.backtest.strategies.ma_cross_v1 import MACrossV1Strategy
 from app.services.backtest.strategies.volume_shrink_drop_v1 import (
     VolumeShrinkDropV1Strategy,
 )
+from app.services.backtest.strategies.gmm_volume_v1 import GMMVolumeV1Strategy
 from app.services.backtest.validators.strategy_validator import validate_strategy_class
 
 STRATEGY_REGISTRY = {
     MACrossV1Strategy.strategy_id: MACrossV1Strategy,
     VolumeShrinkDropV1Strategy.strategy_id: VolumeShrinkDropV1Strategy,
+    GMMVolumeV1Strategy.strategy_id: GMMVolumeV1Strategy,
 }
 
 STRATEGY_SOURCE_PATHS = {
@@ -19,6 +21,9 @@ STRATEGY_SOURCE_PATHS = {
     ),
     VolumeShrinkDropV1Strategy.strategy_id: str(
         Path(__file__).parent / "strategies" / "volume_shrink_drop_v1.py"
+    ),
+    GMMVolumeV1Strategy.strategy_id: str(
+        Path(__file__).parent / "strategies" / "gmm_volume_v1.py"
     ),
 }
 

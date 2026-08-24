@@ -59,6 +59,22 @@ def check_price_alerts():
         db.close()
 
 
+def probe_data_sources():
+    """
+    数据源健康探针任务
+
+    对全部数据源执行一轮轻量可达性检查，结果写入 source_monitor，
+    供 /api/health 观测入口与降级事件日志消费。
+    """
+    from app.providers.probes import run_all_probes
+
+    logger.info("开始执行数据源健康探针")
+    results = run_all_probes()
+    summary = ", ".join(f"{r['source']}={r['status']}" for r in results)
+    logger.info(f"数据源健康探针完成: {summary}")
+    return results
+
+
 class AppScheduler:
     """应用调度器"""
 
@@ -91,6 +107,16 @@ class AppScheduler:
             replace_existing=True,
         )
         logger.info(f"已添加任务: 价格预警检查 ({settings.ALERT_CHECK_CRON})")
+
+        # 数据源健康探针任务
+        self.scheduler.add_job(
+            probe_data_sources,
+            trigger=CronTrigger.from_crontab(settings.SOURCE_HEALTH_PROBE_CRON),
+            id="data_source_probe",
+            name="数据源健康探针",
+            replace_existing=True,
+        )
+        logger.info(f"已添加任务: 数据源健康探针 ({settings.SOURCE_HEALTH_PROBE_CRON})")
 
     def start(self):
         """启动调度器"""

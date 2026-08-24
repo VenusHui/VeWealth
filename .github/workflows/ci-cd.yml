@@ -8,6 +8,7 @@ on:
   pull_request:
     branches:
       - main
+      - dev/**
 
 concurrency:
   group: ci-cd-${{ github.ref }}
@@ -38,7 +39,8 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install black
+          # 锁定 black 版本，避免格式检查随版本漂移（VEW-12）
+          pip install black==26.5.1
 
       - name: Run Python linting
         working-directory: ./backend
@@ -61,11 +63,39 @@ jobs:
         working-directory: ./frontend
         run: npm run lint
 
+  # 后端单元测试
+  test:
+    name: Backend Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        working-directory: ./backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run backend unit tests
+        working-directory: ./backend
+        run: |
+          # 任一测试失败都会使该步骤失败，从而整体标红 CI
+          python -m pytest tests -v
+
   # 构建测试
   build:
     name: Build Test
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [lint, test]
     
     steps:
       - name: Checkout code
@@ -100,7 +130,7 @@ jobs:
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    needs: [lint, build]
+    needs: [lint, build, test]
     # 推送到 main 或任意 dev/** 分支时执行部署
     if: |
       github.event_name == 'push' && (
@@ -129,6 +159,9 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT || 22 }}
+          # 镜像构建（npm ci + next build）通常超过默认 10 分钟，超时会导致
+          # docker-compose down 后构建中途被杀、生产容器停止（VEW-15）
+          command_timeout: 30m
           script: |
             echo "=========================================="
             echo "🚀 开始部署 VeWealth"

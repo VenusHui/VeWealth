@@ -11,6 +11,7 @@ from app.schemas.stock import (
     VolumeProfileResponse,
     DepthResponse,
     StockInfoResponse,
+    BatchQuoteResponse,
 )
 from app.services.stock_service import stock_service
 
@@ -113,5 +114,18 @@ async def get_stock_info(
     try:
         data = stock_service.get_stock_info(symbol)
         return StockInfoResponse(**data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/quotes", response_model=BatchQuoteResponse)
+async def get_batch_quotes(
+    codes: str = Query(..., description="股票代码列表，逗号分隔，例如：000001,600519"),
+):
+    """批量获取腾讯实时行情。"""
+    try:
+        code_list = [c.strip() for c in codes.split(",") if c.strip()]
+        data = stock_service.get_batch_quotes(code_list)
+        return BatchQuoteResponse(**data)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

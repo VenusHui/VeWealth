@@ -1,8 +1,7 @@
 import type { MainTab } from './types'
 
 const mainTabs: { key: MainTab; label: string; hint: string }[] = [
-  { key: 'create', label: '新建任务', hint: '配置与提交' },
-  { key: 'records', label: '回测记录', hint: '历史运行' },
+  { key: 'records', label: '回测记录', hint: '任务与结果' },
   { key: 'detail', label: '结果详情', hint: '成交与快照' },
   { key: 'strategies', label: '策略管理', hint: '代码与状态' },
 ]
@@ -16,7 +15,7 @@ export function MainTabSwitcher({
 }) {
   return (
     <div className="ve-panel p-2.5">
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
         {mainTabs.map((tab) => (
           <button
             key={tab.key}

@@ -9,6 +9,7 @@ import { BacktestRecordsPanel } from './components/BacktestRecordsPanel'
 import { BacktestDetailPanel } from './components/BacktestDetailPanel'
 import { BacktestCreatePanel } from './components/BacktestCreatePanel'
 import { StrategyManagementPanel } from './components/StrategyManagementPanel'
+import { ACTIVE_JOB_STATUSES } from './components/statusLabels'
 import type {
   BacktestOverview,
   BacktestFacts,
@@ -24,13 +25,13 @@ import type {
   StrategyManagementListItem,
   TradeRow,
 } from './components/types'
-import { AppPage, InfoPill, MetricCard, PageHeader } from '../components/ui-shell'
+import { AppPage, CompactStatCard } from '../components/ui-shell'
+import { parseStrategyParams } from './calc'
 
 const API_BASE_URL = getApiBaseUrl()
-const ACTIVE_JOB_STATUSES = ['pending', 'running'] as const
 
 export default function BacktestPage() {
-  const [mainTab, setMainTab] = useState<MainTab>('create')
+  const [mainTab, setMainTab] = useState<MainTab>('records')
   const [detailTab, setDetailTab] = useState<DetailTab>('overview')
   const [mounted, setMounted] = useState(false)
 
@@ -59,7 +60,7 @@ export default function BacktestPage() {
   const [runsLoading, setRunsLoading] = useState(false)
   const [runsTotal, setRunsTotal] = useState(0)
   const [runsPage, setRunsPage] = useState(1)
-  const [runsPageSize, setRunsPageSize] = useState(20)
+  const [runsPageSize, setRunsPageSize] = useState(10)
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null)
   const [runOverview, setRunOverview] = useState<BacktestOverview | null>(null)
   const [runTrades, setRunTrades] = useState<TradeRow[]>([])
@@ -301,6 +302,16 @@ export default function BacktestPage() {
     fetchStrategyManagementList(strategyManagementPage, strategyManagementPageSize, strategyManagementQuery, strategyManagementUsable)
   }, [mounted, fetchStrategyManagementList, strategyManagementPage, strategyManagementPageSize, strategyManagementQuery, strategyManagementUsable])
 
+  const activeJobs = useMemo(
+    () => jobs.filter((j) => ACTIVE_JOB_STATUSES.includes(j.status)),
+    [jobs],
+  )
+
+  const recordsPolling = useMemo(
+    () => mainTab === 'records' && activeJobs.length > 0,
+    [mainTab, activeJobs],
+  )
+
   useEffect(() => {
     if (!selectedStrategy) return
     const defaults: Record<string, string> = {}
@@ -311,11 +322,13 @@ export default function BacktestPage() {
   }, [selectedStrategy])
 
   useEffect(() => {
-    const hasActive = (job && ACTIVE_JOB_STATUSES.includes(job.status as (typeof ACTIVE_JOB_STATUSES)[number])) || jobs.some((j) => ACTIVE_JOB_STATUSES.includes(j.status as (typeof ACTIVE_JOB_STATUSES)[number]))
-    if (mainTab !== 'create' || !hasActive) return
-    const timer = setInterval(() => fetchJobs(false), 10000)
+    if (!recordsPolling) return
+    const timer = setInterval(() => {
+      fetchJobs(false)
+      fetchRuns(runsPage, runsPageSize)
+    }, 10000)
     return () => clearInterval(timer)
-  }, [fetchJobs, mainTab, jobs, job])
+  }, [recordsPolling, fetchJobs, fetchRuns, runsPage, runsPageSize])
 
   useEffect(() => {
     if (!job?.job_id) return
@@ -341,6 +354,12 @@ export default function BacktestPage() {
   }, [fetchJobs, fetchRuns, job?.job_id])
 
   useEffect(() => {
+    if (!result) return
+    const timer = setTimeout(() => setResult(null), 8000)
+    return () => clearTimeout(timer)
+  }, [result])
+
+  useEffect(() => {
     if (mainTab !== 'detail' || !selectedRunId) return
     if (detailTab === 'overview' && !detailLoaded.overview && !detailLoading.overview) return void loadDetailTabData(selectedRunId, 'overview')
     if (detailTab === 'trades' && !detailLoaded.trades && !detailLoading.trades) return void loadDetailTabData(selectedRunId, 'trades')
@@ -360,11 +379,7 @@ export default function BacktestPage() {
       setLoading(true)
       setError('')
       setResult(null)
-      const castParams: Record<string, unknown> = {}
-      Object.keys(strategyParams).forEach((k) => {
-        const val = strategyParams[k]
-        castParams[k] = /^-?\d+(\.\d+)?$/.test(val) ? Number(val) : val
-      })
+      const castParams = parseStrategyParams(strategyParams)
       if (mode === 'strategy_select' && boardFilters.length === 0) {
         setError('请至少选择一个板块')
         return
@@ -387,7 +402,7 @@ export default function BacktestPage() {
       }
       const resp = await axios.post(`${API_BASE_URL}/api/backtest/jobs`, payload, { headers: getAuthHeader() })
       setJob(resp.data?.data)
-      setMainTab('create')
+      setMainTab('records')
       fetchJobs()
     } catch {
       setError('回测执行失败')
@@ -425,161 +440,151 @@ export default function BacktestPage() {
     loadDetailTabData(selectedRunId, 'snapshots', undefined, undefined, { benchmarkCode, compareRunId })
   }
 
-  const runningJobs = useMemo(
-    () => jobs.filter((item) => ACTIVE_JOB_STATUSES.includes(item.status as (typeof ACTIVE_JOB_STATUSES)[number])).length,
-    [jobs],
-  )
-
   if (!mounted) return <div className="mx-auto max-w-3xl px-4 py-10">加载中...</div>
   if (!isAuthenticated()) return <div className="mx-auto max-w-3xl px-4 py-10">请先登录后使用回测功能。</div>
 
   return (
     <AppPage>
-      <PageHeader
-        eyebrow="Backtest"
-        title="策略回测工作台"
-        badges={(
-          <>
-            <InfoPill>{strategies.length} 个策略</InfoPill>
-            <InfoPill>{runsTotal} 条历史记录</InfoPill>
-            <InfoPill>{runningJobs} 个进行中任务</InfoPill>
-          </>
-        )}
-      />
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[360px_1fr]">
+        {/* Left sidebar: form + compact stats */}
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-2">
+            <CompactStatCard label="策略" value={strategies.length} tone="brand" />
+            <CompactStatCard label="记录" value={runsTotal} />
+            <CompactStatCard label="进行中" value={activeJobs.length} tone="brand" />
+          </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <MetricCard label="策略" value={strategies.length.toLocaleString()} meta="可选策略数" tone="brand" icon="◎" />
-        <MetricCard label="历史记录" value={runsTotal.toLocaleString()} meta="已完成回测" icon="▤" />
-        <MetricCard label="进行中" value={runningJobs.toLocaleString()} meta={job ? job.name || job.job_id : '无活跃任务'} tone="warning" icon="↻" />
-      </div>
-
-      <MainTabSwitcher activeTab={mainTab} onChange={setMainTab} />
-
-      {mainTab === 'create' ? (
-        <BacktestCreatePanel
-          name={name}
-          strategyId={strategyId}
-          strategies={strategies}
-          mode={mode}
-          universeType={universeType}
-          symbols={symbols}
-          poolSymbols={poolSymbols}
-          initialCash={initialCash}
-          startDate={startDate}
-          endDate={endDate}
-          selectedStrategy={selectedStrategy}
-          strategyParams={strategyParams}
-          boardFilters={boardFilters}
-          excludeSt={excludeSt}
-          loading={loading}
-          error={error}
-          job={job}
-          jobs={jobs}
-          jobsLoading={jobsLoading}
-          onNameChange={setName}
-          onStrategyChange={setStrategyId}
-          onModeChange={setMode}
-          onUniverseTypeChange={setUniverseType}
-          onSymbolsChange={setSymbols}
-          onPoolSymbolsChange={setPoolSymbols}
-          onInitialCashChange={setInitialCash}
-          onStartDateChange={setStartDate}
-          onEndDateChange={setEndDate}
-          onBoardFilterChange={(board, checked) => {
-            setBoardFilters((prev) => {
-              if (checked) {
-                if (prev.includes(board)) return prev
-                return [...prev, board]
-              }
-              return prev.filter((b) => b !== board)
-            })
-          }}
-          onExcludeStChange={setExcludeSt}
-          onStrategyParamChange={(k, v) => setStrategyParams((prev) => ({ ...prev, [k]: v }))}
-          onSubmit={handleRun}
-        />
-      ) : null}
-
-      {mainTab === 'records' ? (
-        <BacktestRecordsPanel
-          runs={runs}
-          runsLoading={runsLoading}
-          onRefresh={() => fetchRuns(runsPage, runsPageSize)}
-          onViewDetail={loadRunDetail}
-          total={runsTotal}
-          page={runsPage}
-          pageSize={runsPageSize}
-          onPageChange={setRunsPage}
-          onPageSizeChange={(size) => {
-            setRunsPageSize(size)
-            setRunsPage(1)
-          }}
-        />
-      ) : null}
-
-      {mainTab === 'detail' ? (
-        <BacktestDetailPanel
-          selectedRunId={selectedRunId}
-          detailTab={detailTab}
-          onChangeDetailTab={setDetailTab}
-          detailLoading={detailLoading}
-          runOverview={runOverview}
-          runTrades={runTrades}
-          runRounds={runRounds}
-          runSnapshots={runSnapshots}
-          runFacts={runFacts}
-          allRuns={runs}
-          benchmarkCode={snapshotBenchmarkCode}
-          compareRunId={snapshotCompareRunId}
-          onChangeSnapshotComparison={changeSnapshotComparison}
-          runStrategyConfig={runStrategyConfig}
-          onDownloadCsv={downloadCsv}
-          apiBaseUrl={API_BASE_URL}
-          tradesTotal={runTradesTotal}
-          tradesPage={runTradesPage}
-          tradesPageSize={runTradesPageSize}
-          onTradesPageChange={changeTradesPage}
-          onTradesPageSizeChange={changeTradesPageSize}
-          roundsTotal={runRoundsTotal}
-          roundsPage={runRoundsPage}
-          roundsPageSize={runRoundsPageSize}
-          onRoundsPageChange={changeRoundsPage}
-          onRoundsPageSizeChange={changeRoundsPageSize}
-        />
-      ) : null}
-
-      {mainTab === 'strategies' ? (
-        <StrategyManagementPanel
-          loading={strategyManagementLoading}
-          items={strategyManagementItems}
-          query={strategyManagementQuery}
-          usableFilter={strategyManagementUsable}
-          total={strategyManagementTotal}
-          page={strategyManagementPage}
-          pageSize={strategyManagementPageSize}
-          onRefresh={() => fetchStrategyManagementList(strategyManagementPage, strategyManagementPageSize, strategyManagementQuery, strategyManagementUsable)}
-          onQueryChange={(value) => {
-            setStrategyManagementQuery(value)
-            setStrategyManagementPage(1)
-          }}
-          onUsableFilterChange={(value) => {
-            setStrategyManagementUsable(value)
-            setStrategyManagementPage(1)
-          }}
-          onPageChange={setStrategyManagementPage}
-          onPageSizeChange={(size) => {
-            setStrategyManagementPageSize(size)
-            setStrategyManagementPage(1)
-          }}
-        />
-      ) : null}
-
-      {result ? (
-        <div className="rounded-[24px] border border-[rgba(21,128,61,0.16)] bg-[rgba(240,253,244,0.92)] px-5 py-4 text-sm text-green-800">
-          最新任务：Run #{result.run_id}，交易 {result.trades?.length || 0} 笔。
-          <button className="ml-3 font-semibold underline" onClick={() => mainTab !== 'records' && setMainTab('records')}>查看记录</button>
+          <BacktestCreatePanel
+            name={name}
+            strategyId={strategyId}
+            strategies={strategies}
+            mode={mode}
+            universeType={universeType}
+            symbols={symbols}
+            poolSymbols={poolSymbols}
+            initialCash={initialCash}
+            startDate={startDate}
+            endDate={endDate}
+            selectedStrategy={selectedStrategy}
+            strategyParams={strategyParams}
+            boardFilters={boardFilters}
+            excludeSt={excludeSt}
+            loading={loading}
+            error={error}
+            onNameChange={setName}
+            onStrategyChange={setStrategyId}
+            onModeChange={setMode}
+            onUniverseTypeChange={setUniverseType}
+            onSymbolsChange={setSymbols}
+            onPoolSymbolsChange={setPoolSymbols}
+            onInitialCashChange={setInitialCash}
+            onStartDateChange={setStartDate}
+            onEndDateChange={setEndDate}
+            onBoardFilterChange={(board, checked) => {
+              setBoardFilters((prev) => {
+                if (checked) {
+                  if (prev.includes(board)) return prev
+                  return [...prev, board]
+                }
+                return prev.filter((b) => b !== board)
+              })
+            }}
+            onExcludeStChange={setExcludeSt}
+            onStrategyParamChange={(k, v) => setStrategyParams((prev) => ({ ...prev, [k]: v }))}
+            onSubmit={handleRun}
+          />
         </div>
-      ) : null}
+
+        {/* Right: results area */}
+        <div className="space-y-4 min-w-0">
+          <MainTabSwitcher activeTab={mainTab} onChange={setMainTab} />
+
+          {mainTab === 'records' ? (
+            <BacktestRecordsPanel
+              runs={runs}
+              runsLoading={runsLoading}
+              activeJobs={activeJobs}
+              pollingActive={recordsPolling}
+              onRefresh={() => {
+                fetchJobs(false)
+                fetchRuns(runsPage, runsPageSize)
+              }}
+              onViewDetail={loadRunDetail}
+              total={runsTotal}
+              page={runsPage}
+              pageSize={runsPageSize}
+              onPageChange={setRunsPage}
+              onPageSizeChange={(size) => {
+                setRunsPageSize(size)
+                setRunsPage(1)
+              }}
+            />
+          ) : null}
+
+          {mainTab === 'detail' ? (
+            <BacktestDetailPanel
+              selectedRunId={selectedRunId}
+              detailTab={detailTab}
+              onChangeDetailTab={setDetailTab}
+              detailLoading={detailLoading}
+              runOverview={runOverview}
+              runTrades={runTrades}
+              runRounds={runRounds}
+              runSnapshots={runSnapshots}
+              runFacts={runFacts}
+              allRuns={runs}
+              benchmarkCode={snapshotBenchmarkCode}
+              compareRunId={snapshotCompareRunId}
+              onChangeSnapshotComparison={changeSnapshotComparison}
+              runStrategyConfig={runStrategyConfig}
+              onDownloadCsv={downloadCsv}
+              apiBaseUrl={API_BASE_URL}
+              tradesTotal={runTradesTotal}
+              tradesPage={runTradesPage}
+              tradesPageSize={runTradesPageSize}
+              onTradesPageChange={changeTradesPage}
+              onTradesPageSizeChange={changeTradesPageSize}
+              roundsTotal={runRoundsTotal}
+              roundsPage={runRoundsPage}
+              roundsPageSize={runRoundsPageSize}
+              onRoundsPageChange={changeRoundsPage}
+              onRoundsPageSizeChange={changeRoundsPageSize}
+            />
+          ) : null}
+
+          {mainTab === 'strategies' ? (
+            <StrategyManagementPanel
+              loading={strategyManagementLoading}
+              items={strategyManagementItems}
+              query={strategyManagementQuery}
+              usableFilter={strategyManagementUsable}
+              total={strategyManagementTotal}
+              page={strategyManagementPage}
+              pageSize={strategyManagementPageSize}
+              onRefresh={() => fetchStrategyManagementList(strategyManagementPage, strategyManagementPageSize, strategyManagementQuery, strategyManagementUsable)}
+              onQueryChange={(value) => {
+                setStrategyManagementQuery(value)
+                setStrategyManagementPage(1)
+              }}
+              onUsableFilterChange={(value) => {
+                setStrategyManagementUsable(value)
+                setStrategyManagementPage(1)
+              }}
+              onPageChange={setStrategyManagementPage}
+              onPageSizeChange={(size) => {
+                setStrategyManagementPageSize(size)
+                setStrategyManagementPage(1)
+              }}
+            />
+          ) : null}
+
+          {result ? (
+            <div className="rounded-[24px] border border-[rgba(21,128,61,0.16)] bg-[rgba(240,253,244,0.92)] px-5 py-4 text-sm text-green-800">
+              回测完成：Run #{result.run_id}，共 {result.trades?.length || 0} 笔交易。
+            </div>
+          ) : null}
+        </div>
+      </div>
     </AppPage>
   )
 }

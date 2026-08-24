@@ -1,5 +1,7 @@
 # Backtest 记录与详情拆分设计（方案3）
 
+> **Status: ✅ Implemented** — Three-level drilldown (summary → detail tabs → trades/rounds/snapshots/config) is live with CSV export and rounds persistence.
+
 - 日期：2026-03-16
 - 负责人：Assistant + 胡锦晖确认
 - 结论：采用 **三级钻取（方案3）**，并在明细层采用 **成交 + 回合交易（B）**。

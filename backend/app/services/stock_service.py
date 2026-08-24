@@ -602,6 +602,13 @@ class StockService:
         result["fit_result"] = DataProcessor.fit_gaussian_mixture(result["profile"])
         return result
 
+    def get_batch_quotes(self, codes: list[str]) -> Dict[str, Any]:
+        """批量获取腾讯实时行情。"""
+        if not codes:
+            return {"success": True, "quotes": {}}
+        raw = tencent_quote(codes)
+        return {"success": True, "quotes": raw}
+
     def get_stock_info(self, symbol: str) -> Dict[str, Any]:
         """获取个股基本信息 + 腾讯行情。"""
         stock_info = eastmoney_stock_info(symbol)

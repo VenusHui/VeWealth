@@ -1,9 +1,9 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `backend/`: FastAPI service. Core config in `app/core/`, API routes in `app/routers/`, domain logic in `app/services/`, SQLAlchemy models in `app/models/`, schemas in `app/schemas/`, and tests in `backend/tests/`.
-- `frontend/`: Next.js 14 (App Router) UI. Route pages live in `frontend/app/**/page.tsx`, shared UI in `frontend/app/components/`, and client utilities in `frontend/app/lib/`.
-- `docs/`: architecture/design notes and implementation plans (`docs/plans/`).
+- `backend/`: FastAPI service. Core config in `app/core/`, API routes in `app/routers/`, domain logic in `app/services/`, market data providers in `app/providers/`, SQLAlchemy models in `app/models/`, schemas in `app/schemas/`, and tests in `backend/tests/`.
+- `frontend/`: Next.js 14 (App Router) UI. Route pages live in `frontend/app/**/page.tsx` (/, /login, /depth, /watchlist, /backtest, /alerts), shared UI in `frontend/app/components/`, backtest-specific components in `frontend/app/backtest/components/`, and client utilities in `frontend/app/lib/`.
+- `docs/`: architecture/design notes and implementation plans (`docs/plans/`), frontend migration docs (`docs/frontend/`).
 - Root scripts: `start.sh` (local backend + frontend), `docker-start.sh` (Docker prod-style startup), `docker-compose.yml`.
 
 ## Build, Test, and Development Commands
@@ -20,7 +20,7 @@
 - Naming: Python modules/functions `snake_case`; React components/types `PascalCase`; route folders should be descriptive and lowercase.
 
 ## Testing Guidelines
-- Backend tests live in `backend/tests/` with `test_*.py` naming (example: `test_backtest_strategy_v2_migration.py`).
+- Backend tests live in `backend/tests/` with `test_*.py` naming. Current test files: `test_backtest_registry.py`, `test_backtest_service.py`, `test_backtest_strategy_management.py`, `test_backtest_strategy_v2_migration.py`, `test_backtest_strategy_validation.py`.
 - Run backend tests with `cd backend && python -m unittest discover -s tests -p 'test_*.py'`.
 - Add focused tests for new strategy logic, validators, and API behavior changes. No fixed coverage threshold is currently enforced; maintain or improve existing coverage in touched areas.
 

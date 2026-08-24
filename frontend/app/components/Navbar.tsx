@@ -28,8 +28,11 @@ export default function Navbar() {
     () => [
       { href: '/', label: '首页' },
       { href: '/depth', label: '深度数据' },
+      { href: '/screener', label: '选股', requireAuth: true },
       { href: '/watchlist', label: '监控台', requireAuth: true },
+      { href: '/alerts', label: '预警', requireAuth: true },
       { href: '/backtest', label: '回测中心', requireAuth: true },
+      { href: '/settings', label: '设置', requireAuth: true },
     ],
     [],
   )

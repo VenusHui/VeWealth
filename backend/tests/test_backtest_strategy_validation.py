@@ -21,7 +21,9 @@ class StrategyValidatorTests(unittest.TestCase):
     def test_both_strategies_pass_validation(self):
         for cls in (MACrossV1Strategy, VolumeShrinkDropV1Strategy):
             result = validate_strategy_class(cls)
-            self.assertTrue(result.usable, msg=f"{cls.strategy_id}: {result.unusable_reasons}")
+            self.assertTrue(
+                result.usable, msg=f"{cls.strategy_id}: {result.unusable_reasons}"
+            )
             self.assertEqual(result.unusable_reasons, [])
 
     def test_validation_result_fields(self):
@@ -59,6 +61,7 @@ class StrategyValidatorTests(unittest.TestCase):
 
             def generate_candidates(self, market_df, params):
                 import pandas as pd
+
                 return pd.DataFrame()
 
         result = validate_strategy_class(NoNameStrategy)
@@ -85,6 +88,7 @@ class StrategyValidatorTests(unittest.TestCase):
 
             def generate_candidates(self, market_df, params):
                 import pandas as pd
+
                 return pd.DataFrame()
 
         result = validate_strategy_class(NoDescStrategy)
@@ -121,6 +125,7 @@ class StrategyValidatorTests(unittest.TestCase):
 
             def generate_candidates(self, market_df, params):
                 import pandas as pd
+
                 return pd.DataFrame()
 
         result = validate_strategy_class(BadSchemaStrategy)
@@ -147,6 +152,7 @@ class StrategyValidatorTests(unittest.TestCase):
 
             def generate_candidates(self, market_df, params):
                 import pandas as pd
+
                 return pd.DataFrame()
 
         result = validate_strategy_class(BadColsStrategy)
@@ -173,6 +179,7 @@ class StrategyValidatorTests(unittest.TestCase):
 
             def generate_candidates(self, market_df, params):
                 import pandas as pd
+
                 return pd.DataFrame()
 
         result = validate_strategy_class(EmptyColsStrategy)
@@ -199,6 +206,7 @@ class StrategyValidatorTests(unittest.TestCase):
 
             def generate_candidates(self, market_df, params):
                 import pandas as pd
+
                 return pd.DataFrame()
 
         result = validate_strategy_class(EmptyProfileStrategy)

@@ -85,20 +85,8 @@ export default function LoginPage() {
 
   return (
     <AppPage className="min-h-[calc(100vh-4.75rem)]">
-      <div className="grid flex-1 grid-cols-1 gap-5 lg:grid-cols-[1.2fr_0.9fr]">
-        <section className="ve-page-hero justify-between lg:min-h-[680px]">
-          <div className="space-y-6">
-            <div className="ve-eyebrow">Workspace access</div>
-            <div className="space-y-4">
-              <h1 className="ve-page-title max-w-2xl">登录 A 股研究席位</h1>
-              <p className="ve-page-description max-w-2xl">
-                登录后可使用监控列表、策略回测与策略管理；注册需管理员主密钥。
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section className="ve-panel lg:min-h-[680px]">
+      <div className="mx-auto w-full max-w-md">
+        <section className="ve-panel">
           <div className="mb-6 flex rounded-full border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.8)] p-1.5">
             <button
               type="button"

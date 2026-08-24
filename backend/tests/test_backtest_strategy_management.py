@@ -47,7 +47,7 @@ class StrategyManagementServiceTests(unittest.TestCase):
         self.assertIsNone(path)
 
     def test_extract_core_snippet_finds_class(self):
-        source = '''
+        source = """
 class MyStrategy(BaseStrategyV2):
     strategy_id = "my_test"
 
@@ -68,7 +68,7 @@ class MyStrategy(BaseStrategyV2):
 
     def generate_candidates(self, df, params):
         return df
-'''
+"""
         snippet = self.service._extract_core_snippet(source, "MyStrategy")
         self.assertIn("class MyStrategy", snippet)
         self.assertIn("param_schema", snippet)
@@ -103,9 +103,11 @@ class MyStrategy(BaseStrategyV2):
         mock_stat.return_value.st_mtime = 1711200000.0
 
         items = self.service._build_all_items(MagicMock())
-        self.assertEqual(len(items), 2)
+        self.assertEqual(len(items), 3)
         ids = {item["strategy_id"] for item in items}
-        self.assertSetEqual(ids, {"ma_cross_v1", "volume_shrink_drop_v1"})
+        self.assertSetEqual(
+            ids, {"ma_cross_v1", "volume_shrink_drop_v1", "gmm_volume_v1"}
+        )
 
         for item in items:
             self.assertIn("strategy_id", item)

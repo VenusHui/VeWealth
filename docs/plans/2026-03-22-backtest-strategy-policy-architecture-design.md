@@ -1,5 +1,7 @@
 # VeWealth 回测架构重构设计：Strategy 与 Policy 解耦（方案2）
 
+> **Status: 🚧 Partially Implemented** — P0 (contracts, profiles, validators, registry availability) is done. P1 (orchestrator, individual policy implementations, service migration) is pending. P2 (runtime validation) and P3 (decision trace) are not yet started.
+
 ## 1. 背景与目标
 
 当前回测框架中，`strategy_select` 的核心交易流程存在服务层硬编码（`BacktestService._run_strategy_select_mode`），导致：

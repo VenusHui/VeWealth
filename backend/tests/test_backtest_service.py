@@ -287,9 +287,7 @@ class BacktestServiceUnitTests(unittest.TestCase):
 
         mock_run.return_value = SymbolRunResult(
             symbol="000001",
-            equity_curve=[
-                {"datetime": "2026-01-01 00:00:00", "equity": 100000.0}
-            ],
+            equity_curve=[{"datetime": "2026-01-01 00:00:00", "equity": 100000.0}],
             position_curve=[
                 {
                     "datetime": "2026-01-01 00:00:00",

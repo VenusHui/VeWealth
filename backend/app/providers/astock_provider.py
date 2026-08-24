@@ -43,12 +43,12 @@ _RETRY_SLEEP = 0.6
 # From mootdx.consts: KLINE_1MIN=8, KLINE_5MIN=0, KLINE_15MIN=1,
 # KLINE_30MIN=2, KLINE_1HOUR=3, KLINE_DAILY=4
 _FREQ_MAP = {
-    "1": 8,   # KLINE_1MIN
-    "5": 0,   # KLINE_5MIN
+    "1": 8,  # KLINE_1MIN
+    "5": 0,  # KLINE_5MIN
     "15": 1,  # KLINE_15MIN
     "30": 2,  # KLINE_30MIN
     "60": 3,  # KLINE_1HOUR
-    "101": 4, # KLINE_DAILY
+    "101": 4,  # KLINE_DAILY
 }
 
 
@@ -90,8 +90,10 @@ class AStockDataProvider(MarketDataProvider):
             cols = ["open", "close", "high", "low", "volume", "amount"]
             page_size = min(count, 800)
             klines = _mootdx_client.bars(
-                symbol=stock_code, frequency=freq,
-                start=start_offset, offset=page_size,
+                symbol=stock_code,
+                frequency=freq,
+                start=start_offset,
+                offset=page_size,
             )
             if klines is None or klines.empty:
                 return None
@@ -174,9 +176,7 @@ class AStockDataProvider(MarketDataProvider):
             if attempt <= max_retries:
                 time.sleep(_RETRY_SLEEP * attempt)
                 continue
-            logger.warning(
-                f"股票 {stock_code} Eastmoney 日线重试耗尽，回退 Tushare"
-            )
+            logger.warning(f"股票 {stock_code} Eastmoney 日线重试耗尽，回退 Tushare")
             break
 
         return self._fetch_daily_tushare(
@@ -242,9 +242,7 @@ class AStockDataProvider(MarketDataProvider):
                     }
                 )
                 normalized = normalized.sort_values("日期").reset_index(drop=True)
-                normalized["日期"] = normalized["日期"].dt.strftime(
-                    "%Y-%m-%d 00:00:00"
-                )
+                normalized["日期"] = normalized["日期"].dt.strftime("%Y-%m-%d 00:00:00")
                 logger.info(f"股票 {stock_code} 日线数据由 Tushare 备源返回")
                 return normalized.rename(
                     columns={
@@ -285,12 +283,17 @@ class AStockDataProvider(MarketDataProvider):
     ) -> Optional[pd.DataFrame]:
         # 1. Try mootdx first (TCP, supports all periods including 1min)
         df = self._fetch_kline_mootdx(
-            stock_code, period=period,
-            start_date=start_datetime, end_date=end_datetime,
-            count=count, start_offset=start_offset,
+            stock_code,
+            period=period,
+            start_date=start_datetime,
+            end_date=end_datetime,
+            count=count,
+            start_offset=start_offset,
         )
         if df is not None and not df.empty:
-            logger.info(f"股票 {stock_code} period={period} 由 mootdx 返回 (共{len(df)}行)")
+            logger.info(
+                f"股票 {stock_code} period={period} 由 mootdx 返回 (共{len(df)}行)"
+            )
             return df
 
         # 2. Fallback: Eastmoney HTTP
@@ -316,9 +319,7 @@ class AStockDataProvider(MarketDataProvider):
                             df["datetime"] <= pd.Timestamp(end_datetime)
                         )
                         df = df[mask]
-                        df["datetime"] = df["datetime"].dt.strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        )
+                        df["datetime"] = df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
 
                     if not df.empty:
                         return df
@@ -355,9 +356,7 @@ class AStockDataProvider(MarketDataProvider):
     # CYQ data
     # ------------------------------------------------------------------
 
-    def _compute_cyq_locally(
-        self, stock_code: str
-    ) -> Optional[dict[str, Any]]:
+    def _compute_cyq_locally(self, stock_code: str) -> Optional[dict[str, Any]]:
         """Compute chip distribution from mootdx daily klines.
 
         Uses volume-weighted price distribution with exponential decay
@@ -367,8 +366,11 @@ class AStockDataProvider(MarketDataProvider):
         import numpy as np
 
         df = self._fetch_kline_mootdx(
-            stock_code, period="101",
-            start_date="", end_date="", count=210,
+            stock_code,
+            period="101",
+            start_date="",
+            end_date="",
+            count=210,
         )
         if df is None or df.empty:
             return None
@@ -457,7 +459,9 @@ class AStockDataProvider(MarketDataProvider):
             cumsum += dist[low_idx if can_low else high_idx]
         cost_90_low = float(bin_centers[low_idx])
         cost_90_high = float(bin_centers[high_idx])
-        concentration_90 = float((cost_90_high - cost_90_low) / avg_cost) if avg_cost > 0 else 0
+        concentration_90 = (
+            float((cost_90_high - cost_90_low) / avg_cost) if avg_cost > 0 else 0
+        )
 
         # 70% range
         low_idx = peak_idx
@@ -481,7 +485,9 @@ class AStockDataProvider(MarketDataProvider):
             cumsum += dist[low_idx if can_low else high_idx]
         cost_70_low = float(bin_centers[low_idx])
         cost_70_high = float(bin_centers[high_idx])
-        concentration_70 = float((cost_70_high - cost_70_low) / avg_cost) if avg_cost > 0 else 0
+        concentration_70 = (
+            float((cost_70_high - cost_70_low) / avg_cost) if avg_cost > 0 else 0
+        )
 
         return {
             "date": str(df.iloc[-1]["datetime"]),
@@ -527,12 +533,22 @@ class AStockDataProvider(MarketDataProvider):
         latest = df.iloc[-1]
         return {
             "date": str(latest.get("日期", latest.get("date", ""))),
-            "profit_ratio": float(latest.get("获利比例", latest.get("profit_ratio", 0))),
+            "profit_ratio": float(
+                latest.get("获利比例", latest.get("profit_ratio", 0))
+            ),
             "avg_cost": float(latest.get("平均成本", latest.get("avg_cost", 0))),
             "cost_90_low": float(latest.get("90成本-低", latest.get("cost_90_low", 0))),
-            "cost_90_high": float(latest.get("90成本-高", latest.get("cost_90_high", 0))),
-            "concentration_90": float(latest.get("90集中度", latest.get("concentration_90", 0))),
+            "cost_90_high": float(
+                latest.get("90成本-高", latest.get("cost_90_high", 0))
+            ),
+            "concentration_90": float(
+                latest.get("90集中度", latest.get("concentration_90", 0))
+            ),
             "cost_70_low": float(latest.get("70成本-低", latest.get("cost_70_low", 0))),
-            "cost_70_high": float(latest.get("70成本-高", latest.get("cost_70_high", 0))),
-            "concentration_70": float(latest.get("70集中度", latest.get("concentration_70", 0))),
+            "cost_70_high": float(
+                latest.get("70成本-高", latest.get("cost_70_high", 0))
+            ),
+            "concentration_70": float(
+                latest.get("70集中度", latest.get("concentration_70", 0))
+            ),
         }

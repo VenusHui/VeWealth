@@ -63,6 +63,7 @@ class WeChatService:
         stock_name: str,
         current_price: float,
         alert_reason: str,
+        alert_direction: Optional[str] = None,
     ) -> bool:
         """
         发送价格预警通知
@@ -73,13 +74,20 @@ class WeChatService:
             stock_name: 股票名称
             current_price: 当前价格
             alert_reason: 预警原因
+            alert_direction: 预警方向 buy / sell
 
         Returns:
             是否发送成功
         """
         if not self.enabled:
+            direction_label = ""
+            if alert_direction == "buy":
+                direction_label = "买入"
+            elif alert_direction == "sell":
+                direction_label = "卖出"
             logger.info(
-                f"模拟发送预警: {stock_name}({stock_code}) 当前价格 {current_price}, 原因: {alert_reason}"
+                f"模拟发送预警: {stock_name}({stock_code}) 当前价格 {current_price}, "
+                f"方向: {direction_label or 'N/A'}, 原因: {alert_reason}"
             )
             return True
 
@@ -87,10 +95,20 @@ class WeChatService:
         # 模板ID需要替换为实际申请的模板ID
         template_id = "your_template_id_here"
 
+        if alert_direction == "buy":
+            title = "您关注的股票触发买入信号"
+            price_color = "#dc2626"
+        elif alert_direction == "sell":
+            title = "您关注的股票触发卖出信号"
+            price_color = "#16a34a"
+        else:
+            title = "您关注的股票触发价格预警"
+            price_color = "#FF0000"
+
         data = {
-            "first": {"value": "您关注的股票触发价格预警", "color": "#FF0000"},
+            "first": {"value": title, "color": price_color},
             "keyword1": {"value": f"{stock_name}({stock_code})", "color": "#173177"},
-            "keyword2": {"value": f"¥{current_price:.2f}", "color": "#FF0000"},
+            "keyword2": {"value": f"¥{current_price:.2f}", "color": price_color},
             "keyword3": {"value": alert_reason, "color": "#173177"},
             "remark": {"value": "请及时关注市场动态", "color": "#173177"},
         }

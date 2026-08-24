@@ -26,6 +26,13 @@ import {
 import { LoadingHint } from './LoadingHint'
 import { BacktestTable } from './BacktestTable'
 import { formatDrawdownPct, formatPct, marketClassByDrawdown, marketClassByValue } from '../../lib/marketColors'
+import {
+  buildComparisonChartData,
+  clampIndex,
+  compareSnapshotHoldings,
+  fmtSymbolLabel,
+  normalizeEquityByDate,
+} from '../calc'
 import type {
   BacktestOverview,
   DetailTab,
@@ -77,12 +84,6 @@ class SnapshotErrorBoundary extends Component<
     }
     return this.props.children
   }
-}
-
-function fmtSymbolLabel(symbol?: string, stockName?: string): string {
-  const code = symbol || '-'
-  if (stockName) return `${stockName} (${code})`
-  return code
 }
 
 const tradeColumns: ColumnsType<TradeRow> = [
@@ -259,37 +260,18 @@ export function BacktestDetailPanel({
     }
     return map
   }, [runFacts])
-  const mainNormByDate = useMemo(() => {
-    const map = new Map<string, number>()
-    const first = factsCurve.find((x) => Number(x.equity) > 0)
-    const base = first ? Number(first.equity) : 0
-    for (const p of factsCurve) {
-      if (base > 0) map.set(p.trade_date, Number((Number(p.equity) / base).toFixed(6)))
-    }
-    return map
-  }, [factsCurve])
-  const comparisonChartData = useMemo(() => {
-    return snapshotDateItems
-      .map((d) => {
-        const mainNorm = mainNormByDate.get(d)
-        const benchmarkNorm = benchmarkByDate.get(d)
-        const compareNorm = compareByDate.get(d)
-        return {
-          trade_date: d,
-          main_norm: Number.isFinite(mainNorm as number) ? (mainNorm as number) : null,
-          benchmark_norm: Number.isFinite(benchmarkNorm as number) ? (benchmarkNorm as number) : null,
-          compare_norm: Number.isFinite(compareNorm as number) ? (compareNorm as number) : null,
-        }
-      })
-      .filter((row) => row.main_norm != null)
-  }, [snapshotDateItems, mainNormByDate, benchmarkByDate, compareByDate])
+  const mainNormByDate = useMemo(() => normalizeEquityByDate(factsCurve), [factsCurve])
+  const comparisonChartData = useMemo(
+    () => buildComparisonChartData(snapshotDateItems, mainNormByDate, benchmarkByDate, compareByDate),
+    [snapshotDateItems, mainNormByDate, benchmarkByDate, compareByDate],
+  )
 
   const timelineDates = useMemo(
     () => (hasFactsTimeline ? comparisonChartData.map((x) => x.trade_date) : snapshotItems.map((x) => x.snapshot_time || '')),
     [hasFactsTimeline, comparisonChartData, snapshotItems]
   )
   const maxTimelineIndex = Math.max(timelineDates.length - 1, 0)
-  const safeSnapshotIndex = Math.min(Math.max(snapshotIndex, 0), maxTimelineIndex)
+  const safeSnapshotIndex = clampIndex(snapshotIndex, maxTimelineIndex)
 
   const currentTradeDate = timelineDates[safeSnapshotIndex]
   const currentCurvePoint = factsCurve.find((x) => x.trade_date === currentTradeDate)
@@ -305,12 +287,7 @@ export function BacktestDetailPanel({
     if (!currentTradeDate) return []
     return factsPositions
       .filter((x) => x.trade_date === currentTradeDate)
-      .sort((a, b) => {
-        const sa = a.position_status === 'closed_today' ? 1 : 0
-        const sb = b.position_status === 'closed_today' ? 1 : 0
-        if (sa !== sb) return sa - sb
-        return Number(b.market_value || 0) - Number(a.market_value || 0)
-      })
+      .sort(compareSnapshotHoldings)
       .map((x) => ({ ...x, trade_date: currentTradeDate }))
   }, [factsPositions, currentTradeDate])
 
@@ -346,7 +323,7 @@ export function BacktestDetailPanel({
                       const pctClass = isDrawdown ? marketClassByDrawdown(v) : marketClassByValue(v)
                       return (
                         <Card key={k} size="small">
-                          <div className="text-xs text-gray-500">{k}</div>
+                          <div className="text-xs text-[var(--text-dim)]">{k}</div>
                           <div className={`font-semibold ${isPct ? pctClass : ''}`}>
                             {isPct ? pctText : String(v)}
                           </div>
@@ -407,11 +384,11 @@ export function BacktestDetailPanel({
                         <div>{r.datetime || '-'}</div>
                         <div>价格/数量：{r.price ?? '-'} / {r.qty ?? '-'}</div>
                         <div>金额/手续费：{r.amount ?? '-'} / {r.fee ?? '-'}</div>
-                        <div className="text-gray-500">{r.reason || '-'}</div>
+                        <div className="text-[var(--text-dim)]">{r.reason || '-'}</div>
                       </div>
                     </Card>
                   ))}
-                  {runTrades.length === 0 && <div className="text-sm text-gray-500">暂无成交数据</div>}
+                  {runTrades.length === 0 && <div className="text-sm text-[var(--text-dim)]">暂无成交数据</div>}
                 </div>
               </Space>
             )
@@ -458,11 +435,11 @@ export function BacktestDetailPanel({
                           {' / '}
                           <span className={marketClassByValue(r.pnl_amount)}>{r.pnl_amount ?? '-'}</span>
                         </div>
-                        <div className="text-gray-500">退出原因：{r.exit_reason || '-'}</div>
+                        <div className="text-[var(--text-dim)]">退出原因：{r.exit_reason || '-'}</div>
                       </div>
                     </Card>
                   ))}
-                  {runRounds.length === 0 && <div className="text-sm text-gray-500">暂无回合交易数据</div>}
+                  {runRounds.length === 0 && <div className="text-sm text-[var(--text-dim)]">暂无回合交易数据</div>}
                 </div>
               </Space>
             )
@@ -585,7 +562,7 @@ export function BacktestDetailPanel({
                         </Card>
                       ))}
                       {(currentSnapshotHoldings.length > 0 ? currentSnapshotHoldings : (currentSnapshot?.holdings || [])).length === 0 && (
-                        <div className="text-sm text-gray-500">空仓</div>
+                        <div className="text-sm text-[var(--text-dim)]">空仓</div>
                       )}
                     </div>
                   </Space>
@@ -621,11 +598,11 @@ export function BacktestDetailPanel({
                       children: (
                         <Space direction="vertical" size={8} className="w-full">
                           <Typography.Text strong>DSL</Typography.Text>
-                          <pre className="bg-gray-50 border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig?.filter_dsl || {}, null, 2)}</pre>
+                          <pre className="bg-[rgba(248,250,252,0.92)] border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig?.filter_dsl || {}, null, 2)}</pre>
                           <Typography.Text strong>SQL Preview</Typography.Text>
-                          <pre className="bg-gray-50 border rounded-lg p-3 text-xs overflow-auto">{String(runStrategyConfig?.sql_preview || '-')}</pre>
+                          <pre className="bg-[rgba(248,250,252,0.92)] border rounded-lg p-3 text-xs overflow-auto">{String(runStrategyConfig?.sql_preview || '-')}</pre>
                           <Typography.Text strong>完整配置（raw）</Typography.Text>
-                          <pre className="bg-gray-50 border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig || {}, null, 2)}</pre>
+                          <pre className="bg-[rgba(248,250,252,0.92)] border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig || {}, null, 2)}</pre>
                         </Space>
                       ),
                     },

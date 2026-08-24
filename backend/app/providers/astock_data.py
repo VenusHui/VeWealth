@@ -17,22 +17,45 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
+from app.core.source_health import source_monitor
+
 logger = logging.getLogger(__name__)
 
 
-def _http_get_json(url: str, timeout: int = 15) -> Any:
+def _http_get_json(url: str, timeout: int = 15, record: bool = True) -> Any:
     """Fetch JSON from an HTTP endpoint using urllib (a-stock-data pattern).
 
     Uses urllib instead of the requests library to avoid proxy interference
     and TLS fingerprint mismatches that cause IP blocking on some servers.
+
+    Args:
+        record: 是否把本次请求写入 source_monitor。探针自建轻量请求时传 False，
+                由探针自行记录语义结果，避免与真实请求指标重复计数。
     """
     req = urllib.request.Request(url)
     req.add_header("User-Agent", UA)
     req.add_header("Referer", "https://quote.eastmoney.com/")
+    start = time.monotonic()
     try:
         resp = urllib.request.urlopen(req, timeout=timeout)
-        return json.loads(resp.read().decode())
+        data = json.loads(resp.read().decode())
+        if record:
+            source_monitor.record_attempt(
+                "eastmoney",
+                ok=True,
+                duration_ms=(time.monotonic() - start) * 1000,
+                context=url[:80],
+            )
+        return data
     except Exception as e:
+        if record:
+            source_monitor.record_attempt(
+                "eastmoney",
+                ok=False,
+                duration_ms=(time.monotonic() - start) * 1000,
+                error=str(e),
+                context=url[:80],
+            )
         logger.error(f"HTTP请求失败 {url[:80]}: {e}")
         raise
 
@@ -40,6 +63,7 @@ def _http_get_json(url: str, timeout: int = 15) -> Any:
 def _build_url(base: str, params: dict[str, str]) -> str:
     """Build a URL with query parameters."""
     from urllib.parse import urlencode
+
     return f"{base}?{urlencode(params)}"
 
 
@@ -134,11 +158,15 @@ def fqt_code(adjust: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def tencent_quote(codes: list[str]) -> dict[str, dict]:
+def tencent_quote(codes: list[str], _record: bool = True) -> dict[str, dict]:
     """Batch real-time quotes from Tencent Finance (88 fields, GBK).
 
     Supports individual stocks, indices (000001, 000300, 399006),
     and ETFs (510050, 510300).
+
+    Args:
+        _record: 是否把本次请求写入 source_monitor。探针调用时传 False，
+                 由探针统一记录语义结果，避免与真实请求指标重复计数。
     """
     prefixed = []
     for c in codes:
@@ -148,10 +176,19 @@ def tencent_quote(codes: list[str]) -> dict[str, dict]:
     url = "https://qt.gtimg.cn/q=" + ",".join(prefixed)
     req = urllib.request.Request(url)
     req.add_header("User-Agent", UA)
+    start = time.monotonic()
     try:
         resp = urllib.request.urlopen(req, timeout=10)
         data = resp.read().decode("gbk")
     except Exception as e:
+        if _record:
+            source_monitor.record_attempt(
+                "tencent",
+                ok=False,
+                duration_ms=(time.monotonic() - start) * 1000,
+                error=str(e),
+                context=f"tencent_quote:{len(codes)}",
+            )
         logger.error(f"腾讯行情请求失败: {e}")
         return {}
 
@@ -188,6 +225,14 @@ def tencent_quote(codes: list[str]) -> dict[str, dict]:
             }
         except (ValueError, IndexError):
             continue
+    if _record:
+        source_monitor.record_attempt(
+            "tencent",
+            ok=bool(result),
+            duration_ms=(time.monotonic() - start) * 1000,
+            error=None if result else "腾讯行情返回空或解析失败",
+            context=f"tencent_quote:{len(codes)}",
+        )
     return result
 
 
@@ -304,11 +349,33 @@ def eastmoney_kline(
     df = df.rename(columns=_DAILY_RENAME)
 
     if "datetime" in df.columns:
-        df["datetime"] = pd.to_datetime(df["datetime"]).dt.strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
+        df["datetime"] = pd.to_datetime(df["datetime"]).dt.strftime("%Y-%m-%d %H:%M:%S")
 
     return df
+
+
+def eastmoney_ping(code: str = "000001", timeout: int = 10) -> bool:
+    """轻量源级探针：仅拉取最近 3 根日 K 线验证东财接口可达。
+
+    与 eastmoney_kline 不同，这里通过 lmt 限制返回条数，避免探针拉取全量历史。
+    不写入 source_monitor（record=False），由探针统一记录语义结果，避免重复计数；
+    网络失败会向上抛出，便于探针捕获具体原因。
+    """
+    params = {
+        "secid": _to_secid(code),
+        "ut": UT_KLINE,
+        "fields1": "f1,f2,f3,f4,f5,f6",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57",
+        "klt": "101",
+        "fqt": "0",
+        "beg": "",
+        "end": "20500101",
+        "lmt": "3",
+    }
+    url = _build_url(KLINE_URL, params)
+    d = _http_get_json(url, timeout=timeout, record=False)
+    klines = (d.get("data") or {}).get("klines") or []
+    return len(klines) > 0
 
 
 # ---------------------------------------------------------------------------

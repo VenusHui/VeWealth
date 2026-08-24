@@ -1,5 +1,7 @@
 # Frontend Migration Plan
 
+> **Status: ✅ COMPLETED** (all phases implemented as of 2026-06)
+
 ## Objective
 Move from mixed custom UI to a unified AntD v6 system with minimal regressions.
 
