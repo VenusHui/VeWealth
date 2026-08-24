@@ -174,7 +174,7 @@ jobs:
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    needs: [lint, build, test]
+    needs: [lint, secret-scan, build, test]
     # 推送到 main 或任意 dev/** 分支时执行部署
     if: |
       github.event_name == 'push' && (
