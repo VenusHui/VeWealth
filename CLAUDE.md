@@ -62,7 +62,7 @@ ENV=prod docker-compose up -d --build               # Production
 - `app/models/` — SQLAlchemy ORM models: `user.py`, `watchlist.py`, `stock_data.py`, `backtest.py`, `backtest_job.py`, `alert_history.py`, `security_universe.py`
 - `app/schemas/` — Pydantic request/response schemas: `auth.py`, `stock.py`, `watchlist.py`, `backtest.py`, `alert.py`
 
-**Lifespan lifecycle** (`main.py`): On startup — init DB (creates tables from models), recover stale backtest jobs, start APScheduler. On shutdown — stop scheduler.
+**Lifespan lifecycle** (`main.py`): On startup — init DB (`init_db()` creates schema on unmanaged DBs or applies pending Alembic migrations on managed ones), recover stale backtest jobs, start APScheduler. On shutdown — stop scheduler.
 
 **GMM core**: The platform's core algorithm fits Gaussian Mixture Models to stock price distributions. Key file: `backend/app/utils/data_processor.py` (GMM fitting, probability density computation). This is used by `stock_service.py` for analysis endpoint responses.
 
@@ -101,7 +101,7 @@ ENV=prod docker-compose up -d --build               # Production
 ## Key Conventions
 
 - **API prefix**: All API routes are prefixed with `/api` (from `settings.API_PREFIX`)
-- **Database**: Auto-creates tables on startup via `init_db()` — no manual migration needed for development. Use Alembic (`backend/migration/db/`) for schema changes that need version tracking.
+- **Database**: On startup `init_db()` runs `alembic upgrade head` on Alembic-managed DBs (tables tracking `alembic_version`) so pending migrations apply on the deploy path; on unmanaged DBs it falls back to `create_all` + `stamp head`. Schema changes are tracked via Alembic (`backend/alembic/`, config `backend/alembic.ini`); the initial baseline `0001_initial_baseline` snapshots the v1.2.0 schema. See `backend/alembic/README.md` for usage/rollback.
 - **Stock codes**: A-share format (e.g., `000001.XSHE`, `600519.XSHG` for Shanghai/Shenzhen exchange)
 - **Backend lint**: Black formatter with 4-space indent; Python modules/functions in `snake_case`
 - **Frontend lint**: Next.js ESLint defaults; existing code uses 2-space indent and single quotes

@@ -40,7 +40,7 @@ class Settings(BaseSettings):
 
     # 应用信息
     APP_NAME: str = "VeWealth A股股票平台API"
-    APP_VERSION: str = "1.1.0"
+    APP_VERSION: str = "1.2.0"
     API_PREFIX: str = "/api"
 
     # CORS配置 (支持 JSON 字符串或列表)

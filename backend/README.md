@@ -182,7 +182,7 @@ GET /api/stock/data?symbol=000001&start_date=2024-01-01&end_date=2024-01-31&peri
 
 ```python
 APP_NAME = "VeWealth A股股票平台API"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 HOST = "0.0.0.0"
 PORT = 8001
 CORS_ORIGINS = ["http://localhost:3000"]
@@ -287,6 +287,14 @@ python main.py
 ```
 
 ## 📝 更新日志
+
+### v1.2.0
+- ✨ 新增全市场智能选股器（策略驱动扫描、板块/ST 过滤）
+- ✨ 新增 GMM 成交量密度回测策略与交易信号
+- ✨ 新增用户设置页（微信 OpenID 绑定、预警阈值）
+- ✨ 数据源健康度检查与降级观测
+- 🎨 UI 全面改版
+- 🔧 CI 接入后端单元测试
 
 ### v1.1.0
 - ✨ 重构代码为分层架构
