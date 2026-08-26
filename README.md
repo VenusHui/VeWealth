@@ -386,6 +386,8 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 4. 提交回测任务，查看实时进度
 5. 回测完成后查看概览、成交明细、回合交易、持仓快照、策略配置
 
+**全市场扫描与运行观测**：选择「策略自动选股」+「全市场」即可对全 A 股执行回测扫描；后端通过 `GET /api/backtest/observability` 提供运行观测入口（进行中任务、最近扫描结果、股票池覆盖与计数）。使用说明见 [`docs/usage/full-market-scan-observability.md`](docs/usage/full-market-scan-observability.md)。
+
 ### 7. 价格预警
 
 1. 在监控列表中启用股票的预警功能
@@ -491,6 +493,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 - `GET /api/backtest/runs/{id}/rounds` - 回合交易
 - `GET /api/backtest/runs/{id}/snapshots` - 持仓快照
 - `GET /api/backtest/runs/{id}/strategy-config` - 策略配置
+- `GET /api/backtest/observability` - 全市场扫描运行观测（任务/记录/股票池聚合）
 - `POST /api/backtest/jobs` - 创建异步回测任务
 - `GET /api/backtest/jobs` - 查询任务列表
 - `GET /api/backtest/jobs/{id}` - 查询任务详情
