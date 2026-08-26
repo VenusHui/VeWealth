@@ -15,6 +15,12 @@
 - **客户端实时拟合** - 浏览器端 GMM 计算，即时响应用户交互
 - **GMM 交易信号** - 基于成交量密度分布的多空交易信号
 
+### 🎯 智能选股 (Screener)
+- **全市场扫描** - 基于回测策略信号在全 A 股范围内筛选股票
+- **策略驱动** - 复用内置策略模板（GMM 成交量密度、均线交叉等）
+- **板块与 ST 过滤** - 按主板/创业板/科创板/北交所过滤，支持排除 ST
+- **异步任务** - 扫描任务异步执行，支持实时进度与部分结果查询
+
 ### 🧪 策略回测 (Backtest)
 - **内置策略模板** - 均线交叉、缩量下跌、GMM 成交量密度等多套策略
 - **全市场扫描** - `strategy_select` 模式支持全 A 股扫描选股
@@ -76,7 +82,8 @@ VeWealth/
 │   │   │   ├── database.py         # 数据库连接
 │   │   │   ├── security.py         # 安全认证
 │   │   │   ├── deps.py             # 依赖注入
-│   │   │   └── logger.py           # 日志配置
+│   │   │   ├── logger.py           # 日志配置
+│   │   │   └── source_health.py    # 数据源健康度检查
 │   │   ├── models/                 # 数据库模型
 │   │   │   ├── user.py             # 用户模型
 │   │   │   ├── watchlist.py        # 监控列表模型
@@ -90,20 +97,24 @@ VeWealth/
 │   │   │   ├── watchlist.py        # 监控列表相关
 │   │   │   ├── stock.py            # 股票相关
 │   │   │   ├── backtest.py         # 回测相关
-│   │   │   └── alert.py            # 预警相关
+│   │   │   ├── alert.py            # 预警相关
+│   │   │   └── screener.py         # 选股相关
 │   │   ├── routers/                # API 路由
 │   │   │   ├── auth.py             # 认证路由
 │   │   │   ├── watchlist.py        # 监控列表路由
 │   │   │   ├── stock.py            # 股票数据路由
 │   │   │   ├── backtest.py         # 回测路由
 │   │   │   ├── alert.py            # 预警历史路由
-│   │   │   └── scheduler.py        # 调度器管理路由
+│   │   │   ├── scheduler.py        # 调度器管理路由
+│   │   │   ├── health.py           # 健康检查路由
+│   │   │   └── screener.py         # 智能选股路由
 │   │   ├── services/               # 业务逻辑
 │   │   │   ├── stock_service.py    # 股票服务
 │   │   │   ├── data_collector.py   # 数据采集
 │   │   │   ├── alert_service.py    # 预警服务
 │   │   │   ├── wechat_service.py   # 微信服务
 │   │   │   ├── scheduler.py        # 定时任务
+│   │   │   ├── screener_service.py # 智能选股服务
 │   │   │   └── backtest/           # 回测子系统
 │   │   │       ├── engine.py       # 核心执行引擎
 │   │   │       ├── service.py      # 编排层
@@ -118,7 +129,9 @@ VeWealth/
 │   │   ├── providers/              # 行情数据源
 │   │   │   ├── base.py             # 抽象接口
 │   │   │   ├── akshare_provider.py # AKShare 实现
-│   │   │   └── astock_provider.py  # ASTock/TDX 实现
+│   │   │   ├── astock_provider.py  # ASTock/TDX 实现
+│   │   │   ├── astock_data.py      # ASTock 数据类型
+│   │   │   └── probes.py           # 数据源探测
 │   │   └── utils/                  # 工具函数
 │   │       ├── data_processor.py   # GMM 数据处理
 │   │       └── stock_data_fetcher.py
@@ -127,6 +140,9 @@ VeWealth/
 │   ├── tests/                      # 单元测试
 │   ├── data/                       # 静态数据
 │   │   └── a_share_symbols.txt
+│   ├── migration/                  # 数据库迁移
+│   │   └── db/v1/                  # v1 迁移脚本
+│   ├── setup_database.py           # 数据库初始化脚本
 │   └── requirements.txt
 │
 ├── frontend/                        # 前端 Next.js 项目
@@ -135,9 +151,13 @@ VeWealth/
 │   │   ├── layout.tsx              # 根布局
 │   │   ├── login/page.tsx          # 登录/注册
 │   │   ├── depth/page.tsx          # 深度分析（Volume Profile + GMM）
+│   │   ├── screener/page.tsx       # 智能选股（全市场扫描）
 │   │   ├── watchlist/page.tsx      # 监控列表
-│   │   ├── backtest/page.tsx       # 策略回测
+│   │   ├── backtest/               # 策略回测
+│   │   │   ├── page.tsx            # 回测中心
+│   │   │   └── strategies/[strategyId]/page.tsx  # 策略详情
 │   │   ├── alerts/page.tsx         # 预警历史
+│   │   ├── settings/page.tsx       # 用户设置
 │   │   ├── components/             # 共享组件
 │   │   │   ├── Navbar.tsx          # 导航栏
 │   │   │   ├── ui-shell.tsx        # 页面布局壳
@@ -337,28 +357,36 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 
 ### 3. 深度分析（Volume Profile）
 
-1. 点击导航栏的"深度分析"
+1. 点击导航栏的"深度数据"
 2. 输入股票代码（如：000001）查看 Volume Profile
 3. 图表展示价格-成交量分布及 GMM 多峰拟合曲线
 4. 查看基于成交量密度的多空交易信号
 5. 可调节参数控制 GMM 拟合行为
 
-### 4. 监控列表
+### 4. 智能选股（全市场扫描）
 
-1. 点击导航栏的"监控列表"
+1. 点击导航栏的"选股"
+2. 选择策略（GMM 成交量密度、均线交叉等）并配置参数
+3. 按板块（主板/创业板/科创板/北交所）过滤，可选择排除 ST
+4. 启动全市场扫描，实时查看扫描进度与命中股票
+5. 查看命中结果对应的策略信号说明
+
+### 5. 监控列表
+
+1. 点击导航栏的"监控台"
 2. 点击"+ 添加股票"添加关注的股票
 3. 设置是否启用预警和预警阈值
 4. 系统会在每个交易日 15:00 自动采集分时数据
 
-### 5. 策略回测
+### 6. 策略回测
 
-1. 点击导航栏的"策略回测"
+1. 点击导航栏的"回测中心"
 2. 选择策略模板（均线交叉、缩量下跌、GMM 成交量密度等）
 3. 配置参数、选择股票池与回测区间
 4. 提交回测任务，查看实时进度
 5. 回测完成后查看概览、成交明细、回合交易、持仓快照、策略配置
 
-### 6. 价格预警
+### 7. 价格预警
 
 1. 在监控列表中启用股票的预警功能
 2. 在用户设置中绑定微信 OpenID（需要关注公众号）
@@ -436,6 +464,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 
 ### 认证相关
 - `POST /api/auth/register` - 用户注册
+- `POST /api/auth/login` - 用户登录
 - `GET /api/auth/me` - 获取当前用户信息
 - `PUT /api/auth/me` - 更新用户信息
 
@@ -451,7 +480,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 - `GET /api/stock/volume-profile` - 获取 Volume Profile 数据
 - `GET /api/stock/depth` - 获取深度分析数据
 - `GET /api/stock/info` - 获取股票基本信息
-- `GET /api/stock/batch-quote` - 批量获取实时行情
+- `GET /api/stock/quotes` - 批量获取实时行情
 
 ### 策略回测
 - `GET /api/backtest/strategies` - 获取可用策略列表
@@ -465,7 +494,18 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 - `POST /api/backtest/jobs` - 创建异步回测任务
 - `GET /api/backtest/jobs` - 查询任务列表
 - `GET /api/backtest/jobs/{id}` - 查询任务详情
-- `GET /api/backtest/strategies-management` - 策略管理列表
+- `POST /api/backtest/jobs/{id}/cancel` - 取消回测任务
+- `POST /api/backtest/jobs/{id}/retry` - 重试回测任务
+- `GET /api/backtest/strategy-management/list` - 策略管理列表
+- `GET /api/backtest/universe/stats` - 股票池统计
+- `GET /api/backtest/runs/{id}/facts` - 回测绩效事实
+- `GET /api/backtest/runs/{id}/trades/export` - 导出成交明细 CSV
+- `GET /api/backtest/runs/{id}/rounds/export` - 导出回合交易 CSV
+
+### 智能选股
+- `POST /api/screener/scan` - 启动全市场策略选股扫描
+- `GET /api/screener/scans` - 扫描历史列表
+- `GET /api/screener/scans/{scan_id}` - 查询扫描状态与结果
 
 ### 预警历史
 - `GET /api/alerts` - 获取预警历史记录（支持按方向筛选）
@@ -473,6 +513,12 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 ### 调度器管理
 - `POST /api/scheduler/run/collect-data` - 手动触发数据采集
 - `POST /api/scheduler/run/check-alerts` - 手动触发预警检查
+
+### 健康检查
+- `GET /api/health` - 服务健康检查
+- `GET /api/health/sources` - 数据源健康度
+- `GET /api/health/metrics` - 数据源指标
+- `GET /api/health/events` - 数据源降级事件
 
 详细 API 文档：http://localhost:8001/docs
 
@@ -488,6 +534,11 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 - GMM 多峰拟合曲线叠加
 - 双向交易信号展示
 
+### 智能选股页面
+- 策略选择与参数配置
+- 板块 / ST 过滤
+- 全市场扫描进度与命中结果
+
 ### 策略回测页面
 - 策略选择与参数配置
 - 回测记录列表与状态跟踪
@@ -497,6 +548,10 @@ NEXT_PUBLIC_API_URL=http://localhost:8001
 - 添加/删除股票
 - 预警设置
 - 实时状态管理
+
+### 用户设置页面
+- 微信 OpenID 绑定
+- 默认预警阈值设置
 
 ## 🧾 静态A股股票池维护（回测兜底）
 
@@ -561,9 +616,10 @@ python backend/scripts/refresh_a_share_symbols.py
 
 **工作流程**：
 1. 推送代码到 `main` 或 `dev/**` 分支
-2. 自动执行代码检查（Black / ESLint）和 Docker 构建
-3. 通过 SSH 自动部署到服务器
-4. 执行健康检查确保服务正常
+2. 自动执行代码检查（Black / ESLint）和后端单元测试（pytest）
+3. 自动执行 Docker 构建
+4. 通过 SSH 自动部署到服务器
+5. 执行健康检查确保服务正常
 
 **手动部署**：在 GitHub Actions 页面可以手动触发部署（`manual-deploy.yml`）。
 
