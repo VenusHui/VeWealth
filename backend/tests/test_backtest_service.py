@@ -529,6 +529,74 @@ class BacktestServiceUnitTests(unittest.TestCase):
         )
         self.assertEqual(result["counters"]["runs"]["total"], 3)
         self.assertEqual(result["counters"]["runs"]["recent_scan_count"], 1)
+    # _run_strategy_select_mode fault-tolerance tests
+    @patch("app.services.backtest.service.stock_service")
+    def test_strategy_select_skips_symbols_with_data_fetch_error(self, mock_stock_svc):
+        """单只股票行情获取抛错不应中断整个 strategy_select 回测。"""
+        mock_stock_svc.get_all_stock_symbols.return_value = ["000001", "000002"]
+        mock_stock_svc.get_daily_data.side_effect = ValueError("行情源连接失败")
+
+        request = self._make_request(
+            mode="strategy_select",
+            strategy_id="ma_cross_v1",
+            symbols=[],
+            pool_symbols=[],
+            universe_type="all",
+            strategy_params={
+                "boards": ["main"],
+                "exclude_st": True,
+                "short_window": 5,
+                "long_window": 20,
+            },
+        )
+
+        result = self.service._run_strategy_select_mode(request)
+        # 不抛异常；两只股票都被跳过并记录告警
+        self.assertEqual(result["symbols"], ["000001", "000002"])
+        self.assertEqual(result["diagnostics"]["data_empty_count"], 2)
+        self.assertTrue(
+            any("获取行情失败" in w for w in result["warnings"]),
+            msg=f"expected data-fetch warning, got {result['warnings']}",
+        )
+        self.assertEqual(result["trades"], [])
+
+    @patch("app.services.backtest.service.stock_service")
+    def test_strategy_select_skips_symbol_whose_candidates_raise(self, mock_stock_svc):
+        """策略 generate_candidates 抛错应跳过该股票而不是失败整个任务。"""
+        mock_stock_svc.get_all_stock_symbols.return_value = ["000001"]
+
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=8, freq="D"),
+                "open": [10.0] * 8,
+                "close": [10.0] * 8,
+                "volume": [1000.0] * 8,
+            }
+        )
+        mock_stock_svc.get_daily_data.return_value = (df, None, None)
+
+        with patch("app.services.backtest.service.get_strategy") as mock_get_strategy:
+            fake_strategy = MagicMock()
+            fake_strategy.required_columns.return_value = {"datetime", "open", "close"}
+            fake_strategy.generate_candidates.side_effect = ValueError("参数非法")
+            mock_get_strategy.return_value = fake_strategy
+
+            request = self._make_request(
+                mode="strategy_select",
+                strategy_id="ma_cross_v1",
+                symbols=[],
+                pool_symbols=[],
+                universe_type="all",
+                strategy_params={"boards": ["main"], "exclude_st": True},
+            )
+
+            result = self.service._run_strategy_select_mode(request)
+
+        self.assertTrue(
+            any("策略生成候选失败" in w for w in result["warnings"]),
+            msg=f"expected candidate warning, got {result['warnings']}",
+        )
+        self.assertEqual(result["trades"], [])
 
 
 class CostModelTests(unittest.TestCase):

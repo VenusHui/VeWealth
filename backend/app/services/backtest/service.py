@@ -404,14 +404,18 @@ class BacktestService:
                 all_warnings.append(f"{symbol}: 无可用行情，已跳过")
                 continue
 
-            symbol_result = run_for_symbol(
-                symbol=symbol,
-                df=df,
-                strategy_id=request.strategy_id,
-                strategy_params=request.strategy_params,
-                init_cash=capital_per_symbol,
-                cost_model=cost_model,
-            )
+            try:
+                symbol_result = run_for_symbol(
+                    symbol=symbol,
+                    df=df,
+                    strategy_id=request.strategy_id,
+                    strategy_params=request.strategy_params,
+                    init_cash=capital_per_symbol,
+                    cost_model=cost_model,
+                )
+            except Exception as e:
+                all_warnings.append(f"{symbol}: 回测执行失败({str(e)})，已跳过")
+                continue
 
             symbol_curves[symbol] = symbol_result.equity_curve
             symbol_position_curves[symbol] = symbol_result.position_curve
@@ -517,11 +521,18 @@ class BacktestService:
                     }
                 )
 
-            df, _, _ = stock_service.get_daily_data(
-                symbol=symbol,
-                start_date=request.start_date.strftime("%Y-%m-%d"),
-                end_date=request.end_date.strftime("%Y-%m-%d"),
-            )
+            try:
+                df, _, _ = stock_service.get_daily_data(
+                    symbol=symbol,
+                    start_date=request.start_date.strftime("%Y-%m-%d"),
+                    end_date=request.end_date.strftime("%Y-%m-%d"),
+                )
+            except Exception as e:
+                warnings.append(f"{symbol}: 获取行情失败({str(e)})，已跳过")
+                data_empty_count += 1
+                if len(empty_symbols_preview) < 30:
+                    empty_symbols_preview.append(symbol)
+                continue
 
             if df.empty or len(df) < (hold_days + 2):
                 data_empty_count += 1
@@ -539,7 +550,11 @@ class BacktestService:
             work["symbol"] = symbol
             market_data_map[symbol] = work
 
-            candidates = strategy.generate_candidates(work, params)
+            try:
+                candidates = strategy.generate_candidates(work, params)
+            except Exception as e:
+                warnings.append(f"{symbol}: 策略生成候选失败({str(e)})，已跳过")
+                continue
             if candidates is None or candidates.empty:
                 continue
 

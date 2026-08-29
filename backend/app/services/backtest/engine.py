@@ -97,6 +97,10 @@ def run_for_symbol(
                 continue
 
             deal_price = cost_model.apply_buy_slippage(exec_open)
+            if deal_price <= 0:
+                warnings.append(f"{symbol} {trade_dt}: 次日开盘价异常，买入失败")
+                continue
+
             lot_size = 100
             max_lots = int(cash // (deal_price * lot_size))
             qty = max_lots * lot_size
