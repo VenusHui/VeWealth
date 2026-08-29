@@ -245,9 +245,7 @@ def _scan_symbols(
 
     for sym in symbols:
         sym_df = (
-            work[work["symbol"] == sym]
-            .sort_values("trade_date")
-            .reset_index(drop=True)
+            work[work["symbol"] == sym].sort_values("trade_date").reset_index(drop=True)
         )
         if len(sym_df) < lookback + 2:
             continue
@@ -298,9 +296,7 @@ def _scan_symbols(
                 if result:
                     all_candidates.extend(result)
             except multiprocessing.TimeoutError:
-                _logger.error(
-                    "GMM worker chunk timed out after 120s, results dropped"
-                )
+                _logger.error("GMM worker chunk timed out after 120s, results dropped")
             except Exception:
                 _logger.exception("GMM worker chunk failed")
 

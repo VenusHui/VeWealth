@@ -529,6 +529,7 @@ class BacktestServiceUnitTests(unittest.TestCase):
         )
         self.assertEqual(result["counters"]["runs"]["total"], 3)
         self.assertEqual(result["counters"]["runs"]["recent_scan_count"], 1)
+
     # _run_strategy_select_mode fault-tolerance tests
     @patch("app.services.backtest.service.stock_service")
     def test_strategy_select_skips_symbols_with_data_fetch_error(self, mock_stock_svc):
