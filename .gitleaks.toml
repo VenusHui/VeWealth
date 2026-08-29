@@ -1,0 +1,16 @@
+# gitleaks 配置 —— VeWealth 密钥泄露扫描（VEW-13）
+# 在默认规则基础上追加微信公众号 AppID 规则，防止硬编码的 AppID 再次进入代码库。
+# CI 中的 secret-scan job 使用本配置。
+
+title = "VeWealth gitleaks config"
+
+[extend]
+useDefault = true
+
+# 微信公众号 AppID：wx 前缀 + 16 位十六进制
+[[rules]]
+id = "vewealth-wechat-app-id"
+description = "微信公众号 AppID (wx + 16 hex)"
+regex = '''wx[0-9a-f]{16}'''
+secretGroup = 0
+keywords = ["wx"]

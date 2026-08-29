@@ -202,6 +202,11 @@ class BacktestUniverseStatsResponse(BaseModel):
     data: dict[str, Any]
 
 
+class BacktestObservabilityResponse(BaseModel):
+    success: bool = True
+    data: dict[str, Any]
+
+
 class StrategyLatestBacktest(BaseModel):
     run_id: int
     run_name: str

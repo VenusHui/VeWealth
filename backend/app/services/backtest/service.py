@@ -10,6 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, load_only
 
 from app.models.backtest import BacktestRun, BacktestRound
+from app.models.backtest_job import BacktestJob
 from app.models.security_universe import SecurityUniverse
 from app.models.user import User
 from app.schemas.backtest import BacktestRunRequest
@@ -175,6 +176,127 @@ class BacktestService:
             },
         }
 
+    def get_scan_observability(
+        self, current_user: User, db: Session, recent_limit: int = 50
+    ) -> dict[str, Any]:
+        """全市场扫描运行观测聚合。
+
+        一次性返回观测面板所需的完整视图：
+        - 股票池覆盖统计（universe）
+        - 进行中的回测任务（active_jobs，含进度与阶段）
+        - 最近完成的全市场扫描记录（recent_scan_runs，含诊断字段）
+        - 任务/记录汇总计数（counters）
+        """
+        user_id = current_user.id
+
+        active_rows = (
+            db.query(BacktestJob)
+            .filter(
+                BacktestJob.user_id == user_id,
+                BacktestJob.status.in_(["pending", "running"]),
+            )
+            .order_by(BacktestJob.created_at.desc())
+            .limit(20)
+            .all()
+        )
+        active_jobs: list[dict[str, Any]] = []
+        for r in active_rows:
+            payload = r.request_payload or {}
+            active_jobs.append(
+                {
+                    "job_id": r.job_id,
+                    "name": payload.get("name") or r.job_id,
+                    "strategy_id": payload.get("strategy_id"),
+                    "status": r.status,
+                    "stage": r.stage,
+                    "progress_pct": r.progress_pct,
+                    "total_symbols": r.total_symbols,
+                    "processed_symbols": r.processed_symbols,
+                    "eta_seconds": r.eta_seconds,
+                    "created_at": r.created_at,
+                    "updated_at": r.updated_at,
+                }
+            )
+
+        job_status_counts: dict[str, int] = {
+            "pending": 0,
+            "running": 0,
+            "success": 0,
+            "failed": 0,
+            "cancelled": 0,
+        }
+        job_status_rows = (
+            db.query(BacktestJob.status, func.count(BacktestJob.id))
+            .filter(BacktestJob.user_id == user_id)
+            .group_by(BacktestJob.status)
+            .all()
+        )
+        for status_value, cnt in job_status_rows:
+            job_status_counts[str(status_value)] = int(cnt)
+
+        recent_rows = (
+            db.query(BacktestRun)
+            .options(
+                load_only(
+                    BacktestRun.id,
+                    BacktestRun.name,
+                    BacktestRun.status,
+                    BacktestRun.strategy_id,
+                    BacktestRun.start_date,
+                    BacktestRun.end_date,
+                    BacktestRun.summary,
+                    BacktestRun.warnings,
+                    BacktestRun.created_at,
+                )
+            )
+            .filter(BacktestRun.user_id == user_id)
+            .order_by(BacktestRun.created_at.desc())
+            .limit(recent_limit)
+            .all()
+        )
+        recent_scan_runs: list[dict[str, Any]] = []
+        for r in recent_rows:
+            summary = r.summary or {}
+            diagnostics = None
+            if isinstance(summary, dict):
+                diagnostics = summary.get("diagnostics")
+            if not diagnostics:
+                continue
+            recent_scan_runs.append(
+                {
+                    "run_id": r.id,
+                    "name": r.name,
+                    "strategy_id": r.strategy_id,
+                    "status": r.status,
+                    "start_date": r.start_date,
+                    "end_date": r.end_date,
+                    "summary": summary,
+                    "diagnostics": diagnostics,
+                    "warnings": r.warnings or [],
+                    "created_at": r.created_at,
+                }
+            )
+
+        total_runs = (
+            db.query(func.count(BacktestRun.id))
+            .filter(BacktestRun.user_id == user_id)
+            .scalar()
+        )
+
+        return {
+            "generated_at": datetime.utcnow().isoformat(),
+            "universe": self.get_universe_stats(db),
+            "active_jobs": active_jobs,
+            "recent_scan_runs": recent_scan_runs,
+            "counters": {
+                "jobs": job_status_counts,
+                "runs": {
+                    "total": int(total_runs or 0),
+                    "recent_scan_count": len(recent_scan_runs),
+                },
+            },
+        }
+
     def run_backtest(
         self,
         request: BacktestRunRequest,
@@ -199,6 +321,9 @@ class BacktestService:
 
         summary_payload = dict(result["summary"] or {})
         summary_payload["positions_snapshot"] = enriched_snapshots
+        summary_payload["mode"] = request.mode
+        if result.get("diagnostics") is not None:
+            summary_payload["diagnostics"] = result["diagnostics"]
 
         run = BacktestRun(
             user_id=current_user.id,
@@ -643,6 +768,7 @@ class BacktestService:
         if not run:
             return None
 
+        summary = run.summary or {}
         return {
             "run_id": run.id,
             "name": run.name,
@@ -652,7 +778,10 @@ class BacktestService:
             "end_date": run.end_date,
             "initial_cash": run.initial_cash,
             "benchmark": run.benchmark,
-            "summary": run.summary or {},
+            "summary": summary,
+            "diagnostics": (
+                summary.get("diagnostics") if isinstance(summary, dict) else None
+            ),
             "equity_curve": run.equity_curve or [],
             "warnings": run.warnings or [],
             "created_at": run.created_at,
