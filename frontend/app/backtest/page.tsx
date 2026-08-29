@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
 import { getApiBaseUrl } from '../lib/api'
-import { getAuthHeader, isAuthenticated } from '../lib/auth'
+import { clearAuth, getAuthHeader, isAuthenticated } from '../lib/auth'
 import { MainTabSwitcher } from './components/MainTabSwitcher'
 import { BacktestRecordsPanel } from './components/BacktestRecordsPanel'
 import { BacktestDetailPanel } from './components/BacktestDetailPanel'
@@ -29,6 +29,20 @@ import { AppPage, CompactStatCard } from '../components/ui-shell'
 import { parseStrategyParams } from './calc'
 
 const API_BASE_URL = getApiBaseUrl()
+
+/**
+ * 处理认证失效（401）：清除本地残留 token 并跳转登录页。
+ * 返回 true 表示已处理（调用方应直接返回，不再展示业务错误）。
+ */
+function handleAuthError(err: unknown): boolean {
+  const status = (err as { response?: { status?: number } })?.response?.status
+  if (status === 401) {
+    clearAuth()
+    if (typeof window !== 'undefined') window.location.href = '/login'
+    return true
+  }
+  return false
+}
 
 export default function BacktestPage() {
   const [mainTab, setMainTab] = useState<MainTab>('records')
@@ -278,12 +292,13 @@ export default function BacktestPage() {
         if (list.length > 0) {
           setStrategyId(list[0].strategy_id)
           const defaults: Record<string, string> = {}
-          list[0].param_schema.forEach((p: Strategy['param_schema'][number]) => {
+          ;(list[0].param_schema || []).forEach((p: Strategy['param_schema'][number]) => {
             defaults[p.key] = String(p.default ?? '')
           })
           setStrategyParams(defaults)
         }
-      } catch {
+      } catch (err) {
+        if (handleAuthError(err)) return
         setError('加载策略列表失败')
       }
     }
@@ -404,8 +419,10 @@ export default function BacktestPage() {
       setJob(resp.data?.data)
       setMainTab('records')
       fetchJobs()
-    } catch {
-      setError('回测执行失败')
+    } catch (err) {
+      if (handleAuthError(err)) return
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(detail || '回测执行失败')
     } finally {
       setLoading(false)
     }

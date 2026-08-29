@@ -11,6 +11,7 @@ _os.environ["OMP_NUM_THREADS"] = "1"
 
 import logging
 import multiprocessing
+import threading
 from dataclasses import dataclass
 
 import numpy as np
@@ -29,7 +30,9 @@ _logger = logging.getLogger(__name__)
 # Workers receive only (start, end) index ranges.
 #
 # NOT THREAD-SAFE: generate_candidates resets this list on each call.
-# Concurrent calls from different threads will corrupt the data.
+# Concurrent calls from different threads will corrupt the data, so all
+# mutation and reads must happen while holding _SHARED_DATA_LOCK (see
+# generate_candidates -> _scan_symbols).
 # ------------------------------------------------------------------
 
 
@@ -40,6 +43,12 @@ class _SymbolData:
 
 
 _SHARED_DATA: list[_SymbolData] = []
+
+# Serializes every call that mutates/reads _SHARED_DATA. Required because
+# backtest jobs (job_manager) and screener scans run in separate daemon
+# threads; without it one call can reset the list while another reads it
+# (single-process path) or forks workers (multi-process path).
+_SHARED_DATA_LOCK = threading.Lock()
 
 
 class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
@@ -191,70 +200,113 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
         refit_int = int(params.get("refit_interval", 5))
         max_workers = int(params.get("max_workers", 4))
 
-        # Pre-serialize all symbol data into the shared global list
-        global _SHARED_DATA
-        _SHARED_DATA = []
-
-        for sym in symbols:
-            sym_df = (
-                work[work["symbol"] == sym]
-                .sort_values("trade_date")
-                .reset_index(drop=True)
-            )
-            if len(sym_df) < lookback + 2:
-                continue
-            _SHARED_DATA.append(
-                _SymbolData(
-                    sym_id=str(sym).strip(),
-                    chart_data=_build_chart_data(sym_df),
-                )
+        # _SHARED_DATA is module-global and mutated on every call. Serialize
+        # the whole scan (including the fork-based Pool lifetime) so concurrent
+        # backtest jobs / screener scans cannot reset the shared list while
+        # another call reads it or forks workers.
+        with _SHARED_DATA_LOCK:
+            return _scan_symbols(
+                work=work,
+                symbols=symbols,
+                lookback=lookback,
+                threshold=threshold,
+                max_comp=max_comp,
+                refit_int=refit_int,
+                max_workers=max_workers,
+                cols=cols,
             )
 
-        total = len(_SHARED_DATA)
-        if total == 0:
+
+# ------------------------------------------------------------------
+# Shared scan driver: populates _SHARED_DATA then runs the scan.
+# Must be called while holding _SHARED_DATA_LOCK.
+# ------------------------------------------------------------------
+
+
+def _scan_symbols(
+    work: pd.DataFrame,
+    symbols: list[str],
+    lookback: int,
+    threshold: float,
+    max_comp: int,
+    refit_int: int,
+    max_workers: int,
+    cols: list[str],
+) -> pd.DataFrame:
+    """Pre-serialize symbol data into _SHARED_DATA and scan it.
+
+    The single-process path reads _SHARED_DATA directly in this thread; the
+    multi-process path forks workers that inherit it via copy-on-write.
+    Either way the list must not be mutated by another call concurrently,
+    which the caller guarantees by holding _SHARED_DATA_LOCK.
+    """
+    global _SHARED_DATA
+    _SHARED_DATA = []
+
+    for sym in symbols:
+        sym_df = (
+            work[work["symbol"] == sym]
+            .sort_values("trade_date")
+            .reset_index(drop=True)
+        )
+        if len(sym_df) < lookback + 2:
+            continue
+        _SHARED_DATA.append(
+            _SymbolData(
+                sym_id=str(sym).strip(),
+                chart_data=_build_chart_data(sym_df),
+            )
+        )
+
+    total = len(_SHARED_DATA)
+    if total == 0:
+        return pd.DataFrame(columns=cols)
+
+    # Single-process path for small work or max_workers=1
+    n_workers = min(max_workers, total)
+    if n_workers <= 1:
+        result = _scan_range(0, total, lookback, threshold, max_comp, refit_int)
+        if not result:
             return pd.DataFrame(columns=cols)
+        return pd.DataFrame(result)
 
-        # Single-process path for small work or max_workers=1
-        n_workers = min(max_workers, total)
-        if n_workers <= 1:
-            result = _scan_range(0, total, lookback, threshold, max_comp, refit_int)
-            return pd.DataFrame(result)
+    # Multi-process via multiprocessing.Pool with fork.
+    # Workers inherit _SHARED_DATA via copy-on-write.
+    # BLAS threading is already disabled (module-level env) and
+    # re-confirmed in the pool initializer for belt-and-suspenders.
+    chunk_size = max(1, total // n_workers)
+    ranges = [(i, min(i + chunk_size, total)) for i in range(0, total, chunk_size)]
 
-        # Multi-process via multiprocessing.Pool with fork.
-        # Workers inherit _SHARED_DATA via copy-on-write.
-        # BLAS threading is already disabled (module-level env) and
-        # re-confirmed in the pool initializer for belt-and-suspenders.
-        chunk_size = max(1, total // n_workers)
-        ranges = [(i, min(i + chunk_size, total)) for i in range(0, total, chunk_size)]
+    all_candidates: list[dict] = []
+    ctx = multiprocessing.get_context("fork")
 
-        all_candidates: list[dict] = []
-        ctx = multiprocessing.get_context("fork")
-
-        with ctx.Pool(
-            processes=n_workers,
-            initializer=_blas_single_thread,
-            maxtasksperchild=1,
-        ) as pool:
-            async_results = [
-                pool.apply_async(
-                    _scan_range,
-                    (s, e, lookback, threshold, max_comp, refit_int),
+    with ctx.Pool(
+        processes=n_workers,
+        initializer=_blas_single_thread,
+        maxtasksperchild=1,
+    ) as pool:
+        async_results = [
+            pool.apply_async(
+                _scan_range,
+                (s, e, lookback, threshold, max_comp, refit_int),
+            )
+            for s, e in ranges
+        ]
+        for ar in async_results:
+            try:
+                result = ar.get(timeout=120)
+                if result:
+                    all_candidates.extend(result)
+            except multiprocessing.TimeoutError:
+                _logger.error(
+                    "GMM worker chunk timed out after 120s, results dropped"
                 )
-                for s, e in ranges
-            ]
-            for ar in async_results:
-                try:
-                    result = ar.get(timeout=120)
-                    if result:
-                        all_candidates.extend(result)
-                except multiprocessing.TimeoutError:
-                    _logger.error(
-                        "GMM worker chunk timed out after 120s, results dropped"
-                    )
-                except Exception:
-                    _logger.exception("GMM worker chunk failed")
+            except Exception:
+                _logger.exception("GMM worker chunk failed")
 
-        return pd.DataFrame(all_candidates)
+    if not all_candidates:
+        return pd.DataFrame(columns=cols)
+    return pd.DataFrame(all_candidates)
 
 
 # ------------------------------------------------------------------
