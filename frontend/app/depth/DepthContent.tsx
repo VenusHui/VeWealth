@@ -538,7 +538,7 @@ export default function DepthContent() {
                         </button>
                       ))
                     ) : (
-                      <div className="rounded-2xl border border-dashed border-[var(--border)] px-4 py-6 text-sm text-[var(--text-dim)]">
+                      <div className="rounded-[var(--radius-card)] border border-dashed border-[var(--border)] px-4 py-6 text-sm text-[var(--text-dim)]">
                         未找到相关股票
                       </div>
                     )}

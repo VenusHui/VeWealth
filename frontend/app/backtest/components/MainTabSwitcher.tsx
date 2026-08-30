@@ -21,15 +21,11 @@ export function MainTabSwitcher({
             key={tab.key}
             type="button"
             onClick={() => onChange(tab.key)}
-            className="rounded-[20px] border px-4 py-3 text-left transition"
-            style={{
-              background:
-                activeTab === tab.key
-                  ? 'linear-gradient(135deg, rgba(15,118,110,0.14), rgba(14,116,144,0.08))'
-                  : 'rgba(255,255,255,0.55)',
-              borderColor:
-                activeTab === tab.key ? 'rgba(15,118,110,0.18)' : 'rgba(15,23,42,0.06)',
-            }}
+            className={`flex flex-col items-start gap-0.5 rounded-[var(--radius-control)] border px-4 py-3 text-left transition ${
+              activeTab === tab.key
+                ? 'border-[var(--brand-line)] bg-[var(--brand-soft)]'
+                : 'border-[var(--border-subtle)] bg-[var(--surface-subtle)]'
+            }`}
           >
             <div className="text-sm font-semibold text-[var(--text-strong)]">{tab.label}</div>
             <div className="text-xs uppercase tracking-[0.16em] text-[var(--text-dim)]">{tab.hint}</div>

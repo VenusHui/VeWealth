@@ -109,7 +109,7 @@ export function ScreenerConfigPanel({
               {(['main', 'gem', 'star', 'bse'] as const).map((key) => (
                 <label
                   key={key}
-                  className="flex items-center gap-2 rounded-2xl border border-[var(--border-subtle)] bg-white px-3 py-3 text-sm text-[var(--text-muted)] cursor-pointer"
+                  className="flex items-center gap-2 rounded-[var(--radius-control)] border border-[var(--border-subtle)] bg-white px-3 py-3 text-sm text-[var(--text-muted)] cursor-pointer"
                 >
                   <input
                     type="checkbox"

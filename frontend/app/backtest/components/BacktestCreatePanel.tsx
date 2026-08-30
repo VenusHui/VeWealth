@@ -123,7 +123,7 @@ export function BacktestCreatePanel({
         </div>
 
         {selectedStrategy ? (
-          <div className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.68)] p-5">
+          <div className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] p-5">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-[var(--text-strong)]">策略参数</div>
@@ -141,11 +141,11 @@ export function BacktestCreatePanel({
             </div>
 
             {mode === 'strategy_select' ? (
-              <div className="mt-5 rounded-[20px] border border-[var(--border-subtle)] bg-[rgba(248,250,252,0.84)] p-4">
+              <div className="mt-5 rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--surface-subtle)] p-4">
                 <div className="text-sm font-semibold text-[var(--text-strong)]">股票范围过滤</div>
                 <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
                   {(['main', 'gem', 'star', 'bse'] as const).map((key) => (
-                    <label key={key} className="flex items-center gap-2 rounded-2xl border border-[var(--border-subtle)] bg-white px-3 py-3 text-sm text-[var(--text-muted)]">
+                    <label key={key} className="flex items-center gap-2 rounded-[var(--radius-control)] border border-[var(--border-subtle)] bg-white px-3 py-3 text-sm text-[var(--text-muted)]">
                       <input type="checkbox" checked={boardFilters.includes(key)} onChange={(e) => onBoardFilterChange(key, e.target.checked)} />
                       <span>{BOARD_LABELS[key]}</span>
                     </label>
@@ -167,7 +167,7 @@ export function BacktestCreatePanel({
           <span className="text-sm text-[var(--text-dim)]">提交后将跳转至记录页面，可实时查看任务进度。</span>
         </div>
 
-        {error ? <div className="rounded-2xl border border-[rgba(220,38,38,0.16)] bg-[rgba(254,242,242,0.86)] px-4 py-3 text-sm text-red-700">{error}</div> : null}
+        {error ? <div className="rounded-[var(--radius-card)] border border-[rgba(220,38,38,0.16)] bg-[rgba(254,242,242,0.86)] px-4 py-3 text-sm text-red-700">{error}</div> : null}
     </section>
   )
 }

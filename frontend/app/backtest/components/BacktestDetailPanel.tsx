@@ -598,11 +598,11 @@ export function BacktestDetailPanel({
                       children: (
                         <Space direction="vertical" size={8} className="w-full">
                           <Typography.Text strong>DSL</Typography.Text>
-                          <pre className="bg-[rgba(248,250,252,0.92)] border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig?.filter_dsl || {}, null, 2)}</pre>
+                          <pre className="bg-[var(--surface-subtle)] border rounded-[var(--radius-control)] p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig?.filter_dsl || {}, null, 2)}</pre>
                           <Typography.Text strong>SQL Preview</Typography.Text>
-                          <pre className="bg-[rgba(248,250,252,0.92)] border rounded-lg p-3 text-xs overflow-auto">{String(runStrategyConfig?.sql_preview || '-')}</pre>
+                          <pre className="bg-[var(--surface-subtle)] border rounded-[var(--radius-control)] p-3 text-xs overflow-auto">{String(runStrategyConfig?.sql_preview || '-')}</pre>
                           <Typography.Text strong>完整配置（raw）</Typography.Text>
-                          <pre className="bg-[rgba(248,250,252,0.92)] border rounded-lg p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig || {}, null, 2)}</pre>
+                          <pre className="bg-[var(--surface-subtle)] border rounded-[var(--radius-control)] p-3 text-xs overflow-auto">{JSON.stringify(runStrategyConfig || {}, null, 2)}</pre>
                         </Space>
                       ),
                     },

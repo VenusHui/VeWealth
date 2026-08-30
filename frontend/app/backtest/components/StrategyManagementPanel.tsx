@@ -25,7 +25,7 @@ function getColumns(): ColumnsType<StrategyManagementListItem> {
       key: 'strategy_id',
       width: 220,
       ellipsis: true,
-      render: (v: string) => <code className="rounded bg-slate-100 px-1.5 py-1 text-xs">{v}</code>,
+      render: (v: string) => <code className="rounded bg-[var(--surface-subtle)] px-1.5 py-1 text-xs">{v}</code>,
     },
     {
       title: '最近修改',
@@ -98,7 +98,7 @@ export function StrategyManagementPanel({
       items.map((item) => {
         const annual = Number(item.latest_backtest?.annual_return)
         return (
-          <div key={item.strategy_id} className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.75)] p-4">
+          <div key={item.strategy_id} className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] p-4">
             <div className="flex items-center justify-between gap-2">
               <span className="truncate font-semibold text-[var(--text-strong)]">{item.name}</span>
               <Tag color={item.usable ? 'green' : 'red'}>{item.usable ? '可用' : '不可用'}</Tag>
@@ -160,7 +160,7 @@ export function StrategyManagementPanel({
         />
       </div>
 
-      <div className="space-y-3 md:hidden">{mobileCards.length ? mobileCards : <div className="rounded-[20px] border border-dashed border-[var(--border)] px-4 py-8 text-sm text-[var(--text-dim)]">暂无策略</div>}</div>
+      <div className="space-y-3 md:hidden">{mobileCards.length ? mobileCards : <div className="rounded-[var(--radius-card)] border border-dashed border-[var(--border)] px-4 py-8 text-sm text-[var(--text-dim)]">暂无策略</div>}</div>
 
       <div className="mt-4 flex justify-end">
         <Pagination
