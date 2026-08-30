@@ -579,7 +579,7 @@ export default function BacktestPage() {
           ) : null}
 
           {result ? (
-            <div className="rounded-[24px] border border-[rgba(21,128,61,0.16)] bg-[rgba(240,253,244,0.92)] px-5 py-4 text-sm text-green-800">
+            <div className="rounded-[var(--radius-card)] border border-[rgba(21,128,61,0.16)] bg-[rgba(240,253,244,0.92)] px-5 py-4 text-sm text-green-800">
               回测完成：Run #{result.run_id}，共 {result.trades?.length || 0} 笔交易。
             </div>
           ) : null}

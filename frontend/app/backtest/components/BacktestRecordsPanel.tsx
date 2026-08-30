@@ -51,7 +51,7 @@ function getRecordColumns(onViewDetail: (runId: number) => void): ColumnsType<Ru
 function ActiveJobCard({ job }: { job: JobItem }) {
   const pct = clampPct(job.progress_pct)
   return (
-    <div className="rounded-[20px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.72)] px-4 py-3">
+    <div className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] px-4 py-3">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="truncate font-medium text-[var(--text-strong)]">
@@ -70,8 +70,8 @@ function ActiveJobCard({ job }: { job: JobItem }) {
           percent={pct}
           size="small"
           showInfo={false}
-          strokeColor={{ '0%': '#0f766e', '100%': '#0d9488' }}
-          trailColor="rgba(15,23,42,0.06)"
+          strokeColor="var(--brand)"
+          trailColor="var(--border-subtle)"
         />
       </div>
     </div>
@@ -154,7 +154,7 @@ export function BacktestRecordsPanel({
       {/* Mobile: completed runs cards */}
       <div className="space-y-3 md:hidden">
         {runs.map((r) => (
-          <div key={r.id} className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.75)] p-4">
+          <div key={r.id} className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] p-4">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <div className="truncate font-semibold text-[var(--text-strong)]">{r.name}</div>
@@ -175,7 +175,7 @@ export function BacktestRecordsPanel({
             </div>
           </div>
         ))}
-        {isEmpty ? <div className="rounded-[20px] border border-dashed border-[var(--border)] px-4 py-8 text-sm text-[var(--text-dim)]">暂无回测记录，提交新的回测任务后结果将显示在这里</div> : null}
+        {isEmpty ? <div className="rounded-[var(--radius-card)] border border-dashed border-[var(--border)] px-4 py-8 text-sm text-[var(--text-dim)]">暂无回测记录，提交新的回测任务后结果将显示在这里</div> : null}
       </div>
     </section>
   )

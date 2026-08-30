@@ -115,7 +115,7 @@ export default function StrategyDetailPage() {
                 />
               )}
             >
-              <div className="overflow-hidden rounded-[22px] border border-[var(--border-subtle)]">
+              <div className="overflow-hidden rounded-[var(--radius-card)] border border-[var(--border-subtle)]">
                 <SyntaxHighlighter
                   language="python"
                   style={oneDark}
