@@ -509,7 +509,7 @@ export default function DepthContent() {
                         key={s.code}
                         type="button"
                         onClick={() => handleQuickSwitch(s.code, s.name)}
-                        className="ve-info-pill cursor-pointer hover:bg-[rgba(15,118,110,0.08)] transition-colors"
+                        className="ve-info-pill cursor-pointer hover:bg-[var(--brand-soft)] transition-colors"
                       >
                         {s.name || s.code}
                       </button>
@@ -519,7 +519,7 @@ export default function DepthContent() {
               </div>
 
               {showSearchResults && (
-                <div className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.78)] p-3">
+                <div className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] p-3">
                   <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-dim)]">候选结果</div>
                   <div className="space-y-2">
                     {searchResults.length > 0 ? (
@@ -528,7 +528,7 @@ export default function DepthContent() {
                           key={stock.code}
                           type="button"
                           onClick={() => handleSelectStock(stock)}
-                          className="flex w-full items-center justify-between rounded-2xl border border-transparent bg-[rgba(248,250,252,0.88)] px-4 py-3 text-left transition hover:border-[var(--brand-line)] hover:bg-white"
+                          className="flex w-full items-center justify-between rounded-[var(--radius-control)] border border-transparent bg-[var(--surface-subtle)] px-4 py-3 text-left transition hover:border-[var(--brand-line)] hover:bg-white"
                         >
                           <div>
                             <div className="font-medium text-[var(--text-strong)]">{stock.name}</div>

@@ -62,7 +62,7 @@ export function ScreenerConfigPanel({
       </div>
 
       {selectedStrategy ? (
-        <div className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.68)] p-5">
+        <div className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-semibold text-[var(--text-strong)]">策略参数</div>
@@ -103,7 +103,7 @@ export function ScreenerConfigPanel({
             </p>
           ) : null}
 
-          <div className="mt-5 rounded-[20px] border border-[var(--border-subtle)] bg-[rgba(248,250,252,0.84)] p-4">
+          <div className="mt-5 rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--surface-subtle)] p-4">
             <div className="text-sm font-semibold text-[var(--text-strong)]">选股范围</div>
             <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
               {(['main', 'gem', 'star', 'bse'] as const).map((key) => (

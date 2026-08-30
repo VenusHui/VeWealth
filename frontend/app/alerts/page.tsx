@@ -208,7 +208,7 @@ export default function AlertsPage() {
                 </div>
                 <div className="space-y-3 md:hidden">
                   {alerts.map((item) => (
-                    <div key={item.id} className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.75)] p-4">
+                    <div key={item.id} className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] p-4">
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <div className="font-semibold text-[var(--text-strong)]">{item.stock_name || item.stock_code}</div>

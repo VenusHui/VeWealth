@@ -87,7 +87,7 @@ export default function LoginPage() {
     <AppPage className="min-h-[calc(100vh-4.75rem)]">
       <div className="mx-auto w-full max-w-md">
         <section className="ve-panel">
-          <div className="mb-6 flex rounded-full border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.8)] p-1.5">
+          <div className="mb-6 flex rounded-[var(--radius-control)] border border-[var(--border-subtle)] bg-[var(--surface-subtle)] p-1">
             <button
               type="button"
               onClick={() => {

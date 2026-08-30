@@ -475,7 +475,7 @@ export default function DepthChart({
   )
 
   return (
-    <div className="flex gap-0 rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.78)] overflow-hidden" style={{ height: 520 }}>
+    <div className="flex gap-0 rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] overflow-hidden" style={{ height: 520 }}>
       {/* Candlestick chart + Volume Profile overlay */}
       <div className="relative flex-1 min-w-0" style={{ height: 520 }}>
         <div ref={chartContainerRef} className="absolute inset-0" />
@@ -618,7 +618,7 @@ export default function DepthChart({
 
       {/* CYQ chip distribution panel (right side) — shown when CYQ toggle is ON */}
       {showCYQ && cyqInfo && displayPriceMin > 0 && (
-        <div className="relative flex w-32 flex-col border-l border-[var(--border-subtle)] bg-[rgba(248,250,252,0.7)] shrink-0" style={{ height: 520 }}>
+        <div className="relative flex w-32 flex-col border-l border-[var(--border-subtle)] bg-[var(--surface-subtle)] shrink-0" style={{ height: 520 }}>
           <div className="flex-none border-b border-[var(--border-subtle)] px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">
             筹码
           </div>
