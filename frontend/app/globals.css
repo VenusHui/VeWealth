@@ -22,7 +22,7 @@
   --text: #334155;
   --text-strong: #0f172a;
   --text-muted: #52607a;
-  --text-dim: #8b95a8;
+  --text-dim: #76839a;
 
   /* 品牌（teal） */
   --brand: #0f766e;
@@ -33,8 +33,13 @@
   /* A股语义色：红涨绿跌 */
   --up: #d92d2d;
   --up-soft: #fdf2f2;
+  --up-border: rgba(217, 45, 45, 0.14);
   --down: #0f9d58;
   --down-soft: #eef8f2;
+
+  /* 中性 / 警示状态 */
+  --warn-bg: #fff8ec;
+  --warn-border: rgba(180, 83, 9, 0.14);
 
   /* 圆角 */
   --radius-panel: 18px;
@@ -116,7 +121,7 @@ main {
 
 .app-page-title {
   font-size: clamp(1.75rem, 3vw, 2.5rem);
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--text-strong);
 }
@@ -141,7 +146,7 @@ main {
 
 .ve-page-title {
   font-size: clamp(1.75rem, 3.4vw, 2.5rem);
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--text-strong);
   line-height: 1.15;
@@ -197,12 +202,12 @@ main {
 
 .ve-metric-card--positive {
   background: var(--up-soft);
-  border-color: rgba(217, 45, 45, 0.14);
+  border-color: var(--up-border);
 }
 
 .ve-metric-card--warning {
-  background: #fff8ec;
-  border-color: rgba(180, 83, 9, 0.14);
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
 }
 
 .ve-metric-icon {
@@ -294,7 +299,7 @@ main {
   margin-bottom: 0.45rem;
   color: var(--text-strong);
   font-size: 0.85rem;
-  font-weight: 550;
+  font-weight: 500;
 }
 
 /* ---------- 按钮 / Tab ---------- */
@@ -344,7 +349,7 @@ main {
   background: #fff;
   color: var(--text-strong);
   font-size: 0.875rem;
-  font-weight: 550;
+  font-weight: 500;
 }
 
 .ve-button-secondary:hover {
@@ -364,7 +369,7 @@ main {
 .ve-tab-button[data-active='true'] {
   background: var(--brand-soft);
   color: var(--brand-strong);
-  font-weight: 550;
+  font-weight: 500;
 }
 
 /* ---------- Ant Design 视觉统一 ---------- */

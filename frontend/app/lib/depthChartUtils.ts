@@ -2,9 +2,11 @@
  * Data transformation helpers for lightweight-charts depth chart.
  */
 
-// A-share color convention: red = up, green = down
-export const UP_COLOR = '#dc2626'
-export const DOWN_COLOR = '#16a34a'
+// A-share color convention: red = up, green = down.
+// These hex values mirror the CSS tokens `--up` / `--down` (see globals.css) so
+// canvas-drawn candle colors stay in sync with the tokenized UI colors.
+export const UP_COLOR = '#d92d2d'
+export const DOWN_COLOR = '#0f9d58'
 export const UP_BORDER = '#b91c1c'
 export const DOWN_BORDER = '#15803d'
 

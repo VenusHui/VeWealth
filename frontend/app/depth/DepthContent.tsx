@@ -682,9 +682,9 @@ export default function DepthContent() {
                 <div>
                   <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[var(--text-dim)]">涨停 / 跌停</div>
                   <div className="text-sm">
-                    <span className="font-medium text-red-500">{tencentQuote.limit_up.toFixed(2)}</span>
+                    <span className="font-medium text-[var(--up)]">{tencentQuote.limit_up.toFixed(2)}</span>
                     {' / '}
-                    <span className="font-medium text-green-500">{tencentQuote.limit_down.toFixed(2)}</span>
+                    <span className="font-medium text-[var(--down)]">{tencentQuote.limit_down.toFixed(2)}</span>
                   </div>
                 </div>
                 <div>
