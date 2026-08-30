@@ -127,11 +127,11 @@ export function CompactStatCard({
 }) {
   const valueColor =
     tone === 'brand' ? 'text-[var(--brand)]' :
-    tone === 'positive' ? 'text-red-500' :
-    tone === 'negative' ? 'text-green-500' :
+    tone === 'positive' ? 'text-[var(--up)]' :
+    tone === 'negative' ? 'text-[var(--down)]' :
     'text-[var(--text-strong)]'
   return (
-    <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--panel)] px-3 py-2.5 text-center">
+    <div className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] px-3 py-2.5 text-center">
       <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">{label}</div>
       <div className={`mt-0.5 text-lg font-semibold tabular-nums ${valueColor}`}>{value}</div>
     </div>

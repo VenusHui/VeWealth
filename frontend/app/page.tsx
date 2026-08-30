@@ -173,7 +173,7 @@ export default function HomePage() {
                 {INDEX_CODES.map((code) => {
                   const q = indices[code]
                   return (
-                    <div key={code} className="rounded-2xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] p-4">
+                    <div key={code} className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] p-4">
                       <div className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--text-dim)]">
                         {INDEX_LABELS[code] || code}
                       </div>
@@ -214,7 +214,7 @@ export default function HomePage() {
                   <Link
                     key={item.id}
                     href={`/depth?code=${item.stock_code}`}
-                    className="flex items-center justify-between rounded-xl px-3 py-2.5 hover:bg-[rgba(240,253,250,0.5)] transition-colors"
+                    className="flex items-center justify-between rounded-[var(--radius-control)] px-3 py-2.5 hover:bg-[var(--brand-soft)] transition-colors"
                   >
                     <div className="min-w-0">
                       <span className="font-medium text-[var(--text-strong)]">{item.stock_name || item.stock_code}</span>
@@ -275,7 +275,7 @@ export default function HomePage() {
                   <Link
                     key={alert.id}
                     href={`/depth?code=${alert.stock_code}`}
-                    className="block rounded-xl border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] px-3 py-2.5 hover:bg-[rgba(254,242,242,0.5)] transition-colors"
+                    className="block rounded-[var(--radius-control)] border border-[var(--border-subtle)] bg-[var(--panel)] px-3 py-2.5 hover:bg-[var(--up-soft)] transition-colors"
                   >
                     <div className="flex items-center justify-between">
                       <div>

@@ -45,20 +45,20 @@ export default function Navbar() {
   }
 
   return (
-    <header className="sticky top-0 z-50 border-b border-[var(--border-subtle)] bg-[rgba(248,250,249,0.82)] backdrop-blur-xl">
+    <header className="sticky top-0 z-50 border-b border-[var(--border-subtle)] bg-white/85 backdrop-blur-xl">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-3 py-3 md:px-6">
         <Link href="/" className="flex min-w-0 items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[var(--brand-line)] bg-[rgba(255,255,255,0.88)] text-lg shadow-sm">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--brand-line)] bg-[var(--brand-soft)] text-base text-[var(--brand-strong)]">
             ⌁
           </div>
           <div className="min-w-0">
-            <div className="truncate text-sm font-semibold uppercase tracking-[0.24em] text-[var(--brand-strong)]">VeWealth</div>
+            <div className="truncate text-sm font-semibold tracking-[0.06em] text-[var(--brand-strong)]">VeWealth</div>
             <div className="truncate text-xs text-[var(--text-dim)]">A 股分析 / 监控 / 回测工作台</div>
           </div>
         </Link>
 
         <nav aria-label="主导航" className="hidden flex-1 justify-center md:flex">
-          <div className="flex items-center gap-1 rounded-full border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.7)] p-1.5 shadow-sm">
+          <div className="flex items-center gap-1 rounded-[var(--radius-control)] border border-[var(--border-subtle)] bg-[var(--surface-subtle)] p-1">
             {navLinks.map((link) => {
               if (link.requireAuth && !isLoggedIn) return null
               const active = pathname === link.href || pathname.startsWith(`${link.href}/`)
@@ -77,7 +77,7 @@ export default function Navbar() {
         </nav>
 
         <div className="flex items-center gap-2 md:gap-3">
-          <div className="hidden rounded-full border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.72)] px-3 py-2 text-sm text-[var(--text-muted)] md:block">
+          <div className="hidden rounded-[var(--radius-control)] border border-[var(--border-subtle)] bg-[var(--surface-subtle)] px-3 py-2 text-sm text-[var(--text-muted)] md:block">
             {isLoggedIn ? `交易席位 · ${username}` : '访客模式'}
           </div>
           {isLoggedIn ? (

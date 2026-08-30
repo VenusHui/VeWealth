@@ -475,7 +475,7 @@ export default function DepthChart({
   )
 
   return (
-    <div className="flex gap-0 rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.78)] overflow-hidden" style={{ height: 520 }}>
+    <div className="flex gap-0 rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] overflow-hidden" style={{ height: 520 }}>
       {/* Candlestick chart + Volume Profile overlay */}
       <div className="relative flex-1 min-w-0" style={{ height: 520 }}>
         <div ref={chartContainerRef} className="absolute inset-0" />
@@ -516,8 +516,8 @@ export default function DepthChart({
             {/* POC overlay marker */}
             {pocYPos >= 0 && (
               <div
-                className="absolute left-0 right-0 border-t-2 border-dashed border-red-400/60"
-                style={{ bottom: `${pocYPos}%` }}
+                className="absolute left-0 right-0 border-t-2 border-dashed"
+                style={{ bottom: `${pocYPos}%`, borderColor: 'var(--up)', opacity: 0.6 }}
               />
             )}
 
@@ -575,8 +575,8 @@ export default function DepthChart({
                         className="absolute left-0 right-0 pointer-events-none flex items-center gap-1"
                         style={{ bottom: `${y}%` }}
                       >
-                        <div className="flex-1 border-t border-dashed" style={{ borderColor: '#dc2626', opacity: 0.5 }} />
-                        <span className="text-[8px] text-red-600 font-medium whitespace-nowrap pr-1">买入区</span>
+                        <div className="flex-1 border-t border-dashed" style={{ borderColor: 'var(--up)', opacity: 0.5 }} />
+                        <span className="text-[8px] text-[var(--up)] font-medium whitespace-nowrap pr-1">买入区</span>
                       </div>
                     )
                   })()}
@@ -588,8 +588,8 @@ export default function DepthChart({
                         className="absolute left-0 right-0 pointer-events-none flex items-center gap-1"
                         style={{ bottom: `${y}%` }}
                       >
-                        <div className="flex-1 border-t border-dashed" style={{ borderColor: '#16a34a', opacity: 0.5 }} />
-                        <span className="text-[8px] text-green-600 font-medium whitespace-nowrap pr-1">卖出区</span>
+                        <div className="flex-1 border-t border-dashed" style={{ borderColor: 'var(--down)', opacity: 0.5 }} />
+                        <span className="text-[8px] text-[var(--down)] font-medium whitespace-nowrap pr-1">卖出区</span>
                       </div>
                     )
                   })()}
@@ -599,8 +599,8 @@ export default function DepthChart({
                     <div className="absolute top-2 right-2 z-30 pointer-events-none">
                       <span className={`
                         text-[10px] font-bold px-1.5 py-0.5 rounded
-                        ${gmmSignal.signal === 'buy' ? 'bg-red-100 text-red-700' : ''}
-                        ${gmmSignal.signal === 'sell' ? 'bg-green-100 text-green-700' : ''}
+                        ${gmmSignal.signal === 'buy' ? 'bg-[var(--up-soft)] text-[var(--up)]' : ''}
+                        ${gmmSignal.signal === 'sell' ? 'bg-[var(--down-soft)] text-[var(--down)]' : ''}
                         ${gmmSignal.signal === 'neutral' ? 'bg-slate-100 text-slate-600' : ''}
                       `}>
                         密度 {(gmmSignal.density * 100).toFixed(0)}%
@@ -618,7 +618,7 @@ export default function DepthChart({
 
       {/* CYQ chip distribution panel (right side) — shown when CYQ toggle is ON */}
       {showCYQ && cyqInfo && displayPriceMin > 0 && (
-        <div className="relative flex w-32 flex-col border-l border-[var(--border-subtle)] bg-[rgba(248,250,252,0.7)] shrink-0" style={{ height: 520 }}>
+        <div className="relative flex w-32 flex-col border-l border-[var(--border-subtle)] bg-[var(--surface-subtle)] shrink-0" style={{ height: 520 }}>
           <div className="flex-none border-b border-[var(--border-subtle)] px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">
             筹码
           </div>
@@ -673,7 +673,7 @@ export default function DepthChart({
           <div className="flex-none border-t border-[var(--border-subtle)] px-1.5 py-1.5 space-y-0.5">
             <div className="flex justify-between text-[9px]">
               <span className="text-[var(--text-dim)]">获利</span>
-              <span className={cyqInfo.profit_ratio >= 0 ? 'text-red-600' : 'text-green-600'}>
+              <span className={cyqInfo.profit_ratio >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]'}>
                 {(cyqInfo.profit_ratio * 100).toFixed(1)}%
               </span>
             </div>

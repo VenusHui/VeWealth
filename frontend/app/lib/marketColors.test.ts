@@ -9,12 +9,12 @@ import {
 
 describe('marketClassByValue (A股: 红涨绿跌)', () => {
   it('returns red for positive values', () => {
-    expect(marketClassByValue(0.01)).toBe('text-red-600')
-    expect(marketClassByValue('2.5')).toBe('text-red-600')
+    expect(marketClassByValue(0.01)).toBe('text-[var(--up)]')
+    expect(marketClassByValue('2.5')).toBe('text-[var(--up)]')
   })
 
   it('returns green for negative values', () => {
-    expect(marketClassByValue(-0.01)).toBe('text-green-600')
+    expect(marketClassByValue(-0.01)).toBe('text-[var(--down)]')
   })
 
   it('returns gray for zero and non-numeric values', () => {
@@ -60,8 +60,8 @@ describe('formatPct', () => {
 
 describe('marketClassByDrawdown', () => {
   it('renders drawdown as green (A股 回撤为绿)', () => {
-    expect(marketClassByDrawdown(-0.1)).toBe('text-green-600')
-    expect(marketClassByDrawdown(0.1)).toBe('text-green-600')
+    expect(marketClassByDrawdown(-0.1)).toBe('text-[var(--down)]')
+    expect(marketClassByDrawdown(0.1)).toBe('text-[var(--down)]')
   })
 
   it('returns gray for zero and non-numeric input', () => {

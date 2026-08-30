@@ -32,7 +32,7 @@ export default function DepthToolbar({
   onShowCYQToggle,
 }: DepthToolbarProps) {
   return (
-    <div className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.72)] px-4 py-3">
+    <div className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--surface-subtle)] px-4 py-3">
       <div className="space-y-3">
         {/* Period selector */}
         <div>

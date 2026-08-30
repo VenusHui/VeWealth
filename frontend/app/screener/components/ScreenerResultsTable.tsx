@@ -254,7 +254,7 @@ export function ScreenerResultsTable({
             {results.map((item) => (
               <div
                 key={item.symbol}
-                className="rounded-[24px] border border-[var(--border-subtle)] bg-[rgba(255,255,255,0.75)] p-4"
+                className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] p-4"
               >
                 <div className="flex items-center justify-between gap-3">
                   <div>

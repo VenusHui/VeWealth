@@ -1,8 +1,8 @@
 export function marketClassByValue(value: unknown): string {
   const num = Number(value)
   if (!Number.isFinite(num)) return 'text-gray-500'
-  if (num > 0) return 'text-red-600' // A股：涨红
-  if (num < 0) return 'text-green-600' // A股：跌绿
+  if (num > 0) return 'text-[var(--up)]' // A股：涨红
+  if (num < 0) return 'text-[var(--down)]' // A股：跌绿
   return 'text-gray-500'
 }
 
@@ -23,7 +23,7 @@ export function marketClassByDrawdown(value: unknown): string {
   const num = Number(value)
   if (!Number.isFinite(num) || num === 0) return 'text-gray-500'
   // 回撤按A股红涨绿跌语义展示：回撤(亏损)为绿色
-  return 'text-green-600'
+  return 'text-[var(--down)]'
 }
 
 export function formatDrawdownPct(value: unknown, digits = 2): string {

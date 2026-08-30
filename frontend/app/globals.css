@@ -2,20 +2,53 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * VeWealth 数据终端 · 设计令牌
+ * 主题：冷静、统一、信息优先的研发终端风。
+ * 相比旧版：去掉多重渐变/网格噪点背景、超大圆角与胶囊化、
+ * 衬线混排与过多的卡片渐变 tone，收敛为单一中性底 + 单一品牌色。
+ * 变量名保持兼容（不破坏现有组件引用）。
+ */
+
 :root {
-  --bg: #f4f6f3;
-  --panel: rgba(255, 255, 255, 0.86);
+  /* 背景 / 表面 */
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --surface-subtle: #f9fafb;
   --border: rgba(15, 23, 42, 0.12);
   --border-subtle: rgba(15, 23, 42, 0.07);
+
+  /* 文字 */
   --text: #334155;
   --text-strong: #0f172a;
-  --text-muted: #475569;
-  --text-dim: #64748b;
+  --text-muted: #52607a;
+  --text-dim: #76839a;
+
+  /* 品牌（teal） */
   --brand: #0f766e;
-  --brand-line: rgba(15, 118, 110, 0.18);
-  --brand-strong: #115e59;
-  --shadow: 0 20px 48px -28px rgba(15, 23, 42, 0.25);
-  --shadow-soft: 0 10px 30px -18px rgba(15, 23, 42, 0.2);
+  --brand-strong: #0d5c55;
+  --brand-soft: #eef7f5;
+  --brand-line: rgba(15, 118, 110, 0.22);
+
+  /* A股语义色：红涨绿跌 */
+  --up: #d92d2d;
+  --up-soft: #fdf2f2;
+  --up-border: rgba(217, 45, 45, 0.14);
+  --down: #0f9d58;
+  --down-soft: #eef8f2;
+
+  /* 中性 / 警示状态 */
+  --warn-bg: #fff8ec;
+  --warn-border: rgba(180, 83, 9, 0.14);
+
+  /* 圆角 */
+  --radius-panel: 18px;
+  --radius-card: 14px;
+  --radius-control: 10px;
+
+  /* 阴影：单层、克制 */
+  --shadow: 0 10px 30px -18px rgba(15, 23, 42, 0.22);
+  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 20px -18px rgba(15, 23, 42, 0.14);
 }
 
 html {
@@ -26,32 +59,15 @@ body {
   min-height: 100vh;
   overflow-x: hidden;
   color: var(--text);
-  font-family: 'SF Pro Text', 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', system-ui, sans-serif;
+  font-family: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
   line-height: 1.6;
+  font-feature-settings: 'tnum';
   background:
-    radial-gradient(circle at top left, rgba(15, 118, 110, 0.12), transparent 32%),
-    radial-gradient(circle at top right, rgba(59, 130, 246, 0.1), transparent 30%),
-    linear-gradient(180deg, #fbfcfa 0%, var(--bg) 46%, #eff4f2 100%);
-}
-
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background-image:
-    linear-gradient(rgba(15, 23, 42, 0.018) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(15, 23, 42, 0.018) 1px, transparent 1px);
-  background-size: 28px 28px;
-  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.5), transparent 92%);
-}
-
-* {
-  border-color: var(--border);
+    linear-gradient(180deg, #fbfcfd 0%, var(--bg) 46%, #f1f3f5 100%);
 }
 
 ::selection {
-  background: rgba(15, 118, 110, 0.18);
+  background: var(--brand-line);
 }
 
 .skip-link {
@@ -72,12 +88,18 @@ body::before {
 }
 
 main {
-  min-height: calc(100vh - 4.75rem);
+  min-height: calc(100vh - 4.5rem);
 }
+
+* {
+  border-color: var(--border);
+}
+
+/* ---------- 页面骨架 ---------- */
 
 .app-page-shell {
   position: relative;
-  padding: 1rem 0.75rem;
+  padding: 1.25rem 1rem;
 }
 
 .app-page-container,
@@ -98,9 +120,9 @@ main {
 }
 
 .app-page-title {
-  font-size: clamp(2.25rem, 4vw, 3rem);
+  font-size: clamp(1.75rem, 3vw, 2.5rem);
   font-weight: 600;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.02em;
   color: var(--text-strong);
 }
 
@@ -110,29 +132,30 @@ main {
   gap: 1.25rem;
 }
 
+/* ---------- 页面 Hero ---------- */
+
 .ve-page-hero {
   position: relative;
   overflow: hidden;
-  border-radius: 32px;
+  border-radius: var(--radius-panel);
   border: 1px solid var(--border-subtle);
-  padding: 1.5rem 1.25rem;
-  background: linear-gradient(135deg, rgba(255,255,255,0.94), rgba(247,251,250,0.88));
+  padding: 1.75rem 1.5rem;
+  background: var(--panel);
   box-shadow: var(--shadow-soft);
 }
 
 .ve-page-title {
-  font-size: clamp(2rem, 4vw, 4rem);
+  font-size: clamp(1.75rem, 3.4vw, 2.5rem);
   font-weight: 600;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.02em;
   color: var(--text-strong);
-  font-family: 'Iowan Old Style', 'Palatino Linotype', 'Songti SC', serif;
-  line-height: 1.05;
+  line-height: 1.15;
 }
 
 .ve-page-description {
   max-width: 48rem;
   font-size: 0.95rem;
-  line-height: 1.9;
+  line-height: 1.8;
   color: var(--text-muted);
 }
 
@@ -141,21 +164,22 @@ main {
   align-items: center;
   border-radius: 999px;
   border: 1px solid var(--brand-line);
-  padding: 0.25rem 0.75rem;
-  background: rgba(255, 255, 255, 0.7);
+  padding: 0.2rem 0.7rem;
+  background: var(--brand-soft);
   color: var(--brand-strong);
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
+/* ---------- 面板 / 卡片 ---------- */
+
 .ve-panel {
-  border-radius: 28px;
+  border-radius: var(--radius-panel);
   border: 1px solid var(--border-subtle);
   padding: 1.25rem;
   background: var(--panel);
-  backdrop-filter: blur(16px);
   box-shadow: var(--shadow-soft);
 }
 
@@ -164,48 +188,48 @@ main {
   height: 100%;
   flex-direction: column;
   justify-content: space-between;
-  gap: 1.25rem;
-  border-radius: 24px;
+  gap: 1rem;
+  border-radius: var(--radius-card);
   border: 1px solid var(--border-subtle);
-  padding: 1.25rem;
-  background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(249,251,250,0.88));
+  padding: 1rem 1.125rem;
+  background: var(--panel);
 }
 
 .ve-metric-card--brand {
-  background: linear-gradient(180deg, rgba(236, 253, 245, 0.98), rgba(240, 253, 250, 0.92));
-  border-color: rgba(15, 118, 110, 0.14);
+  background: var(--brand-soft);
+  border-color: var(--brand-line);
 }
 
 .ve-metric-card--positive {
-  background: linear-gradient(180deg, rgba(254, 242, 242, 0.98), rgba(255, 247, 237, 0.92));
-  border-color: rgba(220, 38, 38, 0.12);
+  background: var(--up-soft);
+  border-color: var(--up-border);
 }
 
 .ve-metric-card--warning {
-  background: linear-gradient(180deg, rgba(255, 251, 235, 0.98), rgba(255, 247, 237, 0.92));
-  border-color: rgba(180, 83, 9, 0.12);
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
 }
 
 .ve-metric-icon {
   display: flex;
-  height: 2.75rem;
-  width: 2.75rem;
+  height: 2.5rem;
+  width: 2.5rem;
   align-items: center;
   justify-content: center;
-  border-radius: 1rem;
+  border-radius: 0.75rem;
   border: 1px solid var(--border-subtle);
-  background: rgba(255,255,255,0.7);
-  font-size: 1.125rem;
+  background: rgba(255, 255, 255, 0.8);
+  font-size: 1rem;
 }
 
 .ve-info-pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
   border-radius: 999px;
   border: 1px solid var(--border-subtle);
-  padding: 0.25rem 0.75rem;
-  background: rgba(255, 255, 255, 0.72);
+  padding: 0.2rem 0.65rem;
+  background: var(--surface-subtle);
   color: var(--text-muted);
   font-size: 0.75rem;
   font-weight: 500;
@@ -213,15 +237,15 @@ main {
 
 .ve-empty-state {
   display: flex;
-  min-height: 240px;
+  min-height: 220px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 1rem;
-  border-radius: 24px;
+  border-radius: var(--radius-card);
   border: 1px dashed var(--border);
   padding: 2.5rem 1.5rem;
-  background: rgba(255,255,255,0.4);
+  background: var(--surface-subtle);
   text-align: center;
 }
 
@@ -231,12 +255,12 @@ main {
   flex-direction: column;
   justify-content: space-between;
   gap: 1.25rem;
-  border-radius: 28px;
+  border-radius: var(--radius-panel);
   border: 1px solid var(--border-subtle);
   padding: 1.5rem;
-  background: linear-gradient(180deg, rgba(255,255,255,0.94), rgba(247,250,249,0.9));
+  background: var(--panel);
   box-shadow: var(--shadow-soft);
-  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
 .ve-quick-link-card:hover {
@@ -245,19 +269,20 @@ main {
   box-shadow: var(--shadow);
 }
 
+/* ---------- 表单控件 ---------- */
+
 .ve-input,
 .ve-textarea,
 .ve-select,
 .ve-date-input {
   width: 100%;
-  border-radius: 16px;
+  border-radius: var(--radius-control);
   border: 1px solid var(--border);
-  padding: 0.8rem 1rem;
-  background: rgba(255,255,255,0.92);
+  padding: 0.7rem 0.9rem;
+  background: #fff;
   color: var(--text-strong);
   font-size: 0.875rem;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.55);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
 .ve-input:focus,
@@ -265,46 +290,48 @@ main {
 .ve-select:focus,
 .ve-date-input:focus {
   outline: none;
-  border-color: rgba(15, 118, 110, 0.4);
-  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12);
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-line);
 }
 
 .ve-field-label {
   display: block;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.45rem;
   color: var(--text-strong);
-  font-size: 0.875rem;
+  font-size: 0.85rem;
   font-weight: 500;
 }
+
+/* ---------- 按钮 / Tab ---------- */
 
 .ve-button-primary,
 .ve-button-secondary,
 .ve-tab-button {
-  transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+  transition: background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;
 }
 
 .ve-button-primary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 16px;
-  padding: 0.75rem 1rem;
-  background: linear-gradient(135deg, #0f766e, #0f766e 40%, #155e75);
+  border-radius: var(--radius-control);
+  padding: 0.7rem 1rem;
+  background: var(--brand);
   color: white;
   font-size: 0.875rem;
   font-weight: 600;
-  box-shadow: 0 10px 28px -18px rgba(15, 118, 110, 0.8);
+  box-shadow: 0 6px 16px -10px rgba(15, 118, 110, 0.7);
 }
 
 .ve-button-primary:focus,
 .ve-button-secondary:focus,
 .ve-tab-button:focus {
   outline: none;
-  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12);
+  box-shadow: 0 0 0 3px var(--brand-line);
 }
 
 .ve-button-primary:hover {
-  opacity: 0.96;
+  background: var(--brand-strong);
 }
 
 .ve-button-primary:disabled {
@@ -316,44 +343,46 @@ main {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 16px;
+  border-radius: var(--radius-control);
   border: 1px solid var(--border);
-  padding: 0.75rem 1rem;
-  background: rgba(255,255,255,0.66);
+  padding: 0.7rem 1rem;
+  background: #fff;
   color: var(--text-strong);
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ve-button-secondary:hover {
-  background: white;
+  background: var(--surface-subtle);
 }
 
 .ve-tab-button {
   display: inline-flex;
   align-items: center;
-  border-radius: 16px;
-  padding: 0.625rem 1rem;
+  border-radius: var(--radius-control);
+  padding: 0.5rem 0.9rem;
   color: var(--text-muted);
   font-size: 0.875rem;
   font-weight: 500;
 }
 
 .ve-tab-button[data-active='true'] {
-  background: linear-gradient(135deg, rgba(15, 118, 110, 0.14), rgba(14, 116, 144, 0.1));
-  color: var(--text-strong);
-  box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.12);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-weight: 500;
 }
+
+/* ---------- Ant Design 视觉统一 ---------- */
 
 :where(.ant-card) {
   border: 1px solid var(--border-subtle) !important;
-  border-radius: 28px !important;
+  border-radius: var(--radius-panel) !important;
   background: var(--panel) !important;
   box-shadow: var(--shadow-soft) !important;
 }
 
 :where(.ant-card .ant-card-head) {
-  min-height: 64px;
+  min-height: 56px;
   border-bottom-color: var(--border-subtle) !important;
 }
 
@@ -363,7 +392,7 @@ main {
 }
 
 :where(.ant-card .ant-card-body) {
-  padding: 24px !important;
+  padding: 20px !important;
 }
 
 :where(.ant-input),
@@ -372,7 +401,7 @@ main {
 :where(.ant-input-number),
 :where(.ant-select-selector),
 :where(.ant-segmented) {
-  border-radius: 16px !important;
+  border-radius: var(--radius-control) !important;
 }
 
 :where(.ant-input),
@@ -381,7 +410,7 @@ main {
 :where(.ant-input-number),
 :where(.ant-select-selector) {
   border-color: var(--border) !important;
-  background: rgba(255,255,255,0.92) !important;
+  background: #fff !important;
   box-shadow: none !important;
 }
 
@@ -390,7 +419,7 @@ main {
 :where(.ant-picker:hover),
 :where(.ant-input-number:hover),
 :where(.ant-select-selector:hover) {
-  border-color: rgba(15, 118, 110, 0.28) !important;
+  border-color: rgba(15, 118, 110, 0.4) !important;
 }
 
 :where(.ant-input:focus),
@@ -398,49 +427,52 @@ main {
 :where(.ant-picker-focused),
 :where(.ant-input-number-focused),
 :where(.ant-select-focused .ant-select-selector) {
-  border-color: rgba(15, 118, 110, 0.4) !important;
-  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12) !important;
+  border-color: var(--brand) !important;
+  box-shadow: 0 0 0 3px var(--brand-line) !important;
 }
 
 :where(.ant-btn) {
-  border-radius: 16px !important;
-  height: 40px;
+  border-radius: var(--radius-control) !important;
+  height: 38px;
   font-weight: 600;
 }
 
 :where(.ant-btn-primary) {
   border-color: transparent !important;
-  background: linear-gradient(135deg, #0f766e, #155e75) !important;
-  box-shadow: 0 10px 24px -18px rgba(15, 118, 110, 0.8) !important;
+  background: var(--brand) !important;
+  box-shadow: 0 6px 16px -10px rgba(15, 118, 110, 0.7) !important;
+}
+
+:where(.ant-btn-primary:hover) {
+  background: var(--brand-strong) !important;
 }
 
 :where(.ant-btn-default) {
   border-color: var(--border) !important;
-  background: rgba(255,255,255,0.8) !important;
+  background: #fff !important;
 }
 
 :where(.ant-alert) {
-  border-radius: 20px !important;
+  border-radius: var(--radius-card) !important;
   border: 1px solid var(--border-subtle) !important;
 }
 
 :where(.ant-tag) {
   border-radius: 999px !important;
-  padding-inline: 10px !important;
+  padding-inline: 8px !important;
 }
 
 :where(.ant-table-wrapper .ant-table) {
-  border-radius: 22px !important;
-  background: rgba(255,255,255,0.7) !important;
+  border-radius: var(--radius-card) !important;
+  background: var(--panel) !important;
 }
 
 :where(.ant-table-wrapper .ant-table-thead > tr > th) {
-  background: rgba(248, 250, 252, 0.92) !important;
+  background: var(--surface-subtle) !important;
   color: var(--text-muted) !important;
   font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.03em;
 }
 
 :where(.ant-table-wrapper .ant-table-thead > tr > th),
@@ -449,22 +481,22 @@ main {
 }
 
 :where(.ant-table-wrapper .ant-table-tbody > tr.ant-table-row:hover > td) {
-  background: rgba(240, 253, 250, 0.65) !important;
+  background: var(--brand-soft) !important;
 }
 
 :where(.ant-pagination .ant-pagination-item),
 :where(.ant-pagination .ant-pagination-prev),
 :where(.ant-pagination .ant-pagination-next) {
-  border-radius: 12px !important;
+  border-radius: var(--radius-control) !important;
 }
 
 @media (min-width: 768px) {
   .app-page-shell {
-    padding: 1.5rem;
+    padding: 1.5rem 1.75rem;
   }
 
   .ve-page-hero,
   .ve-panel {
-    padding: 1.75rem 2rem;
+    padding: 1.5rem 1.75rem;
   }
 }
