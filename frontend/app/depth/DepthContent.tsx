@@ -472,7 +472,7 @@ export default function DepthContent() {
                 <label className="ve-field-label">
                   {stockName && stockCode ? `${stockName}（${stockCode}）` : '搜索股票'}
                 </label>
-                <div className="flex gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
                     id="depth-search-input"
                     value={searchKeyword}
@@ -481,24 +481,26 @@ export default function DepthContent() {
                     placeholder={stockCode || '输入代码或名称，如：贵州茅台 / 600519'}
                     className="flex-1"
                   />
-                  <Button onClick={handleUnifiedInput} loading={searchLoading || loading}>
-                    查询
-                  </Button>
-                  {watchlistStocks.length > 0 && (
-                    <Select
-                      className="w-28"
-                      value={undefined}
-                      placeholder="自选股"
-                      onChange={(code) => {
-                        const selected = watchlistStocks.find((s) => s.code === code)
-                        if (selected) handleQuickSwitch(selected.code, selected.name)
-                      }}
-                      options={watchlistStocks.map((s) => ({
-                        value: s.code,
-                        label: s.name || s.code,
-                      }))}
-                    />
-                  )}
+                  <div className="flex gap-2">
+                    <Button onClick={handleUnifiedInput} loading={searchLoading || loading}>
+                      查询
+                    </Button>
+                    {watchlistStocks.length > 0 && (
+                      <Select
+                        className="w-28"
+                        value={undefined}
+                        placeholder="自选股"
+                        onChange={(code) => {
+                          const selected = watchlistStocks.find((s) => s.code === code)
+                          if (selected) handleQuickSwitch(selected.code, selected.name)
+                        }}
+                        options={watchlistStocks.map((s) => ({
+                          value: s.code,
+                          label: s.name || s.code,
+                        }))}
+                      />
+                    )}
+                  </div>
                 </div>
 
                 {recentSymbols.length > 0 && (
