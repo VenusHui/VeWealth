@@ -475,9 +475,9 @@ export default function DepthChart({
   )
 
   return (
-    <div className="flex gap-0 rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] overflow-hidden" style={{ height: 520 }}>
+    <div className="flex gap-0 rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] overflow-hidden h-[min(520px,60vh)]">
       {/* Candlestick chart + Volume Profile overlay */}
-      <div className="relative flex-1 min-w-0" style={{ height: 520 }}>
+      <div className="relative flex-1 min-w-0 h-[min(520px,60vh)]">
         <div ref={chartContainerRef} className="absolute inset-0" />
 
         {/* Volume Profile overlay — semi-transparent bars extending from right price axis */}
@@ -493,7 +493,7 @@ export default function DepthChart({
                   return (
                     <div key={i} className="absolute top-0" style={{ right: `${w}%` }}>
                       <div className="h-2 border-l border-blue-400/30" />
-                      <span className="absolute top-2 -translate-x-1/2 text-[8px] text-blue-400/60 font-mono whitespace-nowrap">
+                      <span className="absolute top-2 -translate-x-1/2 text-[10px] text-blue-400/60 font-mono whitespace-nowrap">
                         {i === 0 ? '0' : label}
                       </span>
                     </div>
@@ -558,7 +558,7 @@ export default function DepthChart({
                     return (
                       <span
                         key={`gl-${i}`}
-                        className="absolute z-20 pointer-events-none text-[9px] font-bold text-purple-700 bg-white/80 px-1 rounded whitespace-nowrap"
+                        className="absolute z-20 pointer-events-none text-[10px] font-bold text-purple-700 bg-white/80 px-1 rounded whitespace-nowrap"
                         style={{ bottom: `${y}%`, right: `${w}%` }}
                       >
                         ¥{pk.price.toFixed(2)}
@@ -576,7 +576,7 @@ export default function DepthChart({
                         style={{ bottom: `${y}%` }}
                       >
                         <div className="flex-1 border-t border-dashed" style={{ borderColor: 'var(--up)', opacity: 0.5 }} />
-                        <span className="text-[8px] text-[var(--up)] font-medium whitespace-nowrap pr-1">买入区</span>
+                        <span className="text-[10px] text-[var(--up)] font-medium whitespace-nowrap pr-1">买入区</span>
                       </div>
                     )
                   })()}
@@ -589,7 +589,7 @@ export default function DepthChart({
                         style={{ bottom: `${y}%` }}
                       >
                         <div className="flex-1 border-t border-dashed" style={{ borderColor: 'var(--down)', opacity: 0.5 }} />
-                        <span className="text-[8px] text-[var(--down)] font-medium whitespace-nowrap pr-1">卖出区</span>
+                        <span className="text-[10px] text-[var(--down)] font-medium whitespace-nowrap pr-1">卖出区</span>
                       </div>
                     )
                   })()}
@@ -618,7 +618,7 @@ export default function DepthChart({
 
       {/* CYQ chip distribution panel (right side) — shown when CYQ toggle is ON */}
       {showCYQ && cyqInfo && displayPriceMin > 0 && (
-        <div className="relative flex w-32 flex-col border-l border-[var(--border-subtle)] bg-[var(--surface-subtle)] shrink-0" style={{ height: 520 }}>
+        <div className="relative flex w-32 flex-col border-l border-[var(--border-subtle)] bg-[var(--surface-subtle)] shrink-0 h-[min(520px,60vh)]">
           <div className="flex-none border-b border-[var(--border-subtle)] px-2 py-1.5 text-center text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-dim)]">
             筹码
           </div>
@@ -634,7 +634,7 @@ export default function DepthChart({
                     top: `${100 - calcYPos(cyqInfo.cost_90_high)}%`,
                   }}
                 >
-                  <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] font-medium text-amber-700">90%</span>
+                  <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[10px] font-medium text-amber-700">90%</span>
                 </div>
               )}
 
@@ -647,7 +647,7 @@ export default function DepthChart({
                     top: `${100 - calcYPos(cyqInfo.cost_70_high)}%`,
                   }}
                 >
-                  <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] font-medium text-cyan-700">70%</span>
+                  <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[10px] font-medium text-cyan-700">70%</span>
                 </div>
               )}
 
@@ -659,7 +659,7 @@ export default function DepthChart({
                     style={{ borderColor: '#38bdf8', bottom: `${calcYPos(cyqInfo.avg_cost)}%` }}
                   />
                   <span
-                    className="absolute right-1 z-10 text-[8px] font-bold"
+                    className="absolute right-1 z-10 text-[10px] font-bold"
                     style={{ color: '#38bdf8', bottom: `${calcYPos(cyqInfo.avg_cost)}%`, transform: 'translateY(-50%)' }}
                   >
                     AVG
@@ -671,17 +671,17 @@ export default function DepthChart({
 
           {/* Info footer */}
           <div className="flex-none border-t border-[var(--border-subtle)] px-1.5 py-1.5 space-y-0.5">
-            <div className="flex justify-between text-[9px]">
+            <div className="flex justify-between text-[10px]">
               <span className="text-[var(--text-dim)]">获利</span>
               <span className={cyqInfo.profit_ratio >= 0 ? 'text-[var(--up)]' : 'text-[var(--down)]'}>
                 {(cyqInfo.profit_ratio * 100).toFixed(1)}%
               </span>
             </div>
-            <div className="flex justify-between text-[9px]">
+            <div className="flex justify-between text-[10px]">
               <span className="text-[var(--text-dim)]">90%集中度</span>
               <span className="text-[var(--text-strong)]">{(cyqInfo.concentration_90 * 100).toFixed(2)}%</span>
             </div>
-            <div className="flex justify-between text-[9px]">
+            <div className="flex justify-between text-[10px]">
               <span className="text-[var(--text-dim)]">70%集中度</span>
               <span className="text-[var(--text-strong)]">{(cyqInfo.concentration_70 * 100).toFixed(2)}%</span>
             </div>

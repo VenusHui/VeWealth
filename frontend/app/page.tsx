@@ -163,13 +163,13 @@ export default function HomePage() {
           {/* Market indices */}
           <SurfaceCard title="市场概览" description="三大指数实时行情">
             {indicesLoading && Object.keys(indices).length === 0 ? (
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {[1, 2, 3].map((i) => (
                   <div key={i} className="animate-pulse rounded-2xl bg-slate-100 h-24" />
                 ))}
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {INDEX_CODES.map((code) => {
                   const q = indices[code]
                   return (
