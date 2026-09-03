@@ -436,9 +436,7 @@ class WarmupTradeStartJointTests(unittest.TestCase):
         buys = [t for t in result.trades if t["side"] == "buy"]
         self.assertEqual(len(buys), 1)
         self.assertEqual(buys[0]["datetime"][:10], "2026-01-07")
-        self.assertTrue(
-            all(t["datetime"][:10] >= "2026-01-07" for t in result.trades)
-        )
+        self.assertTrue(all(t["datetime"][:10] >= "2026-01-07" for t in result.trades))
         # 净值曲线与订单门保持一致：首点即 trade_start，不把 warmup 平段写进曲线
         curve_dates = [p["datetime"][:10] for p in result.equity_curve]
         self.assertEqual(curve_dates[0], "2026-01-07")
