@@ -5,6 +5,7 @@ import {
   formatPct,
   marketClassByDrawdown,
   formatDrawdownPct,
+  formatMultiplier,
 } from './marketColors'
 
 describe('marketClassByValue (A股: 红涨绿跌)', () => {
@@ -85,5 +86,24 @@ describe('formatDrawdownPct', () => {
 
   it('treats null as 0 (Number coercion)', () => {
     expect(formatDrawdownPct(null)).toBe('-0.00%')
+  })
+})
+
+describe('formatMultiplier', () => {
+  it('formats a multiplier ratio as a "x" value, not a percentage', () => {
+    expect(formatMultiplier(1.5)).toBe('1.50x')
+    expect(formatMultiplier(1)).toBe('1.00x')
+    expect(formatMultiplier(0)).toBe('0.00x')
+  })
+
+  it('honors the digits parameter', () => {
+    expect(formatMultiplier(1.5, 0)).toBe('2x')
+    expect(formatMultiplier(1.5, 1)).toBe('1.5x')
+  })
+
+  it('returns "-" for non-numeric input', () => {
+    expect(formatMultiplier('n/a')).toBe('-')
+    expect(formatMultiplier(undefined)).toBe('-')
+    expect(formatMultiplier(NaN)).toBe('-')
   })
 })

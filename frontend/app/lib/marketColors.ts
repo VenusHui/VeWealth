@@ -32,3 +32,10 @@ export function formatDrawdownPct(value: unknown, digits = 2): string {
   const absVal = Math.abs(num)
   return `-${(absVal * 100).toFixed(digits)}%`
 }
+
+// 倍率字段（如盈亏比 profit_loss_ratio）以倍率展示，而非百分比。后端回传为倍率小数，如 1.5 表示 1.5 倍。
+export function formatMultiplier(value: unknown, digits = 2): string {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return '-'
+  return `${num.toFixed(digits)}x`
+}

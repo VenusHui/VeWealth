@@ -25,7 +25,7 @@ import {
 } from 'recharts'
 import { LoadingHint } from './LoadingHint'
 import { BacktestTable } from './BacktestTable'
-import { formatDrawdownPct, formatPct, marketClassByDrawdown, marketClassByValue } from '../../lib/marketColors'
+import { formatDrawdownPct, formatMultiplier, formatPct, marketClassByDrawdown, marketClassByValue } from '../../lib/marketColors'
 import {
   buildComparisonChartData,
   clampIndex,
@@ -59,6 +59,21 @@ const benchmarkOptions = [
   { label: '创业板指', value: '399006.SZ' },
   { label: '沪深300', value: '000300.SH' },
 ]
+
+// 概览指标按后端口径分类渲染：百分比/回撤/倍率/原值。
+// profit_loss_ratio（盈亏比）后端回传倍率（如 1.5），须以 `1.5x` 展示而非百分比；未知字段回退原值。
+type SummaryMetricKind = 'pct' | 'drawdown' | 'multiplier' | 'plain'
+const summaryMetricKindMap: Record<string, SummaryMetricKind> = {
+  total_return: 'pct',
+  annual_return: 'pct',
+  win_rate: 'pct',
+  turnover: 'pct',
+  max_drawdown: 'drawdown',
+  profit_loss_ratio: 'multiplier',
+}
+function summaryMetricKind(key: string): SummaryMetricKind {
+  return summaryMetricKindMap[key] ?? 'plain'
+}
 
 class SnapshotErrorBoundary extends Component<
   { children: ReactNode },
@@ -317,16 +332,25 @@ export function BacktestDetailPanel({
                     .filter(([k]) => !['positions_snapshot', 'final_positions'].includes(k))
                     .slice(0, 8)
                     .map(([k, v]) => {
-                      const isDrawdown = /drawdown/i.test(k)
-                      const isPct = /return|drawdown|rate|ratio/i.test(k)
-                      const pctText = isDrawdown ? formatDrawdownPct(v) : formatPct(v)
-                      const pctClass = isDrawdown ? marketClassByDrawdown(v) : marketClassByValue(v)
+                      const kind = summaryMetricKind(k)
+                      const text =
+                        kind === 'drawdown'
+                          ? formatDrawdownPct(v)
+                          : kind === 'multiplier'
+                            ? formatMultiplier(v)
+                            : kind === 'pct'
+                              ? formatPct(v)
+                              : String(v)
+                      const valueClass =
+                        kind === 'drawdown'
+                          ? marketClassByDrawdown(v)
+                          : kind === 'pct' || kind === 'multiplier'
+                            ? marketClassByValue(v)
+                            : ''
                       return (
                         <Card key={k} size="small">
                           <div className="text-xs text-[var(--text-dim)]">{k}</div>
-                          <div className={`font-semibold ${isPct ? pctClass : ''}`}>
-                            {isPct ? pctText : String(v)}
-                          </div>
+                          <div className={`font-semibold ${valueClass}`}>{text}</div>
                         </Card>
                       )
                     })}
