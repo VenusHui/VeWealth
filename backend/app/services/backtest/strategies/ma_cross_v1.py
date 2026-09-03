@@ -11,7 +11,8 @@ from .contracts import BaseStrategyV2
 class MACrossV1Strategy(BaseStrategy, BaseStrategyV2):
     strategy_id = "ma_cross_v1"
     name = "双均线策略 v1"
-    description = "短均线上穿长均线买入，下穿卖出。仅做多。"
+    description = "短均线上穿长均线产生候选，次日开盘买入并按持有天数退出。仅做多。"
+    min_history_bars = 240
 
     @classmethod
     def param_schema(cls) -> list[dict]:
@@ -33,6 +34,24 @@ class MACrossV1Strategy(BaseStrategy, BaseStrategyV2):
                 "default": 20,
                 "min": 3,
                 "max": 240,
+            },
+            {
+                "key": "hold_days",
+                "label": "持有天数",
+                "type": "int",
+                "required": True,
+                "default": 5,
+                "min": 1,
+                "max": 60,
+            },
+            {
+                "key": "position_size_pct",
+                "label": "单笔仓位占比(0~1)",
+                "type": "float",
+                "required": True,
+                "default": 0.1,
+                "min": 0.01,
+                "max": 1.0,
             },
         ]
 

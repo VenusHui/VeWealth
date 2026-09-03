@@ -1,6 +1,17 @@
 """绩效指标计算"""
 
 import math
+from datetime import datetime
+
+
+def _curve_date(point: dict) -> datetime | None:
+    value = point.get("datetime")
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
 
 
 def calc_summary(
@@ -18,16 +29,22 @@ def calc_summary(
             "total_trades": 0,
         }
 
-    start_value = equity_curve[0]["equity"]
-    end_value = equity_curve[-1]["equity"]
+    dated_curve = sorted(
+        equity_curve,
+        key=lambda point: _curve_date(point) or datetime.min,
+    )
+    start_value = float(initial_cash)
+    end_value = float(dated_curve[-1]["equity"])
     total_return = (end_value - start_value) / start_value if start_value else 0.0
 
     daily_returns = []
-    for i in range(1, len(equity_curve)):
-        prev_val = equity_curve[i - 1]["equity"]
-        curr_val = equity_curve[i]["equity"]
+    previous_value = start_value
+    for point in dated_curve:
+        prev_val = previous_value
+        curr_val = float(point["equity"])
         if prev_val > 0:
             daily_returns.append((curr_val - prev_val) / prev_val)
+        previous_value = curr_val
 
     if daily_returns:
         avg = sum(daily_returns) / len(daily_returns)
@@ -37,14 +54,16 @@ def calc_summary(
     else:
         sharpe = 0.0
 
-    n_periods = max(1, len(equity_curve) - 1)
-    annual_return = (
-        (1 + total_return) ** (252 / n_periods) - 1 if n_periods > 0 else 0.0
-    )
+    first_date = _curve_date(dated_curve[0])
+    last_date = _curve_date(dated_curve[-1])
+    elapsed_days = (last_date - first_date).days if first_date and last_date else 0
+    annual_return = 0.0
+    if elapsed_days > 0 and end_value > 0 and start_value > 0:
+        annual_return = (end_value / start_value) ** (365.2425 / elapsed_days) - 1
 
-    peak = equity_curve[0]["equity"]
+    peak = start_value
     max_drawdown = 0.0
-    for p in equity_curve:
+    for p in dated_curve:
         peak = max(peak, p["equity"])
         if peak > 0:
             drawdown = (peak - p["equity"]) / peak

@@ -1,7 +1,7 @@
 """回测服务"""
 
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 from typing import Any, Callable
 
@@ -15,12 +15,21 @@ from app.models.security_universe import SecurityUniverse
 from app.models.user import User
 from app.schemas.backtest import BacktestRunRequest
 from app.services.backtest.costs import CostModel
-from app.services.backtest.engine import run_for_symbol
+from app.services.backtest.engine import SecurityRule, run_portfolio
 from app.services.backtest.metrics import calc_summary
 from app.services.backtest.policies.base import PolicyContext
 from app.services.backtest.policies.registry import resolve_profile
-from app.services.backtest.registry import get_strategy, list_strategies
+from app.services.backtest.registry import (
+    STRATEGY_REGISTRY,
+    get_strategy,
+    list_strategies,
+)
 from app.services.stock_service import stock_service
+
+#: 在 min_history_bars 之上追加的 warmup 缓冲（覆盖滚动指标首段/重拟合）
+WARMUP_BUFFER_BARS = 30
+#: 交易日约占自然日比例，用于把 bar 数换算成回拉自然日（含节假日冗余）
+_CALENDAR_FACTOR = 1.6
 
 
 class BacktestService:
@@ -297,6 +306,49 @@ class BacktestService:
             },
         }
 
+    def _history_min_bars(self, strategy_id: str) -> int:
+        """返回策略声明的最小历史 bar 数（用于 warmup 回拉）。"""
+        strategy_cls = STRATEGY_REGISTRY.get(strategy_id)
+        if not strategy_cls:
+            return 0
+        value = getattr(strategy_cls, "min_history_bars", 0)
+        return int(value) if isinstance(value, int) else 0
+
+    def _fetch_daily_with_warmup(
+        self, symbol: str, start_date: str, end_date: str, strategy_id: str
+    ):
+        """按策略 min_history_bars + warmup 自动回拉起始日期，保证足量 bar。
+
+        返回 (df, effective_start_date)。df 含 start_date 之前的 warmup bar，
+        供 MA250 / GMM250 等长周期策略计算指标；effective_start_date 供执行层
+        以 trade_start 切片，避免 warmup 污染净值/交易。
+        """
+        min_bars = self._history_min_bars(strategy_id)
+        if min_bars <= 0:
+            df, _, _ = stock_service.get_daily_data(symbol, start_date, end_date)
+            return df, start_date
+
+        warmup_bars = min_bars + WARMUP_BUFFER_BARS
+        cal_days = int(warmup_bars * _CALENDAR_FACTOR)
+        eff_start = (
+            datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=cal_days)
+        ).strftime("%Y-%m-%d")
+
+        run_span_days = max(
+            0,
+            (
+                datetime.strptime(end_date, "%Y-%m-%d")
+                - datetime.strptime(start_date, "%Y-%m-%d")
+            ).days,
+        )
+        run_span_bars = int(run_span_days / 1.4)
+        count = max(500, warmup_bars + run_span_bars + 50)
+
+        df, _, _ = stock_service.get_daily_data(
+            symbol, eff_start, end_date, count=count
+        )
+        return df, eff_start
+
     def run_backtest(
         self,
         request: BacktestRunRequest,
@@ -308,9 +360,9 @@ class BacktestService:
             raise ValueError("start_date 不能晚于 end_date")
 
         if request.mode == "strategy_select":
-            result = self._run_strategy_select_mode(request, progress_callback)
+            result = self._run_strategy_select_mode(request, progress_callback, db)
         else:
-            result = self._run_manual_symbols_mode(request, progress_callback)
+            result = self._run_manual_symbols_mode(request, progress_callback, db)
 
         enriched_trades = self._enrich_trades_with_stock_name(db, result["trades"])
         enriched_snapshots = self._enrich_snapshots_with_stock_name(
@@ -365,100 +417,29 @@ class BacktestService:
         self,
         request: BacktestRunRequest,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        db: Session | None = None,
     ) -> dict[str, Any]:
         symbols = [s.strip() for s in request.symbols if s.strip()]
         if not symbols:
             raise ValueError("manual_symbols 模式下 symbols 不能为空")
-
-        capital_per_symbol = request.initial_cash / len(symbols)
-        cost_model = CostModel(**request.cost_config.model_dump())
-
-        all_trades: list[dict] = []
-        all_warnings: list[str] = []
-        symbol_curves: dict[str, list[dict]] = {}
-        symbol_position_curves: dict[str, list[dict]] = {}
-        final_positions: list[dict] = []
-
-        total = len(symbols)
-        for idx, symbol in enumerate(symbols, start=1):
-            if progress_callback:
-                progress_callback(
-                    {
-                        "stage": "running",
-                        "total_symbols": total,
-                        "processed_symbols": idx - 1,
-                        "progress_pct": round((idx - 1) * 100 / total, 2),
-                    }
-                )
-            try:
-                df, _, _ = stock_service.get_daily_data(
-                    symbol=symbol,
-                    start_date=request.start_date.strftime("%Y-%m-%d"),
-                    end_date=request.end_date.strftime("%Y-%m-%d"),
-                )
-            except Exception as e:
-                all_warnings.append(f"{symbol}: 获取行情失败({str(e)})，已跳过")
-                continue
-
-            if df.empty:
-                all_warnings.append(f"{symbol}: 无可用行情，已跳过")
-                continue
-
-            symbol_result = run_for_symbol(
-                symbol=symbol,
-                df=df,
-                strategy_id=request.strategy_id,
-                strategy_params=request.strategy_params,
-                init_cash=capital_per_symbol,
-                cost_model=cost_model,
-            )
-
-            symbol_curves[symbol] = symbol_result.equity_curve
-            symbol_position_curves[symbol] = symbol_result.position_curve
-            all_trades.extend(symbol_result.trades)
-            all_warnings.extend(symbol_result.warnings)
-            final_positions.append(
-                {
-                    "symbol": symbol,
-                    "shares": symbol_result.final_position,
-                    "equity": round(symbol_result.last_equity, 4),
-                }
-            )
-
-        if progress_callback:
-            progress_callback(
-                {
-                    "stage": "summarizing",
-                    "total_symbols": total,
-                    "processed_symbols": total,
-                    "progress_pct": 100.0,
-                }
-            )
-
-        portfolio_curve = self._merge_symbol_curves(symbol_curves)
-        position_snapshots = self._merge_position_snapshots(symbol_position_curves)
-        summary = calc_summary(portfolio_curve, all_trades, request.initial_cash)
-        summary["final_positions"] = final_positions
-
-        return {
-            "summary": summary,
-            "equity_curve": portfolio_curve,
-            "trades": all_trades,
-            "warnings": all_warnings,
-            "positions_snapshot": position_snapshots,
-            "symbols": symbols,
-        }
+        strategy = get_strategy(request.strategy_id, require_usable=True)
+        return self._run_unified_portfolio(
+            request=request,
+            symbols=symbols,
+            strategy=strategy,
+            progress_callback=progress_callback,
+            db=db,
+            include_diagnostics=False,
+        )
 
     def _run_strategy_select_mode(
         self,
         request: BacktestRunRequest,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        db: Session | None = None,
     ) -> dict[str, Any]:
         strategy = get_strategy(request.strategy_id, require_usable=True)
-
         params = request.strategy_params or {}
-        hold_days = int(params.get("hold_days", 5))
-
         raw_boards = params.get("boards", ["main"])
         if isinstance(raw_boards, str):
             raw_boards = [x.strip() for x in raw_boards.split(",") if x.strip()]
@@ -495,18 +476,64 @@ class BacktestService:
             raise ValueError(
                 "选股池为空，无法执行 strategy_select 回测（可能是行情源连接失败）。请先改用 custom 股票池，或稍后重试。"
             )
+        return self._run_unified_portfolio(
+            request=request,
+            symbols=universe,
+            strategy=strategy,
+            progress_callback=progress_callback,
+            db=db,
+            include_diagnostics=True,
+            universe_filter={"boards": boards, "exclude_st": exclude_st},
+        )
 
+    def _load_security_rules(
+        self, db: Session | None, symbols: list[str]
+    ) -> dict[str, SecurityRule]:
+        if db is None or not symbols:
+            return {}
+        normalized = [self._normalize_symbol_code(symbol) for symbol in symbols]
+        normalized = [symbol for symbol in normalized if symbol]
+        if not normalized:
+            return {}
+        try:
+            rows = (
+                db.query(
+                    SecurityUniverse.stock_code,
+                    SecurityUniverse.board,
+                    SecurityUniverse.is_st,
+                )
+                .filter(SecurityUniverse.stock_code.in_(list(set(normalized))))
+                .all()
+            )
+        except Exception:
+            return {}
+        return {
+            str(code): SecurityRule(board=str(board or "main"), is_st=bool(is_st))
+            for code, board, is_st in rows
+        }
+
+    def _run_unified_portfolio(
+        self,
+        request: BacktestRunRequest,
+        symbols: list[str],
+        strategy: Any,
+        progress_callback: Callable[[dict[str, Any]], None] | None,
+        db: Session | None,
+        include_diagnostics: bool,
+        universe_filter: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """两种模式共享的候选、Policy 与组合逐日撮合链。"""
+
+        params = request.strategy_params or {}
         required_columns = set(strategy.required_columns())
-
         warnings: list[str] = []
-        data_available_count = 0
-        data_empty_count = 0
-        empty_symbols_preview: list[str] = []
         market_data_map: dict[str, pd.DataFrame] = {}
         candidate_frames: list[pd.DataFrame] = []
+        empty_symbols_preview: list[str] = []
+        data_empty_count = 0
+        total = len(symbols)
 
-        total = len(universe)
-        for idx, symbol in enumerate(universe, start=1):
+        for idx, symbol in enumerate(symbols, start=1):
             if progress_callback:
                 progress_callback(
                     {
@@ -516,40 +543,40 @@ class BacktestService:
                         "progress_pct": round((idx - 1) * 100 / total, 2),
                     }
                 )
-
-            df, _, _ = stock_service.get_daily_data(
-                symbol=symbol,
-                start_date=request.start_date.strftime("%Y-%m-%d"),
-                end_date=request.end_date.strftime("%Y-%m-%d"),
-            )
-
-            if df.empty or len(df) < (hold_days + 2):
+            try:
+                df, _ = self._fetch_daily_with_warmup(
+                    symbol=symbol,
+                    start_date=request.start_date.strftime("%Y-%m-%d"),
+                    end_date=request.end_date.strftime("%Y-%m-%d"),
+                    strategy_id=request.strategy_id,
+                )
+            except Exception as exc:
+                warnings.append(f"{symbol}: 获取行情失败({exc})，已跳过")
+                data_empty_count += 1
+                continue
+            if df is None or df.empty:
                 data_empty_count += 1
                 if len(empty_symbols_preview) < 30:
                     empty_symbols_preview.append(symbol)
                 continue
-
-            missing_cols = [c for c in required_columns if c not in df.columns]
+            missing_cols = sorted(required_columns - set(df.columns))
             if missing_cols:
                 warnings.append(f"{symbol}: 缺少必需列 {missing_cols}，已跳过")
                 continue
 
-            data_available_count += 1
             work = df.copy().reset_index(drop=True)
             work["symbol"] = symbol
             market_data_map[symbol] = work
-
             candidates = strategy.generate_candidates(work, params)
             if candidates is None or candidates.empty:
                 continue
-
             required_candidate_cols = {"trade_date", "symbol"}
-            if not required_candidate_cols.issubset(set(candidates.columns)):
+            missing_candidate_cols = required_candidate_cols - set(candidates.columns)
+            if missing_candidate_cols:
                 warnings.append(
-                    f"{symbol}: candidates 缺少列 {sorted(required_candidate_cols - set(candidates.columns))}"
+                    f"{symbol}: candidates 缺少列 {sorted(missing_candidate_cols)}"
                 )
                 continue
-
             cdf = candidates.copy()
             cdf["trade_date"] = pd.to_datetime(cdf["trade_date"]).dt.normalize()
             if "signal_strength" not in cdf.columns:
@@ -558,39 +585,20 @@ class BacktestService:
                 cdf["reason"] = "strategy_candidate"
             candidate_frames.append(cdf)
 
-        if data_empty_count > 0:
+        if data_empty_count:
             preview = ",".join(empty_symbols_preview)
             suffix = "" if data_empty_count <= len(empty_symbols_preview) else "..."
             warnings.append(
-                f"无可用日线数据股票数: {data_empty_count}/{len(universe)}，示例: {preview}{suffix}"
+                f"无可用日线数据股票数: {data_empty_count}/{len(symbols)}"
+                + (f"，示例: {preview}{suffix}" if preview else "")
             )
 
-        if not candidate_frames:
-            warnings.append("未命中任何交易信号")
-            diagnostics = {
-                "universe_size": len(universe),
-                "data_available_count": data_available_count,
-                "data_empty_count": data_empty_count,
-                "candidate_count": 0,
-                "selected_count": 0,
-                "event_count": 0,
-                "effective_universe_filter": {
-                    "boards": boards,
-                    "exclude_st": exclude_st,
-                },
-            }
-            return {
-                "summary": calc_summary([], [], request.initial_cash),
-                "equity_curve": [],
-                "trades": [],
-                "warnings": warnings,
-                "positions_snapshot": [],
-                "symbols": universe,
-                "diagnostics": diagnostics,
-            }
-
-        candidates_df = pd.concat(candidate_frames, ignore_index=True)
-
+        columns = ["trade_date", "symbol", "signal_strength", "reason"]
+        candidates_df = (
+            pd.concat(candidate_frames, ignore_index=True)
+            if candidate_frames
+            else pd.DataFrame(columns=columns)
+        )
         policy_profile_id = str(
             params.get("policy_profile") or strategy.default_policy_profile()
         )
@@ -600,7 +608,6 @@ class BacktestService:
             params=params,
             extras={"market_data_map": market_data_map},
         )
-
         ranked_df = pipeline["ranking"].rank(candidates_df, context)
         selected_df = pipeline["selection"].select(
             ranked_df, portfolio_state={}, context=context
@@ -615,40 +622,26 @@ class BacktestService:
             allocated_df, portfolio_state={}, context=context
         )
 
-        events = pipeline["execution"].simulate_fill(
-            orders_df,
-            bar_df=pd.DataFrame(),
-            cost_model=None,
-            context=context,
-        )
-
-        diagnostics = {
-            "universe_size": len(universe),
-            "data_available_count": data_available_count,
-            "data_empty_count": data_empty_count,
-            "candidate_count": int(len(candidates_df)),
-            "ranked_count": int(len(ranked_df)),
-            "selected_count": int(len(selected_df)),
-            "ordered_count": int(len(orders_df)),
-            "event_count": int(len(events)),
-            "policy_profile": policy_profile_id,
-            "effective_universe_filter": {
-                "boards": boards,
-                "exclude_st": exclude_st,
-            },
+        raw_rules = self._load_security_rules(db, list(market_data_map))
+        security_rules = {
+            symbol: raw_rules.get(self._normalize_symbol_code(symbol))
+            for symbol in market_data_map
+            if raw_rules.get(self._normalize_symbol_code(symbol)) is not None
         }
-
-        if not events:
-            warnings.append("候选已生成，但经 policy pipeline 后无可执行订单")
-            return {
-                "summary": calc_summary([], [], request.initial_cash),
-                "equity_curve": [],
-                "trades": [],
-                "warnings": warnings,
-                "positions_snapshot": [],
-                "symbols": universe,
-                "diagnostics": diagnostics,
-            }
+        portfolio = run_portfolio(
+            market_data_map=market_data_map,
+            orders_df=orders_df,
+            initial_cash=float(request.initial_cash),
+            cost_model=CostModel(**request.cost_config.model_dump()),
+            hold_days=int(params.get("hold_days", 5) or 5),
+            max_total_position_pct=float(params.get("max_total_position_pct", 1.0)),
+            default_position_size_pct=float(params.get("position_size_pct", 0.1)),
+            security_rules=security_rules,
+            trade_start=request.start_date.strftime("%Y-%m-%d"),
+        )
+        warnings.extend(portfolio.warnings)
+        if not candidate_frames:
+            warnings.append("未命中任何交易信号")
 
         if progress_callback:
             progress_callback(
@@ -660,70 +653,38 @@ class BacktestService:
                 }
             )
 
-        events = sorted(events, key=lambda x: x["sell_datetime"])
-        equity = request.initial_cash
-        equity_curve = [
-            {
-                "datetime": f"{request.start_date.strftime('%Y-%m-%d')} 00:00:00",
-                "equity": round(equity, 4),
-            }
-        ]
-        trades: list[dict[str, Any]] = []
-
-        for ev in events:
-            position_size_pct = float(
-                ev.get("position_size_pct")
-                or params.get("position_size_pct", 0.1)
-                or 0.1
-            )
-            position_size_pct = max(0.0, min(1.0, position_size_pct))
-            position_amount = equity * position_size_pct
-            pnl = position_amount * float(ev["return"])
-            equity += pnl
-
-            trades.append(
-                {
-                    "symbol": ev["symbol"],
-                    "datetime": ev["buy_datetime"],
-                    "side": "buy",
-                    "price": ev["buy_price"],
-                    "qty": 1,
-                    "amount": round(position_amount, 4),
-                    "fee": 0.0,
-                    "reason": ev["reason"],
-                }
-            )
-            trades.append(
-                {
-                    "symbol": ev["symbol"],
-                    "datetime": ev["sell_datetime"],
-                    "side": "sell",
-                    "price": ev["sell_price"],
-                    "qty": 1,
-                    "amount": round(position_amount * (1 + float(ev["return"])), 4),
-                    "fee": 0.0,
-                    "pnl": round(pnl, 4),
-                    "reason": ev["reason"],
-                }
-            )
-            equity_curve.append(
-                {"datetime": ev["sell_datetime"], "equity": round(equity, 4)}
-            )
-
-        summary = calc_summary(equity_curve, trades, request.initial_cash)
-        warnings.append(
-            f"strategy_select 扫描股票数: {len(universe)}，有效行情股票数: {data_available_count}，候选数: {len(candidates_df)}，执行事件数: {len(events)}"
+        summary = calc_summary(
+            portfolio.equity_curve, portfolio.trades, request.initial_cash
         )
-
-        return {
+        summary["final_positions"] = portfolio.final_positions
+        result: dict[str, Any] = {
             "summary": summary,
-            "equity_curve": equity_curve,
-            "trades": trades,
+            "equity_curve": portfolio.equity_curve,
+            "trades": portfolio.trades,
             "warnings": warnings,
-            "positions_snapshot": [],
-            "symbols": universe,
-            "diagnostics": diagnostics,
+            "positions_snapshot": portfolio.positions_snapshot,
+            "symbols": symbols,
         }
+        if include_diagnostics:
+            diagnostics = {
+                "universe_size": len(symbols),
+                "data_available_count": len(market_data_map),
+                "data_empty_count": data_empty_count,
+                "candidate_count": int(len(candidates_df)),
+                "ranked_count": int(len(ranked_df)),
+                "selected_count": int(len(selected_df)),
+                "ordered_count": int(len(orders_df)),
+                "event_count": int(len(portfolio.trades)),
+                "policy_profile": policy_profile_id,
+                "effective_universe_filter": universe_filter or {},
+            }
+            result["diagnostics"] = diagnostics
+            warnings.append(
+                f"strategy_select 扫描股票数: {len(symbols)}，有效行情股票数: "
+                f"{len(market_data_map)}，候选数: {len(candidates_df)}，成交数: "
+                f"{len(portfolio.trades)}"
+            )
+        return result
 
     def list_runs(
         self, current_user: User, db: Session, limit: int = 20, offset: int = 0
