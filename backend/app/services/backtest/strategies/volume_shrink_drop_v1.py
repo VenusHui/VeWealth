@@ -101,15 +101,14 @@ class VolumeShrinkDropV1Strategy(BaseStrategy, BaseStrategyV2):
         while i < len(work):
             window = work.iloc[i - consecutive_days + 1 : i + 1]
             if bool(window["daily_pass"].all()):
-                buy_idx = i + 1
-                if buy_idx >= len(work):
-                    break
-                buy_row = work.iloc[buy_idx]
-                symbol = str(buy_row.get("symbol") or "").strip()
+                # 候选日期统一表示信号形成日；成交日由组合引擎严格推进到
+                # 下一交易日开盘，策略层不得预先偷换时间语义。
+                signal_row = work.iloc[i]
+                symbol = str(signal_row.get("symbol") or "").strip()
                 if symbol:
                     candidates.append(
                         {
-                            "trade_date": buy_row["trade_date"],
+                            "trade_date": signal_row["trade_date"],
                             "symbol": symbol,
                             "signal_strength": 1.0,
                             "reason": f"连续{consecutive_days}天缩量下跌",
