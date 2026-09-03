@@ -277,7 +277,7 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
 
 
 # ------------------------------------------------------------------
-# Worker: reads data from fork-inherited _SHARED_DATA via index range
+# Worker: reads this job's shared data via thread-local (_get_shared_data)
 # ------------------------------------------------------------------
 
 
