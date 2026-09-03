@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     # 多线程配置
     MAX_WORKERS: int = 4
 
+    # 后台任务并发上限（选股与回测共享的有界 worker 池）
+    MAX_TASK_WORKERS: int = 4
+
     # 定时任务配置
     SCHEDULER_ENABLED: bool = True
     DATA_COLLECT_CRON: str = "0 20 * * 1-5"  # 每周一到周五的20:00执行
