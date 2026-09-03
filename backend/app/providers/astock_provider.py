@@ -122,6 +122,20 @@ class AStockDataProvider(MarketDataProvider):
             if df.empty:
                 return None
 
+            # mootdx bars() 的 start 是"相对今天最近 N 根"的偏移，只拉近期窗口，
+            # 再从 `[start_date, end_date]` 作后置过滤——历史上限 800 根。若过滤后
+            # 最早一根仍晚于 start_date，说明该窗口（如回测 warmup 回拉的 eff_start）
+            # 根本没被取到，属"静默截断"。返回 None 让 fetch_daily_data 改走支持
+            # 日期区间取数的 Eastmoney / Tushare，避免 warmup 缺失、信号错误。
+            if start_date and not df.empty:
+                earliest = df["datetime"].min()
+                if earliest > pd.Timestamp(start_date):
+                    logger.warning(
+                        f"mootdx 未覆盖 {stock_code} 起始日 {start_date}"
+                        f"（最早仅到 {earliest}），回退日期区间源"
+                    )
+                    return None
+
             df["datetime"] = df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
             available = ["datetime"] + [c for c in cols if c in df.columns]
             return df[available]

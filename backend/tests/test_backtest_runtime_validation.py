@@ -25,7 +25,11 @@ from app.services.backtest.validators.strategy_validator import (
     validate_strategy_class,
     validate_strategy_params,
 )
-from app.routers.backtest import _validate_submission, create_backtest_job
+from app.routers.backtest import (
+    _validate_submission,
+    create_backtest_job,
+    retry_backtest_job,
+)
 
 
 class RuntimeValidationTests(unittest.TestCase):
@@ -128,6 +132,45 @@ class RuntimeValidationTests(unittest.TestCase):
             asyncio.run(create_backtest_job(request, current_user=MagicMock()))
         self.assertEqual(cm.exception.status_code, 422)
         self.assertTrue(cm.exception.detail)
+
+    def _valid_request(self):
+        return BacktestRunRequest(
+            name="t",
+            strategy_id="ma_cross_v1",
+            strategy_params={"short_window": 5, "long_window": 20},
+            mode="manual_symbols",
+            universe_type="all",
+            symbols=["000001"],
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 31),
+            initial_cash=100000,
+        )
+
+    def test_create_backtest_job_maps_queue_full_to_503(self):
+        """create_job 因后台队列已满抛 ValueError，应映射为 503 而非 500。"""
+        request = self._valid_request()
+        with patch(
+            "app.routers.backtest.backtest_job_manager.create_job",
+            side_effect=ValueError("后台任务队列已满（pending >= 40），请稍后重试"),
+        ):
+            with self.assertRaises(HTTPException) as cm:
+                asyncio.run(create_backtest_job(request, current_user=MagicMock()))
+        self.assertEqual(cm.exception.status_code, 503)
+        self.assertIn("队列已满", cm.exception.detail)
+
+    def test_retry_backtest_job_maps_queue_full_to_503(self):
+        """retry 重新入队失败抛 ValueError，应映射为 503 而非 500。"""
+        with patch(
+            "app.routers.backtest.backtest_job_manager.get_job",
+            return_value={"job_id": "job_x"},
+        ), patch(
+            "app.routers.backtest.backtest_job_manager.retry_job",
+            side_effect=ValueError("后台任务队列已满（pending >= 40），请稍后重试"),
+        ):
+            with self.assertRaises(HTTPException) as cm:
+                asyncio.run(retry_backtest_job("job_x", current_user=MagicMock()))
+        self.assertEqual(cm.exception.status_code, 503)
+        self.assertIn("队列已满", cm.exception.detail)
 
     def test_strategy_select_preserves_non_schema_params(self):
         """strategy_select 模式经 _validate_submission 后，非 schema 业务键应保留。

@@ -509,6 +509,85 @@ class BacktestServiceUnitTests(unittest.TestCase):
         self.assertEqual(result["counters"]["runs"]["total"], 3)
         self.assertEqual(result["counters"]["runs"]["recent_scan_count"], 1)
 
+    # must-fix: warmup 尾信号应在首日成交（VEW-32 阻断项 6）
+    def test_run_unified_portfolio_keeps_warmup_tail_signal_for_first_day(self):
+        """服务层不得按信号日截断 warmup 候选，末根 warmup 信号应于首日开盘成交。
+
+        回归：此前 _run_unified_portfolio 把 candidates 截断到
+        trade_date >= start_date，导致 start_date 前一交易日的信号（对应执行日
+        == trade_start，即回测首日）被丢弃，首日交易缺失。现在是保留全部候选，
+        由引擎 run_portfolio 的 trade_start 门在按执行日（buy_date）过滤时保留首日。
+        """
+
+        class _WarmupTailStrategy:
+            def required_columns(self):
+                return {"datetime", "open", "high", "low", "close", "volume"}
+
+            def default_policy_profile(self):
+                return "vsd_v1_default"
+
+            def generate_candidates(self, work, params):
+                # 只在 warmup 末尾（回测首日的前一交易日）给一个信号
+                return pd.DataFrame(
+                    [
+                        {
+                            "symbol": "000001",
+                            "trade_date": pd.Timestamp("2026-01-06"),
+                            "signal_strength": 1.0,
+                            "reason": "warmup_tail",
+                        }
+                    ]
+                )
+
+        # 行情从 warmup 起：2026-01-05（周一）.. 2026-01-23（周五），backtest 窗口 01-07 起
+        dates = pd.bdate_range("2026-01-05", periods=15)
+        frame = pd.DataFrame(
+            {
+                "datetime": dates,
+                "open": [10.0] * len(dates),
+                "high": [11.0] * len(dates),
+                "low": [9.0] * len(dates),
+                "close": [10.5] * len(dates),
+                "volume": [100000.0] * len(dates),
+            }
+        )
+
+        mock_cost_config = MagicMock()
+        mock_cost_config.model_dump.return_value = {
+            "commission_rate": 0.0003,
+            "min_commission": 5.0,
+            "stamp_tax_rate": 0.001,
+            "slippage_rate": 0.0005,
+        }
+        request = self._make_request(
+            start_date=date(2026, 1, 7),
+            end_date=date(2026, 1, 23),
+            strategy_params={
+                "hold_days": 5,
+                "position_size_pct": 1.0,
+                "top_k_per_day": 1,
+            },
+            cost_config=mock_cost_config,
+        )
+        with patch.object(
+            self.service,
+            "_fetch_daily_with_warmup",
+            return_value=(frame, "2026-01-05"),
+        ):
+            result = self.service._run_unified_portfolio(
+                request=request,
+                symbols=["000001"],
+                strategy=_WarmupTailStrategy(),
+                progress_callback=None,
+                db=None,
+                include_diagnostics=True,
+            )
+
+        trades = result["trades"]
+        buys = [t for t in trades if t["side"] == "buy"]
+        self.assertTrue(buys, "warmup 尾信号未生成任何买入")
+        self.assertEqual(buys[0]["datetime"][:10], "2026-01-07")
+
 
 class CostModelTests(unittest.TestCase):
     def test_default_cost_model(self):

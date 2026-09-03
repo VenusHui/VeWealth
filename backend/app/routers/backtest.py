@@ -414,6 +414,13 @@ async def create_backtest_job(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=e.errors
         )
+    except ValueError as e:
+        # 后台任务队列已满（job_manager.submit 抛 ValueError）：不应泄漏为 500，
+        # 映射为 503 服务不可用，提示用户稍后重试。
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"后台任务队列已满，请稍后重试：{e}",
+        )
 
 
 @router.get("/jobs", response_model=BacktestJobListResponse)
@@ -451,5 +458,12 @@ async def retry_backtest_job(
     current_user: User = Depends(get_current_active_user),
 ):
     _get_job_or_404(job_id=job_id, current_user=current_user)
-    job = backtest_job_manager.retry_job(job_id, current_user.id)
-    return BacktestJobDetailResponse(data=job)
+    try:
+        job = backtest_job_manager.retry_job(job_id, current_user.id)
+        return BacktestJobDetailResponse(data=job)
+    except ValueError as e:
+        # 后台任务队列已满（retry 重新入队失败）：映射为 503，不泄漏为 500。
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"后台任务队列已满，请稍后重试：{e}",
+        )

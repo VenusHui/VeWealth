@@ -7,7 +7,17 @@
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import (
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -15,6 +25,18 @@ from app.core.database import Base
 
 class ScreenerJob(Base):
     __tablename__ = "screener_jobs"
+    # 同用户只允许一个 active（pending/running）扫描任务。部分唯一索引在数据库层
+    # 兜底 start_scan 的查找-插入 TOCTOU；配合服务层捕获 IntegrityError 后重查，
+    # 使并发请求不会各自插入一条 active 扫描。
+    __table_args__ = (
+        Index(
+            "uq_screener_jobs_active_user",
+            "user_id",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'running')"),
+            sqlite_where=text("status IN ('pending', 'running')"),
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     scan_id = Column(String(32), unique=True, index=True, nullable=False)

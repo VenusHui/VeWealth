@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import pandas as pd
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
@@ -118,29 +119,48 @@ class ScreenerService:
                     return self._to_response(existing)
                 raise ValueError("已有进行中的扫描任务，请先取消或等待其完成")
 
-            scan_id = f"scan_{uuid.uuid4().hex[:12]}"
-            now = datetime.utcnow()
-            job = ScreenerJob(
-                scan_id=scan_id,
-                user_id=user_id,
-                strategy_id=strategy_id,
-                strategy_name=strategy.name,
-                strategy_params=dict(params),
-                boards=list(boards),
-                exclude_st=1 if exclude_st else 0,
-                status="pending",
-                stage="pending",
-                progress={"total": len(universe), "scanned": 0, "hits": 0},
-                result=None,
-                error=None,
-                cancel_requested=0,
-                created_at=now,
-                updated_at=now,
-            )
-            db.add(job)
-            db.commit()
-            db.refresh(job)
-            response = self._to_response(job)
+            try:
+                scan_id = f"scan_{uuid.uuid4().hex[:12]}"
+                now = datetime.utcnow()
+                job = ScreenerJob(
+                    scan_id=scan_id,
+                    user_id=user_id,
+                    strategy_id=strategy_id,
+                    strategy_name=strategy.name,
+                    strategy_params=dict(params),
+                    boards=list(boards),
+                    exclude_st=1 if exclude_st else 0,
+                    status="pending",
+                    stage="pending",
+                    progress={"total": len(universe), "scanned": 0, "hits": 0},
+                    result=None,
+                    error=None,
+                    cancel_requested=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+                db.add(job)
+                db.commit()
+                db.refresh(job)
+                response = self._to_response(job)
+            except IntegrityError:
+                # 部分唯一索引拒绝并发重复插入：另一并发请求在「查找 active」与「插入」
+                # 之间为同一 user 插入了一条 active 扫描。回滚后重查，复用或拒绝，
+                # 与先查后插的幂等语义保持一致（VEW-32 阻断项 3 的 TOCTOU 兜底）。
+                db.rollback()
+                existing = self._find_active_for_user(db, user_id)
+                if existing:
+                    if self._same_request(
+                        existing, strategy_id, params, boards, exclude_st
+                    ):
+                        logger.info(
+                            "用户 %s 并发提交被唯一索引去重，幂等复用 %s",
+                            user_id,
+                            existing.scan_id,
+                        )
+                        return self._to_response(existing)
+                    raise ValueError("已有进行中的扫描任务，请先取消或等待其完成")
+                raise
         finally:
             db.close()
 

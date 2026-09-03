@@ -497,13 +497,15 @@ class WarmupTradeStartJointTests(unittest.TestCase):
 
 
 class DateAwareMetricsTests(unittest.TestCase):
-    def test_annual_return_uses_elapsed_calendar_dates_not_event_count(self):
+    def test_annual_return_uses_trading_day_count_not_calendar_days(self):
+        """年化按交易日口径（252），与 Sharpe 一致，而非日历天数(365.2425)。"""
         curve = [
             {"datetime": "2020-01-01 00:00:00", "equity": 100.0},
             {"datetime": "2021-01-01 00:00:00", "equity": 110.0},
         ]
         result = calc_summary(curve, [], 100.0)
-        expected = 1.1 ** (365.2425 / 366) - 1
+        # daily_returns = [0.0, 0.1]（2 个交易日复利），年化指数 252/2
+        expected = 1.1 ** (252.0 / 2) - 1
         self.assertAlmostEqual(result["annual_return"], expected, places=6)
 
 

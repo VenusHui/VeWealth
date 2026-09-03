@@ -54,12 +54,13 @@ def calc_summary(
     else:
         sharpe = 0.0
 
-    first_date = _curve_date(dated_curve[0])
-    last_date = _curve_date(dated_curve[-1])
-    elapsed_days = (last_date - first_date).days if first_date and last_date else 0
+    # 年化统一按交易日口径，与 Sharpe 的 sqrt(252) 保持一致：总收益是
+    # len(daily_returns) 个交易日复利的结果，故年化指数用 252/n_periods，
+    # 消除此前日历天数(365.2425)与交易日(252)混用造成的偏差。
+    n_periods = len(daily_returns)
     annual_return = 0.0
-    if elapsed_days > 0 and end_value > 0 and start_value > 0:
-        annual_return = (end_value / start_value) ** (365.2425 / elapsed_days) - 1
+    if n_periods > 0 and end_value > 0 and start_value > 0:
+        annual_return = (end_value / start_value) ** (252.0 / n_periods) - 1
 
     peak = start_value
     max_drawdown = 0.0

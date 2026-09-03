@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 from .base import BaseStrategy
 from .contracts import BaseStrategyV2
@@ -373,14 +374,25 @@ def _build_chart_data(df: pd.DataFrame) -> list[dict]:
 
 
 def _compute_density(price: float, fit_result: dict) -> float | None:
-    """计算当前价格在 GMM 拟合分布中的密度百分位。"""
-    curve = fit_result.get("fit_curve")
-    if not curve:
+    """计算当前价格在 GMM 拟合分布中的累计概率百分位（CDF）。
+
+    采用混合高斯 CDF：Σ w_i·Φ((price − μ_i)/σ_i)，其中 w_i 为第 i 个分量权重、
+    μ_i/σ_i 为其均值/标准差。返回 [0,1] 内的百分位，供 threshold / 1-threshold
+    作为"密度百分位"语义使用（score_definition 亦按此定义）。
+
+    此前实现返回 cur_den/max_den（相对拟合峰值密度的比值），并非百分位：价格落在
+    双峰"谷底"会被读作低密度而误触发买入，其真实百分位约 50%。改用 GMM CDF 后，
+    "密度"与 score_definition / 阈值波段语义一致。
+    """
+    components = fit_result.get("components")
+    if not components:
         return None
-    prices = [p["price"] for p in curve]
-    densities = [p["fitVolume"] for p in curve]
-    max_den = max(densities)
-    if max_den <= 0:
-        return None
-    cur_den = float(np.interp(price, prices, densities))
-    return cur_den / max_den
+    cdf = 0.0
+    for comp in components:
+        std = float(comp.get("std", 0) or 0)
+        if std <= 0:
+            return None
+        weight = float(comp.get("weight", 0) or 0)
+        mean = float(comp.get("mean", 0) or 0)
+        cdf += weight * stats.norm.cdf(price, mean, std)
+    return cdf

@@ -645,11 +645,11 @@ class BacktestService:
             if candidate_frames
             else pd.DataFrame(columns=columns)
         )
-        # warmup 取数会带来 start_date 之前的候选，截断到回测区间内
-        if not candidates_df.empty:
-            candidates_df = candidates_df[
-                candidates_df["trade_date"] >= pd.Timestamp(request.start_date)
-            ].reset_index(drop=True)
+        # 不在此处按 signal 日截断到 start_date：warmup 回拉的最后 1 根信号（trade_date
+        # == start_date 前一交易日）会于首日（buy_date == trade_start）开盘成交，若截断则
+        # 首日交易被丢；引擎 run_portfolio 的 trade_start 门仅过滤 buy_date < trade_start
+        # 的暖机订单，故这里保留全部候选，执行日边界交由引擎统一处理（TopK 按 trade_date
+        # 分组，warmup 候选不会挤占首日 top_k）。
         policy_profile_id = str(
             params.get("policy_profile") or strategy.default_policy_profile()
         )

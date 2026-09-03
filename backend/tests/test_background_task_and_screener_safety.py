@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
@@ -271,6 +272,102 @@ class ScreenerServicePersistenceTests(unittest.TestCase):
             self.assertIsNotNone(row)
             self.assertEqual(row.status, "failed")
             self.assertIn("队列已满", row.error or "")
+
+    # --- must-fix: same-user active scan TOCTOU (VEW-32 阻断项 3) ---
+
+    def test_db_unique_index_rejects_duplicate_active_scan(self):
+        """部分唯一索引在数据库层拒绝同一用户第二条 active 扫描。"""
+        now = datetime.utcnow()
+        with self.session_factory() as db:
+            db.add(
+                ScreenerJob(
+                    scan_id="scan_a",
+                    user_id=1,
+                    strategy_id="ma_cross_v1",
+                    strategy_name="x",
+                    strategy_params={},
+                    boards=["main"],
+                    exclude_st=1,
+                    status="pending",
+                    stage="pending",
+                    progress={"total": 1, "scanned": 0, "hits": 0},
+                    cancel_requested=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            db.commit()
+
+        with self.session_factory() as db:
+            db.add(
+                ScreenerJob(
+                    scan_id="scan_b",
+                    user_id=1,
+                    strategy_id="ma_cross_v1",
+                    strategy_name="x",
+                    strategy_params={},
+                    boards=["main"],
+                    exclude_st=1,
+                    status="running",
+                    stage="running",
+                    progress={"total": 1, "scanned": 0, "hits": 0},
+                    cancel_requested=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            with self.assertRaises(IntegrityError):
+                db.commit()
+
+    def test_start_scan_recovers_from_concurrent_duplicate_insert(self):
+        """并发查找-插入竞态：insert 触发 IntegrityError 后必须重查并幂等复用。"""
+        now = datetime.utcnow()
+        with self.session_factory() as db:
+            db.add(
+                ScreenerJob(
+                    scan_id="scan_preexisting",
+                    user_id=1,
+                    strategy_id="ma_cross_v1",
+                    strategy_name="x",
+                    strategy_params={},
+                    boards=["main"],
+                    exclude_st=1,
+                    status="pending",
+                    stage="pending",
+                    progress={"total": 3, "scanned": 0, "hits": 0},
+                    cancel_requested=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            db.commit()
+
+        calls = {"n": 0}
+        real_find = self.service._find_active_for_user
+
+        def fake_find(db, user_id):
+            calls["n"] += 1
+            # 第一次 find 未见并发线程的 active 行（模拟竞态窗口）；插入失败回滚后
+            # 第二次 find 必须能看到它，走幂等复用分支。
+            if calls["n"] == 1:
+                return None
+            return real_find(db, user_id)
+
+        with patch.object(self.service, "_find_active_for_user", side_effect=fake_find):
+            resp = self.service.start_scan("ma_cross_v1", {}, ["main"], True, 1)
+
+        self.assertEqual(resp["scan_id"], "scan_preexisting")
+        self.assertEqual(calls["n"], 2)
+        with self.session_factory() as db:
+            active = (
+                db.query(ScreenerJob)
+                .filter(
+                    ScreenerJob.user_id == 1,
+                    ScreenerJob.status.in_(["pending", "running"]),
+                )
+                .all()
+            )
+            self.assertEqual(len(active), 1)
 
 
 def _make_market_df(symbol: str, n: int = 120) -> pd.DataFrame:
