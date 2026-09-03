@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from threading import Thread, Lock
+from threading import Lock
 from uuid import uuid4
 from copy import deepcopy
 from typing import Any
@@ -15,6 +15,7 @@ from app.core.logger import get_module_logger
 from app.models.backtest_job import BacktestJob
 from app.models.user import User
 from app.schemas.backtest import BacktestRunRequest
+from app.services.task_executor import CancelToken, background_task_executor
 
 logger = get_module_logger("backtest.job_manager")
 RESTART_RECOVERY_TIMEOUT_MINUTES = 5
@@ -111,9 +112,13 @@ class BacktestJobManager:
                 row.stage = "cancelled"
             db.commit()
             db.refresh(row)
-            return self._to_dict(row)
+            data = self._to_dict(row)
         finally:
             db.close()
+
+        # 同时向运行中的 worker 发送进程内取消信号，保证协作式停止
+        background_task_executor.cancel(job_id)
+        return data
 
     def retry_job(self, job_id: str, user_id: int) -> dict | None:
         db = SessionLocal()
@@ -195,28 +200,58 @@ class BacktestJobManager:
         finally:
             db.close()
 
+    def _mark_job_failed(self, job_id: str, error: str) -> None:
+        """把已持久化的 pending 任务标记为 failed。
+
+        用于同一 job 无法真正入队时（如后台队列已满），避免留下
+        "永不运行"的孤儿 pending 任务。
+        """
+        db = SessionLocal()
+        try:
+            row = (
+                db.query(BacktestJob)
+                .filter(BacktestJob.job_id == job_id)
+                .first()
+            )
+            if not row:
+                return
+            row.status = "failed"
+            row.stage = "failed"
+            row.error = error
+            row.updated_at = datetime.utcnow()
+            db.commit()
+        finally:
+            db.close()
+
     def _spawn_runner(self, job_id: str):
         if job_id not in self._running_locks:
             self._running_locks[job_id] = Lock()
 
-        def runner():
+        def runner(token: CancelToken):
             lock = self._running_locks[job_id]
             if not lock.acquire(blocking=False):
                 return
             try:
-                self._run_job(job_id)
+                self._run_job(token, job_id)
             finally:
                 lock.release()
 
-        Thread(target=runner, daemon=True).start()
+        try:
+            background_task_executor.submit(job_id, runner)
+        except ValueError as e:
+            # 队列已满：任务无法真正入队。DB 里已持久化的 pending 行必须标记为
+            # failed，否则会成为"永不运行"的孤儿任务（create_job / retry_job 共用此路径）。
+            logger.warning("回测任务 %s 入队失败，标记为 failed: %s", job_id, e)
+            self._mark_job_failed(job_id, str(e))
+            raise
 
-    def _run_job(self, job_id: str):
+    def _run_job(self, token: CancelToken, job_id: str):
         db = SessionLocal()
         try:
             job = db.query(BacktestJob).filter(BacktestJob.job_id == job_id).first()
             if not job:
                 return
-            if job.cancel_requested:
+            if job.cancel_requested or token.is_cancelled():
                 job.status = "cancelled"
                 job.stage = "cancelled"
                 db.commit()
@@ -233,7 +268,7 @@ class BacktestJobManager:
                 row = db.query(BacktestJob).filter(BacktestJob.job_id == job_id).first()
                 if not row:
                     return
-                if row.cancel_requested:
+                if row.cancel_requested or token.is_cancelled():
                     raise RuntimeError("任务已取消")
                 for k, v in update.items():
                     if hasattr(row, k):
@@ -244,7 +279,7 @@ class BacktestJobManager:
             try:
                 result = self.backtest_service.run_backtest(req, user, db, progress_cb)
                 row = db.query(BacktestJob).filter(BacktestJob.job_id == job_id).first()
-                if row.cancel_requested:
+                if row.cancel_requested or token.is_cancelled():
                     row.status = "cancelled"
                     row.stage = "cancelled"
                 else:
@@ -256,7 +291,11 @@ class BacktestJobManager:
             except Exception as e:
                 row = db.query(BacktestJob).filter(BacktestJob.job_id == job_id).first()
                 if row:
-                    if row.cancel_requested or "任务已取消" in str(e):
+                    if (
+                        row.cancel_requested
+                        or token.is_cancelled()
+                        or "任务已取消" in str(e)
+                    ):
                         row.status = "cancelled"
                         row.stage = "cancelled"
                     else:
