@@ -32,19 +32,31 @@ class StrategyV2MigrationTests(unittest.TestCase):
         self.assertIn("sell_signal", signal_df.columns)
         self.assertTrue(signal_df["buy_signal"].astype(bool).any())
 
-    def test_volume_shrink_generate_signals_still_noop(self):
+    def test_volume_shrink_generate_signals_produces_buy_signal(self):
+        # 连续缩量下跌（价格跌>=1%、量缩>=10%）命中后应产生买入信号，不再是 no-op。
         df = pd.DataFrame(
             {
-                "datetime": pd.date_range("2026-01-01", periods=3, freq="D"),
-                "close": [10.0, 9.8, 9.5],
-                "open": [10.1, 9.9, 9.6],
-                "volume": [1000, 900, 800],
+                "datetime": pd.date_range("2026-01-01", periods=7, freq="D"),
+                "close": [10.0, 9.8, 9.6, 9.4, 9.2, 9.0, 8.8],
+                "open": [10.0, 9.8, 9.6, 9.4, 9.2, 9.0, 8.8],
+                "volume": [2000, 1700, 1450, 1230, 1040, 880, 750],
             }
         )
 
         strategy = VolumeShrinkDropV1Strategy()
-        out = strategy.generate_signals(df, {})
-        self.assertIs(out, df)
+        signal_df = strategy.generate_signals(
+            df,
+            {
+                "min_price_drop_pct": -1.0,
+                "min_volume_shrink_pct": 10.0,
+                "consecutive_days": 3,
+                "hold_days": 3,
+            },
+        )
+
+        self.assertIn("buy_signal", signal_df.columns)
+        self.assertIn("sell_signal", signal_df.columns)
+        self.assertTrue(signal_df["buy_signal"].astype(bool).any())
 
     def test_both_strategies_are_usable_after_v2_migration(self):
         for strategy_cls in (MACrossV1Strategy, VolumeShrinkDropV1Strategy):

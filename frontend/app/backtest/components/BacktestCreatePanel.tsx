@@ -62,6 +62,12 @@ export function BacktestCreatePanel({
   onStrategyParamChange: (k: string, v: string) => void
   onSubmit: () => void
 }) {
+  const isModeSupported = (m: 'manual_symbols' | 'strategy_select') =>
+    !selectedStrategy ||
+    !Array.isArray(selectedStrategy.supported_modes) ||
+    selectedStrategy.supported_modes.length === 0 ||
+    selectedStrategy.supported_modes.includes(m)
+
   return (
     <section className="ve-panel space-y-5">
         <div className="space-y-1">
@@ -84,8 +90,8 @@ export function BacktestCreatePanel({
           <div>
             <label htmlFor="bt-mode" className="ve-field-label">回测模式</label>
             <select id="bt-mode" className="ve-select" value={mode} onChange={(e) => onModeChange(e.target.value as 'manual_symbols' | 'strategy_select')}>
-              <option value="manual_symbols">手工股票池</option>
-              <option value="strategy_select">策略自动选股</option>
+              <option value="manual_symbols" disabled={!isModeSupported('manual_symbols')}>手工股票池</option>
+              <option value="strategy_select" disabled={!isModeSupported('strategy_select')}>策略自动选股</option>
             </select>
           </div>
           {mode === 'manual_symbols' ? (

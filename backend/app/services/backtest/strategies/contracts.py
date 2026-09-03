@@ -8,6 +8,9 @@ import pandas as pd
 
 REQUIRED_CANDIDATE_COLUMNS: set[str] = {"trade_date", "symbol"}
 
+# 回测支持的运行模式
+SUPPORTED_BACKTEST_MODES: set[str] = {"manual_symbols", "strategy_select"}
+
 
 class BaseStrategyV2(ABC):
     """策略V2基类：仅负责生成候选，不负责组合执行决策。"""
@@ -15,6 +18,27 @@ class BaseStrategyV2(ABC):
     strategy_id: str = "base_v2"
     name: str = "Base V2"
     description: str = "策略V2基类"
+
+    # ------------------------------------------------------------------
+    # 策略能力契约：声明策略真实可跑的模式、历史精度、信号语义，
+    # 供运行时校验、前端禁用与取数 warmup 使用。
+    # ------------------------------------------------------------------
+
+    #: 该策略支持的回测模式集合（SUPPORTED_BACKTEST_MODES 子集）
+    supported_modes: set[str] = SUPPORTED_BACKTEST_MODES
+
+    #: 生成首个信号所需的最小历史 bar 数（不含额外 warmup 缓冲）。
+    #: 取数层会在此之上追加 warmup，确保长回看配置（如 MA 240、GMM 250）吃到足量 bar。
+    min_history_bars: int = 0
+
+    #: 信号指向的时间语义：next_open / close / open。用于前端与文档理解触发时点。
+    signal_timestamp: str = "next_open"
+
+    #: signal_strength 的计算口径说明（human-readable）。
+    score_definition: str = "signal_strength"
+
+    #: 平仓/退出规则说明（human-readable），区分手动卖出信号与固定持有。
+    exit_rule: str = "hold_days"
 
     @classmethod
     @abstractmethod

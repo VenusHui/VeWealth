@@ -3,7 +3,7 @@
  *
  * Kept free of React/UI concerns so they can be unit-tested in isolation.
  */
-import type { SnapshotHolding } from './components/types'
+import type { SnapshotHolding, Strategy } from './components/types'
 
 /**
  * Cast strategy parameter values into their numeric form when they look like
@@ -17,6 +17,64 @@ export function parseStrategyParams(raw: Record<string, string>): Record<string,
     cast[k] = /^-?\d+(\.\d+)?$/.test(val) ? Number(val) : val
   })
   return cast
+}
+
+export interface StrategyParamValidation {
+  valid: boolean
+  errors: string[]
+}
+
+/**
+ * 提交前前端内联校验：类型（非数值）、边界（min/max）、跨字段（short_window <
+ * long_window）与被支持的回测模式。与后端 validate_strategy_params 保持同一套规则，
+ * 尽量在提交前拦截，避免「合法参数稳定 0 命中」。对非数值/越界参数返回可读错误。
+ */
+export function validateStrategyParams(
+  strategy: Strategy | undefined,
+  raw: Record<string, string>,
+  mode: string,
+): StrategyParamValidation {
+  const errors: string[] = []
+  if (!strategy) return { valid: true, errors }
+
+  const supported = strategy.supported_modes
+  if (Array.isArray(supported) && supported.length > 0 && !supported.includes(mode)) {
+    errors.push(`策略「${strategy.name}」不支持当前回测模式`)
+  }
+
+  strategy.param_schema.forEach((p) => {
+    const val = raw[p.key] ?? ''
+    if (p.type !== 'int' && p.type !== 'float') {
+      return
+    }
+    if (val.trim() === '') {
+      errors.push(`参数「${p.label}」不能为空`)
+      return
+    }
+    const num = Number(val)
+    if (Number.isNaN(num)) {
+      errors.push(`参数「${p.label}」必须是数字`)
+      return
+    }
+    if (typeof p.min === 'number' && num < p.min) {
+      errors.push(`参数「${p.label}」不能小于 ${p.min}`)
+    }
+    if (typeof p.max === 'number' && num > p.max) {
+      errors.push(`参数「${p.label}」不能大于 ${p.max}`)
+    }
+  })
+
+  const shortStr = raw.short_window
+  const longStr = raw.long_window
+  if (shortStr !== undefined && longStr !== undefined && shortStr.trim() !== '' && longStr.trim() !== '') {
+    const s = Number(shortStr)
+    const l = Number(longStr)
+    if (!Number.isNaN(s) && !Number.isNaN(l) && s >= l) {
+      errors.push(`short_window(${s}) 必须小于 long_window(${l})`)
+    }
+  }
+
+  return { valid: errors.length === 0, errors }
 }
 
 /** Format a symbol cell: "stockName (code)" when a name is available. */
