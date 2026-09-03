@@ -88,20 +88,22 @@ def _check_policy_profile(profile_id: str, reasons: list[str]):
 
 
 def _coerce_value(value: Any, ptype: str, key: str, errors: list[dict]) -> Any:
-    """按 schema type 强转参数；非数值/类型不匹配时记录错误。"""
+    """按 schema type 强转参数；非数值/类型不匹配时记录错误。
+
+    用 float()/is_integer() 替代 str.isdigit()：isdigit() 对负号返回假，会把
+    VSD 的 min_price_drop_pct=-1.0 这类合法负浮点误判为非法。此处同时支持
+    负数、小数与科学计数法（如 1e3）。
+    """
     if value is None or value == "":
         return value
     try:
         if ptype == "int":
-            if isinstance(value, str) and not value.strip().isdigit():
+            n = float(value.strip() if isinstance(value, str) else value)
+            if not n.is_integer():
                 raise ValueError("非法整数")
-            return int(float(value))
+            return int(n)
         if ptype == "float":
-            if isinstance(value, str) and not (
-                value.strip().replace(".", "", 1).isdigit()
-            ):
-                raise ValueError("非法数值")
-            return float(value)
+            return float(value.strip() if isinstance(value, str) else value)
         if ptype in ("str", "string"):
             return str(value)
         return value
@@ -130,14 +132,20 @@ def _check_numeric_bounds(
 def _validate_ma_cross_cross_field(params: dict, errors: list[dict]):
     short = params.get("short_window")
     long = params.get("long_window")
-    if short is not None and long is not None:
-        if short >= long:
-            errors.append(
-                {
-                    "field": "short_window",
-                    "message": f"short_window({short}) 必须小于 long_window({long})",
-                }
-            )
+    if short is None or long is None:
+        return
+    try:
+        s, l = float(short), float(long)
+    except (ValueError, TypeError):
+        # 非数值已在类型校验处报错，这里不再比较，避免 str/int 比较抛异常
+        return
+    if s >= l:
+        errors.append(
+            {
+                "field": "short_window",
+                "message": f"short_window({short}) 必须小于 long_window({long})",
+            }
+        )
 
 
 #: 策略级跨字段关系校验（keyed by strategy_id）

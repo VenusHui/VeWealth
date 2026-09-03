@@ -68,38 +68,40 @@ def run_for_symbol(
         curr = signal_df.iloc[i]
         nxt = signal_df.iloc[i + 1]
         ts = curr["datetime"]
-        if trade_start_ts is not None and ts < trade_start_ts:
-            continue
-        curr = signal_df.iloc[i]
-        nxt = signal_df.iloc[i + 1]
-        ts = curr["datetime"]
-
         curr_close = float(curr["close"])
+        trade_dt: datetime = nxt["datetime"]
+
+        # trade_start：只对执行日 >= trade_start 的 bar 成交/记录净值，指标/信号仍基于
+        # 含 warmup 的完整序列计算。warmup 最后一 bar 的信号在首日开盘成交，不丢弃首日
+        # 交易；仅其自身（ts < trade_start）不写入净值/持仓曲线。
+        if trade_start_ts is not None and trade_dt < trade_start_ts:
+            continue
+
         curr_equity = cash + shares * curr_close
-        ts_text = ts.strftime("%Y-%m-%d %H:%M:%S")
-        equity_curve.append(
-            {
-                "datetime": ts_text,
-                "equity": round(curr_equity, 4),
-            }
-        )
-        position_curve.append(
-            {
-                "datetime": ts_text,
-                "shares": int(shares),
-                "close": round(curr_close, 4),
-                "market_value": round(shares * curr_close, 4),
-                "cash": round(cash, 4),
-                "equity": round(curr_equity, 4),
-            }
-        )
+        if trade_start_ts is None or ts >= trade_start_ts:
+            ts_text = ts.strftime("%Y-%m-%d %H:%M:%S")
+            equity_curve.append(
+                {
+                    "datetime": ts_text,
+                    "equity": round(curr_equity, 4),
+                }
+            )
+            position_curve.append(
+                {
+                    "datetime": ts_text,
+                    "shares": int(shares),
+                    "close": round(curr_close, 4),
+                    "market_value": round(shares * curr_close, 4),
+                    "cash": round(cash, 4),
+                    "equity": round(curr_equity, 4),
+                }
+            )
 
         buy_signal = bool(curr.get("buy_signal", False))
         sell_signal = bool(curr.get("sell_signal", False))
 
         exec_open = float(nxt["open"])
         prev_close = curr_close
-        trade_dt: datetime = nxt["datetime"]
 
         if buy_signal and shares == 0:
             if _is_limit_up(exec_open, prev_close):

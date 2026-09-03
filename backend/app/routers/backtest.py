@@ -40,10 +40,15 @@ router = APIRouter(prefix="/backtest", tags=["backtest"])
 
 
 def _validate_submission(request: BacktestRunRequest):
-    """提交前共用同一套运行时校验；失败抛 StrategyValidationError（映射 422）。"""
-    validate_strategy_runtime(
+    """提交前共用同一套运行时校验；失败抛 StrategyValidationError（映射 422）。
+
+    通过后把类型强转 + 默认值填充后的 validated_params 写回 request，
+    使后续运行实际采用校验后的参数，而不是原始字符串/缺省值。
+    """
+    _, validated_params = validate_strategy_runtime(
         request.strategy_id, request.strategy_params, request.mode
     )
+    request.strategy_params = validated_params
 
 
 def _get_run_or_404(run_id: int, current_user: User, db: Session):

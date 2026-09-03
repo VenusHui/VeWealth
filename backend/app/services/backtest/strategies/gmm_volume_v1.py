@@ -188,7 +188,9 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
         threshold = float(params.get("threshold", 0.7))
         max_comp = int(params.get("max_components", 5))
         refit_int = int(params.get("refit_interval", 5))
-        max_workers = int(params.get("max_workers", 4))
+        # max_workers 已从 param_schema 移除（基础设施项），不再接受用户配置；
+        # 内部固定默认并 clamp 到 [1, 8]，避免外部传超大值 fork 出过量进程。
+        max_workers = min(8, max(1, int(params.get("max_workers", 4))))
 
         # Pre-serialize all symbol data into the shared global list
         global _SHARED_DATA
