@@ -110,7 +110,8 @@ class ScreenerServicePersistenceTests(unittest.TestCase):
 
     def test_start_scan_persists_and_returns_state(self):
         resp = self.service.start_scan("ma_cross_v1", {}, ["main"], True, 1)
-        self.assertEqual(resp["status"], "pending")
+        # 前端契约：进行中暴露为 "scanning"，DB 内部仍为 "pending"
+        self.assertEqual(resp["status"], "scanning")
         self.assertTrue(resp["scan_id"].startswith("scan_"))
         self.assertEqual(resp["progress"]["total"], 3)
         self.assertEqual(resp["exclude_st"], True)
@@ -182,9 +183,11 @@ class ScreenerServicePersistenceTests(unittest.TestCase):
             db.commit()
 
         scan = self.service.cancel_scan(resp["scan_id"], 1)
-        self.assertEqual(scan["status"], "running")  # 运行中不强制翻转
+        # 运行中不强制翻转 DB 状态；对外契约仍为 "scanning"
+        self.assertEqual(scan["status"], "scanning")
         with self.session_factory() as db:
             row = db.query(ScreenerJob).filter_by(scan_id=resp["scan_id"]).first()
+            self.assertEqual(row.status, "running")
             self.assertEqual(row.cancel_requested, 1)
 
     def test_run_scan_stops_when_token_cancelled(self):
@@ -235,6 +238,39 @@ class ScreenerServicePersistenceTests(unittest.TestCase):
         with self.session_factory() as db:
             row = db.query(ScreenerJob).filter_by(scan_id=scan_id).first()
             self.assertEqual(row.status, "cancelled")
+
+    # --- must-fix: queue-full orphan + frontend scanning contract ---
+
+    def test_start_scan_exposes_scanning_contract(self):
+        """进行中任务对外必须暴露 "scanning"，不能直接暴露 pending/running。"""
+        resp = self.service.start_scan("ma_cross_v1", {}, ["main"], True, 1)
+        self.assertEqual(resp["status"], "scanning")
+
+        with self.session_factory() as db:
+            row = db.query(ScreenerJob).filter_by(scan_id=resp["scan_id"]).first()
+            row.status = "running"
+            row.stage = "running"
+            db.commit()
+
+        fetched = self.service.get_scan(resp["scan_id"], 1)
+        self.assertEqual(fetched["status"], "scanning")
+
+        listed = self.service.list_scans(1)
+        self.assertEqual(listed[0]["status"], "scanning")
+
+    def test_start_scan_queue_full_marks_failed_not_orphan(self):
+        """队列满时入队抛 ValueError：已持久化的 pending 行必须标记 failed。"""
+        self.executor.submit.side_effect = ValueError(
+            "后台任务队列已满（pending >= 40），请稍后重试"
+        )
+        with self.assertRaises(ValueError):
+            self.service.start_scan("ma_cross_v1", {}, ["main"], True, 1)
+
+        with self.session_factory() as db:
+            row = db.query(ScreenerJob).filter_by(user_id=1).first()
+            self.assertIsNotNone(row)
+            self.assertEqual(row.status, "failed")
+            self.assertIn("队列已满", row.error or "")
 
 
 def _make_market_df(symbol: str, n: int = 120) -> pd.DataFrame:

@@ -200,6 +200,29 @@ class BacktestJobManager:
         finally:
             db.close()
 
+    def _mark_job_failed(self, job_id: str, error: str) -> None:
+        """把已持久化的 pending 任务标记为 failed。
+
+        用于同一 job 无法真正入队时（如后台队列已满），避免留下
+        "永不运行"的孤儿 pending 任务。
+        """
+        db = SessionLocal()
+        try:
+            row = (
+                db.query(BacktestJob)
+                .filter(BacktestJob.job_id == job_id)
+                .first()
+            )
+            if not row:
+                return
+            row.status = "failed"
+            row.stage = "failed"
+            row.error = error
+            row.updated_at = datetime.utcnow()
+            db.commit()
+        finally:
+            db.close()
+
     def _spawn_runner(self, job_id: str):
         if job_id not in self._running_locks:
             self._running_locks[job_id] = Lock()
@@ -213,7 +236,14 @@ class BacktestJobManager:
             finally:
                 lock.release()
 
-        background_task_executor.submit(job_id, runner)
+        try:
+            background_task_executor.submit(job_id, runner)
+        except ValueError as e:
+            # 队列已满：任务无法真正入队。DB 里已持久化的 pending 行必须标记为
+            # failed，否则会成为"永不运行"的孤儿任务（create_job / retry_job 共用此路径）。
+            logger.warning("回测任务 %s 入队失败，标记为 failed: %s", job_id, e)
+            self._mark_job_failed(job_id, str(e))
+            raise
 
     def _run_job(self, token: CancelToken, job_id: str):
         db = SessionLocal()

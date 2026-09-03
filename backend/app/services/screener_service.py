@@ -46,6 +46,25 @@ _RESTART_RECOVERY_ERROR = "服务重启中断，请手动重试"
 # Active statuses used for idempotency / duplicate-submission checks
 _ACTIVE_STATUSES = ("pending", "running")
 
+# 前端契约：扫描进行中统一暴露为 "scanning"，终态为 completed/failed。
+# pending/running 是后端持久化与取消协作所需的内部状态，不对前端暴露。
+_FRONTEND_CONTRACT_STATUS = {
+    "pending": "scanning",
+    "running": "scanning",
+    "completed": "completed",
+    "failed": "failed",
+    "cancelled": "cancelled",
+}
+
+
+def _contract_status(status: str) -> str:
+    """把内部持久化状态映射为前端已知的 status 契约。
+
+    未升级前端仅在 status == "scanning" 时轮询刷新；若直接暴露
+    pending/running，frontend 会因收到未知状态而停止轮询，扫描看似卡死。
+    """
+    return _FRONTEND_CONTRACT_STATUS.get(status, status)
+
 
 class ScreenerService:
     """Market-wide stock screening using registered strategies."""
@@ -125,14 +144,21 @@ class ScreenerService:
         finally:
             db.close()
 
-        background_task_executor.submit(
-            scan_id,
-            self._run_scan,
-            scan_id,
-            strategy_id,
-            params,
-            universe,
-        )
+        try:
+            background_task_executor.submit(
+                scan_id,
+                self._run_scan,
+                scan_id,
+                strategy_id,
+                params,
+                universe,
+            )
+        except ValueError as e:
+            # 队列已满：任务无法入队。DB 里已持久化的 pending 行必须立刻标记为
+            # failed，否则会成为一个"永不运行"的孤儿任务，且占住该用户的幂等名额。
+            logger.warning("扫描 %s 入队失败，标记为 failed: %s", scan_id, e)
+            self._mark_failed(scan_id, str(e))
+            raise
         return response
 
     def get_scan(self, scan_id: str, user_id: int) -> dict | None:
@@ -645,7 +671,7 @@ class ScreenerService:
         progress = job.progress or {}
         return {
             "scan_id": job.scan_id,
-            "status": job.status,
+            "status": _contract_status(job.status),
             "strategy_id": job.strategy_id,
             "strategy_name": job.strategy_name,
             "boards": job.boards or [],
@@ -667,7 +693,7 @@ class ScreenerService:
             "scan_id": job.scan_id,
             "strategy_id": job.strategy_id,
             "strategy_name": job.strategy_name or "",
-            "status": job.status,
+            "status": _contract_status(job.status),
             "boards": job.boards or [],
             "exclude_st": bool(job.exclude_st),
             "total_scanned": progress.get("total", 0),
