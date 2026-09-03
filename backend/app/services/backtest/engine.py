@@ -408,16 +408,19 @@ def run_portfolio(
                 else 0.0
             )
         ts_text = trade_date.strftime("%Y-%m-%d 00:00:00")
-        equity_curve.append({"datetime": ts_text, "equity": round(equity, 10)})
-        snapshots.append(
-            {
-                "snapshot_time": ts_text,
-                "equity": round(equity, 10),
-                "cash": round(cash, 10),
-                "position_value": round(position_value, 10),
-                "holdings": holdings,
-            }
-        )
+        # trade_start：warmup 交易日（< trade_start）不写入净值/持仓快照，避免前置
+        # 一批 0% 收益日拉长年化跨度、稀释 Sharpe（与上方订单门保持一致）。
+        if trade_start_ts is None or trade_date >= trade_start_ts:
+            equity_curve.append({"datetime": ts_text, "equity": round(equity, 10)})
+            snapshots.append(
+                {
+                    "snapshot_time": ts_text,
+                    "equity": round(equity, 10),
+                    "cash": round(cash, 10),
+                    "position_value": round(position_value, 10),
+                    "holdings": holdings,
+                }
+            )
 
     final_positions = [
         {

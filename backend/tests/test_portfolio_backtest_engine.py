@@ -439,6 +439,63 @@ class WarmupTradeStartJointTests(unittest.TestCase):
         self.assertTrue(
             all(t["datetime"][:10] >= "2026-01-07" for t in result.trades)
         )
+        # 净值曲线与订单门保持一致：首点即 trade_start，不把 warmup 平段写进曲线
+        curve_dates = [p["datetime"][:10] for p in result.equity_curve]
+        self.assertEqual(curve_dates[0], "2026-01-07")
+        self.assertNotIn("2026-01-05", curve_dates)
+
+    def test_trade_start_gates_equity_curve_and_annual_return_span(self):
+        """净值曲线不带 warmup 前缀，年化跨度用 start→end 而非 warmup→end。
+
+        回归点：此前 equity_curve/snapshots 对每个 bar 日期无条件写入，warmup 回拉
+        出的平段被并入曲线 → first_date 前移、annual_return 被系统性低估、Sharpe 被稀释。
+        """
+        n = 15
+        opens = [10.0 + 0.1 * i for i in range(n)]
+        frame = _bars("000001", opens, opens)  # 2026-01-05..2026-01-26
+        trade_start = "2026-01-13"
+        orders = pd.DataFrame(
+            [
+                {
+                    "trade_date": frame.iloc[5]["datetime"],  # 2026-01-12
+                    "symbol": "000001",
+                    "position_size_pct": 1.0,
+                    "reason": "first_day",
+                }  # 信号 01-12 → 执行 01-13 == start → 保留
+            ]
+        )
+        result = run_portfolio(
+            {"000001": frame},
+            orders,
+            100_000.0,
+            CostModel(
+                commission_rate=0.001,
+                min_commission=0.0,
+                stamp_tax_rate=0.001,
+                slippage_rate=0.01,
+            ),
+            hold_days=5,
+            default_position_size_pct=1.0,
+            trade_start=trade_start,
+        )
+
+        curve_dates = [p["datetime"][:10] for p in result.equity_curve]
+        self.assertEqual(curve_dates[0], trade_start)
+        self.assertNotIn("2026-01-05", curve_dates)
+        self.assertTrue(all(d >= trade_start for d in curve_dates))
+
+        gated = calc_summary(result.equity_curve, result.trades, 100_000.0)
+        # 人为把 warmup 平段塞回曲线首部，模拟门控前的行为：first_date 前移 → 年化被压低
+        polluted_points = [
+            {"datetime": d.strftime("%Y-%m-%d 00:00:00"), "equity": 100_000.0}
+            for d in frame.loc[
+                frame["datetime"] < pd.Timestamp(trade_start), "datetime"
+            ]
+        ]
+        polluted = calc_summary(
+            polluted_points + result.equity_curve, result.trades, 100_000.0
+        )
+        self.assertGreater(gated["annual_return"], polluted["annual_return"])
 
 
 class DateAwareMetricsTests(unittest.TestCase):
