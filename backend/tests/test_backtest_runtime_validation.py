@@ -25,7 +25,7 @@ from app.services.backtest.validators.strategy_validator import (
     validate_strategy_class,
     validate_strategy_params,
 )
-from app.routers.backtest import create_backtest_job
+from app.routers.backtest import _validate_submission, create_backtest_job
 
 
 class RuntimeValidationTests(unittest.TestCase):
@@ -128,6 +128,39 @@ class RuntimeValidationTests(unittest.TestCase):
             asyncio.run(create_backtest_job(request, current_user=MagicMock()))
         self.assertEqual(cm.exception.status_code, 422)
         self.assertTrue(cm.exception.detail)
+
+    def test_strategy_select_preserves_non_schema_params(self):
+        """strategy_select 模式经 _validate_submission 后，非 schema 业务键应保留。
+
+        回归：写回 validated_params（只含 param_schema 键）会丢弃 boards / exclude_st /
+        policy_profile，导致 _run_strategy_select_mode 读取 params["boards"] /
+        params["exclude_st"] 时回退到默认值（["main"] / True），用户所选板块与「去 ST」
+        开关静默失效。写回时应只覆盖 schema 键，保留其余透传键。
+        """
+        request = BacktestRunRequest(
+            name="t",
+            strategy_id="ma_cross_v1",
+            strategy_params={
+                "short_window": "5",
+                "long_window": "20",
+                "boards": ["gem", "star"],
+                "exclude_st": False,
+            },
+            mode="strategy_select",
+            universe_type="all",
+            symbols=[],
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 31),
+            initial_cash=100000,
+        )
+        _validate_submission(request)
+        params = request.strategy_params
+        # 非 schema 键原样透传
+        self.assertEqual(params["boards"], ["gem", "star"])
+        self.assertIs(params["exclude_st"], False)
+        # schema 键仍被强转为 int
+        self.assertEqual(params["short_window"], 5)
+        self.assertEqual(params["long_window"], 20)
 
 
 if __name__ == "__main__":

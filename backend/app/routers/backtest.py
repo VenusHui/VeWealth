@@ -42,13 +42,20 @@ router = APIRouter(prefix="/backtest", tags=["backtest"])
 def _validate_submission(request: BacktestRunRequest):
     """提交前共用同一套运行时校验；失败抛 StrategyValidationError（映射 422）。
 
-    通过后把类型强转 + 默认值填充后的 validated_params 写回 request，
-    使后续运行实际采用校验后的参数，而不是原始字符串/缺省值。
+    通过后把类型强转 + 默认值填充后的 validated_params 写回 request，使后续运行实际
+    采用校验后的参数，而不是原始字符串/缺省值。
+
+    注意：validated_params 只含 strategy.param_schema 里的键；而 boards / exclude_st /
+    policy_profile 等 strategy_select 业务键由前端一并放入 strategy_params，并不在任何
+    策略的 param_schema 中。写回时需保留这些原始键透传，仅用校验值覆盖 schema 键，
+    否则板块筛选与「去 ST」会被静默重置为默认值（service._run_strategy_select_mode 读取
+    params["boards"] / params["exclude_st"]）。
     """
     _, validated_params = validate_strategy_runtime(
         request.strategy_id, request.strategy_params, request.mode
     )
-    request.strategy_params = validated_params
+    # dict | dict：以原始参数为基底，仅覆盖已校验/强转的 schema 键；非 schema 键照原值透传
+    request.strategy_params = dict(request.strategy_params) | validated_params
 
 
 def _get_run_or_404(run_id: int, current_user: User, db: Session):
