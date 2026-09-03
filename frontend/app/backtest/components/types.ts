@@ -17,6 +17,13 @@ export type Strategy = {
     min?: number
     max?: number
   }>
+  usable: boolean
+  unusable_reasons: string[]
+  supported_modes: string[]
+  min_history_bars?: number
+  signal_timestamp?: string
+  score_definition?: string
+  exit_rule?: string
 }
 
 export type RunItem = {

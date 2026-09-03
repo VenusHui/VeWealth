@@ -36,6 +36,7 @@ def run_for_symbol(
     strategy_params: dict,
     init_cash: float,
     cost_model: CostModel,
+    trade_start: str | None = None,
 ) -> SymbolRunResult:
     warnings: list[str] = []
     trades: list[dict[str, Any]] = []
@@ -54,12 +55,21 @@ def run_for_symbol(
     strategy = get_strategy(strategy_id)
     signal_df = strategy.generate_signals(work_df, strategy_params)
 
+    # trade_start 用于在 warmup 取数后，仅从用户指定开始日起执行交易/记录净值，
+    # 而指标/信号仍基于含 warmup 的完整序列计算。
+    trade_start_ts = pd.to_datetime(trade_start) if trade_start else None
+
     cash = init_cash
     shares = 0
     entry_price = 0.0
     entry_date = None
 
     for i in range(0, len(signal_df) - 1):
+        curr = signal_df.iloc[i]
+        nxt = signal_df.iloc[i + 1]
+        ts = curr["datetime"]
+        if trade_start_ts is not None and ts < trade_start_ts:
+            continue
         curr = signal_df.iloc[i]
         nxt = signal_df.iloc[i + 1]
         ts = curr["datetime"]

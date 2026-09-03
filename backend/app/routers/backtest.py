@@ -30,11 +30,20 @@ from app.schemas.backtest import (
     BacktestStrategyManagementDetailResponse,
 )
 from app.services.backtest import backtest_service, backtest_job_manager
+from app.services.backtest.registry import validate_strategy_runtime
 from app.services.backtest.strategy_management_service import (
     backtest_strategy_management_service,
 )
+from app.services.backtest.validators.strategy_validator import StrategyValidationError
 
 router = APIRouter(prefix="/backtest", tags=["backtest"])
+
+
+def _validate_submission(request: BacktestRunRequest):
+    """提交前共用同一套运行时校验；失败抛 StrategyValidationError（映射 422）。"""
+    validate_strategy_runtime(
+        request.strategy_id, request.strategy_params, request.mode
+    )
 
 
 def _get_run_or_404(run_id: int, current_user: User, db: Session):
@@ -146,10 +155,15 @@ async def run_backtest(
     db: Session = Depends(get_db),
 ):
     try:
+        _validate_submission(request)
         result = backtest_service.run_backtest(
             request=request, current_user=current_user, db=db
         )
         return BacktestRunResponse(data=result)
+    except StrategyValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=e.errors
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
@@ -380,8 +394,14 @@ async def create_backtest_job(
     request: BacktestRunRequest,
     current_user: User = Depends(get_current_active_user),
 ):
-    job = backtest_job_manager.create_job(request, current_user)
-    return BacktestJobCreateResponse(data=job)
+    try:
+        _validate_submission(request)
+        job = backtest_job_manager.create_job(request, current_user)
+        return BacktestJobCreateResponse(data=job)
+    except StrategyValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=e.errors
+        )
 
 
 @router.get("/jobs", response_model=BacktestJobListResponse)

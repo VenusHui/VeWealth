@@ -13,6 +13,14 @@ class VolumeShrinkDropV1Strategy(BaseStrategy, BaseStrategyV2):
     name = "连续缩量下跌反弹 v1"
     description = "连续N天缩量下跌，下一交易日开盘买入，持有M天后开盘卖出。"
 
+    #: 策略能力契约：补齐手动买卖信号，两种模式均可运行
+    supported_modes = {"manual_symbols", "strategy_select"}
+    #: consecutive_days(10) + hold_days(60) + 1，保证完整持有周期有足量 bar
+    min_history_bars = 71
+    signal_timestamp = "next_open"
+    score_definition = "固定 1.0（连续 N 天缩量下跌命中即入选）"
+    exit_rule = "手动模式持有 hold_days 天后次日开盘卖出；自动选股由 policy 固定持有"
+
     @classmethod
     def param_schema(cls) -> list[dict]:
         return [
@@ -68,8 +76,52 @@ class VolumeShrinkDropV1Strategy(BaseStrategy, BaseStrategyV2):
         return "vsd_v1_default"
 
     def generate_signals(self, df: pd.DataFrame, params: dict) -> pd.DataFrame:
-        # 保持 v1 手动回测链路兼容：该策略在 engine/manual 模式下不依赖买卖信号列。
-        return df
+        """手动模式买卖信号：与 strategy_select 候选触发条件一致。
+
+        连续 N 天缩量下跌窗口的最后一天置 buy_signal=True，引擎于次日开盘买入；
+        买入后持有 hold_days 天，于第 hold_days 天置 sell_signal=True，引擎次日开盘卖出。
+        """
+        min_price_drop_pct = float(params.get("min_price_drop_pct", -1.0))
+        min_volume_shrink_pct = float(params.get("min_volume_shrink_pct", 10.0))
+        consecutive_days = int(params.get("consecutive_days", 3))
+        hold_days = int(params.get("hold_days", 5))
+
+        work = df.copy().reset_index(drop=True)
+        work["datetime"] = pd.to_datetime(work["datetime"])
+        work = work.sort_values("datetime").reset_index(drop=True)
+        work["buy_signal"] = False
+        work["sell_signal"] = False
+
+        if len(work) < consecutive_days + 2:
+            return work
+
+        work["close_prev"] = work["close"].shift(1)
+        work["vol_prev"] = work["volume"].shift(1)
+        work["price_drop_pct"] = (work["close"] / work["close_prev"] - 1.0) * 100
+        work["volume_shrink_pct"] = (
+            (work["vol_prev"] - work["volume"]) / work["vol_prev"]
+        ) * 100
+        work["daily_pass"] = (work["price_drop_pct"] <= min_price_drop_pct) & (
+            work["volume_shrink_pct"] >= min_volume_shrink_pct
+        )
+
+        for i in range(consecutive_days, len(work)):
+            window = work.iloc[i - consecutive_days + 1 : i + 1]
+            if not bool(window["daily_pass"].all()):
+                continue
+            # 引擎在 buy_signal 的下一根 bar 开盘买入，因此把信号打在窗口末日 i，
+            # 实际买入日为 i+1。
+            buy_idx = i + 1
+            if buy_idx >= len(work):
+                continue
+            work.at[i, "buy_signal"] = True
+            # 引擎在 sell_signal 的下一根 bar 开盘卖出。买入日为 i+1，
+            # 卖出日为 i+1+hold_days，故 sell_signal 打在 i+hold_days。
+            sell_idx = i + hold_days
+            if sell_idx < len(work):
+                work.at[sell_idx, "sell_signal"] = True
+
+        return work
 
     def generate_candidates(
         self, market_df: pd.DataFrame, params: dict

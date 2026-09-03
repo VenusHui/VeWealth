@@ -26,7 +26,7 @@ import type {
   TradeRow,
 } from './components/types'
 import { AppPage, CompactStatCard } from '../components/ui-shell'
-import { parseStrategyParams } from './calc'
+import { parseStrategyParams, validateStrategyParams } from './calc'
 
 const API_BASE_URL = getApiBaseUrl()
 
@@ -273,7 +273,11 @@ export default function BacktestPage() {
         const resp = await axios.get(`${API_BASE_URL}/api/backtest/strategies`, {
           headers: getAuthHeader(),
         })
-        const list: Strategy[] = Array.isArray(resp.data?.data) ? (resp.data.data as Strategy[]) : []
+        // 下拉仅展示可用策略：不可用策略已在后端判定（无信号/契约不完整），
+        // 前端不再把「合法参数但稳定 0 命中」的策略透出给用户。
+        const list: Strategy[] = Array.isArray(resp.data?.data)
+          ? (resp.data.data as Strategy[]).filter((s) => s.usable)
+          : []
         setStrategies(list)
         if (list.length > 0) {
           setStrategyId(list[0].strategy_id)
@@ -320,6 +324,16 @@ export default function BacktestPage() {
     })
     setStrategyParams(defaults)
   }, [selectedStrategy])
+
+  // 切换到仅支持部分模式的策略时，自动回落到该策略支持的第一个模式，
+  // 避免停留在不可用模式上（配合下拉禁用逻辑）。
+  useEffect(() => {
+    if (!selectedStrategy) return
+    const supported = selectedStrategy.supported_modes
+    if (Array.isArray(supported) && supported.length > 0 && !supported.includes(mode)) {
+      setMode(supported[0] as 'manual_symbols' | 'strategy_select')
+    }
+  }, [selectedStrategy, mode])
 
   useEffect(() => {
     if (!recordsPolling) return
@@ -379,6 +393,15 @@ export default function BacktestPage() {
       setLoading(true)
       setError('')
       setResult(null)
+      if (!strategyId) {
+        setError('请选择策略')
+        return
+      }
+      const validation = validateStrategyParams(selectedStrategy, strategyParams, mode)
+      if (!validation.valid) {
+        setError(validation.errors.join('；'))
+        return
+      }
       const castParams = parseStrategyParams(strategyParams)
       if (mode === 'strategy_select' && boardFilters.length === 0) {
         setError('请至少选择一个板块')

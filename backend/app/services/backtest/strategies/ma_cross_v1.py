@@ -13,6 +13,14 @@ class MACrossV1Strategy(BaseStrategy, BaseStrategyV2):
     name = "双均线策略 v1"
     description = "短均线上穿长均线买入，下穿卖出。仅做多。"
 
+    #: 策略能力契约：手动信号与自动选股均可运行
+    supported_modes = {"manual_symbols", "strategy_select"}
+    #: long_window 上限 240，保证长配置也能吃到足量 warmup bar
+    min_history_bars = 240
+    signal_timestamp = "next_open"
+    score_definition = "金叉日 (ma_short - ma_long) / ma_long 作为信号强度"
+    exit_rule = "死叉（短均线下穿长均线）次日开盘卖出；仅做多"
+
     @classmethod
     def param_schema(cls) -> list[dict]:
         return [
