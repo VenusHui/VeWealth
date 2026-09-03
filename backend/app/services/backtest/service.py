@@ -15,7 +15,7 @@ from app.models.security_universe import SecurityUniverse
 from app.models.user import User
 from app.schemas.backtest import BacktestRunRequest
 from app.services.backtest.costs import CostModel
-from app.services.backtest.engine import SecurityRule, run_for_symbol, run_portfolio
+from app.services.backtest.engine import SecurityRule, run_portfolio
 from app.services.backtest.metrics import calc_summary
 from app.services.backtest.policies.base import PolicyContext
 from app.services.backtest.policies.registry import resolve_profile

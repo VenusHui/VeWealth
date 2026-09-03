@@ -17,6 +17,7 @@ from app.services.backtest.engine import (
 )
 from app.services.backtest.metrics import calc_summary
 from app.services.backtest.service import BacktestService
+from app.services.backtest.strategies.ma_cross_v1 import MACrossV1Strategy
 
 
 def _bars(symbol: str, opens: list[float], closes: list[float]) -> pd.DataFrame:
@@ -137,6 +138,21 @@ class PortfolioBacktestEngineTests(unittest.TestCase):
         self.assertEqual(price_limit_rate("830001", date(2026, 1, 1)), 0.30)
         st_rule = SecurityRule(board="main", is_st=True)
         self.assertEqual(price_limit_rate("600000", date(2026, 1, 1), st_rule), 0.05)
+        gem_st_rule = SecurityRule(board="gem", is_st=True)
+        self.assertEqual(
+            price_limit_rate("300001", date(2020, 8, 23), gem_st_rule), 0.05
+        )
+        self.assertEqual(
+            price_limit_rate("300001", date(2020, 8, 24), gem_st_rule), 0.20
+        )
+        self.assertEqual(
+            price_limit_rate("688001", date(2026, 1, 1), SecurityRule("star", True)),
+            0.20,
+        )
+        self.assertEqual(
+            price_limit_rate("830001", date(2026, 1, 1), SecurityRule("bse", True)),
+            0.30,
+        )
         self.assertTrue(is_limit_up(10.5, 10.0, "600000", date(2026, 1, 1), st_rule))
         self.assertTrue(is_limit_down(9.5, 10.0, "600000", date(2026, 1, 1), st_rule))
 
@@ -181,6 +197,78 @@ class PortfolioBacktestEngineTests(unittest.TestCase):
         sell = next(trade for trade in result.trades if trade["side"] == "sell")
         self.assertEqual(sell["datetime"][:10], "2026-01-08")
         self.assertTrue(any("跌停" in warning for warning in result.warnings))
+
+    def test_slippage_price_is_clamped_to_daily_price_limits(self):
+        buy_frame = _bars("600000", [10.0, 10.99, 10.99], [10.0, 10.0, 10.0])
+        order = pd.DataFrame(
+            [
+                {
+                    "trade_date": "2026-01-05",
+                    "symbol": "600000",
+                    "position_size_pct": 0.5,
+                }
+            ]
+        )
+        buy_result = run_portfolio(
+            {"600000": buy_frame},
+            order,
+            100_000.0,
+            CostModel(0.0, 0.0, 0.0, 0.01),
+            hold_days=5,
+            default_position_size_pct=0.5,
+        )
+        buy = next(trade for trade in buy_result.trades if trade["side"] == "buy")
+        self.assertEqual(buy["price"], 11.0)
+
+        sell_frame = _bars("600000", [10.0, 10.0, 9.01], [10.0, 10.0, 9.01])
+        sell_result = run_portfolio(
+            {"600000": sell_frame},
+            order,
+            100_000.0,
+            CostModel(0.0, 0.0, 0.0, 0.01),
+            hold_days=1,
+            default_position_size_pct=0.5,
+        )
+        sell = next(trade for trade in sell_result.trades if trade["side"] == "sell")
+        self.assertEqual(sell["price"], 9.0)
+
+    def test_intraday_input_uses_first_open_and_last_close(self):
+        frame = pd.DataFrame(
+            {
+                "datetime": pd.to_datetime(
+                    [
+                        "2026-01-05 09:30:00",
+                        "2026-01-05 15:00:00",
+                        "2026-01-06 09:30:00",
+                        "2026-01-06 15:00:00",
+                    ]
+                ),
+                "open": [10.0, 10.5, 10.2, 10.8],
+                "close": [10.5, 10.0, 10.6, 11.0],
+                "symbol": ["000001"] * 4,
+            }
+        )
+        result = run_portfolio(
+            {"000001": frame},
+            pd.DataFrame(
+                [
+                    {
+                        "trade_date": "2026-01-05",
+                        "symbol": "000001",
+                        "position_size_pct": 0.5,
+                    }
+                ]
+            ),
+            100_000.0,
+            CostModel(0.0, 0.0, 0.0, 0.0),
+            hold_days=5,
+            default_position_size_pct=0.5,
+        )
+        buy = next(trade for trade in result.trades if trade["side"] == "buy")
+        self.assertEqual(buy["price"], 10.2)
+        self.assertEqual(
+            result.positions_snapshot[-1]["holdings"][0]["last_price"], 11.0
+        )
 
 
 class UnifiedModeTests(unittest.TestCase):
@@ -257,6 +345,11 @@ class UnifiedModeTests(unittest.TestCase):
 
         self.assertEqual(manual["trades"], selected["trades"])
         self.assertEqual(manual["equity_curve"], selected["equity_curve"])
+
+    def test_ma_schema_exposes_unified_portfolio_defaults(self):
+        params = {item["key"]: item for item in MACrossV1Strategy.param_schema()}
+        self.assertEqual(params["position_size_pct"]["default"], 0.1)
+        self.assertEqual(params["hold_days"]["default"], 5)
 
 
 class DateAwareMetricsTests(unittest.TestCase):

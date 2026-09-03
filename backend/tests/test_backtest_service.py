@@ -11,7 +11,6 @@ import pandas as pd
 
 from app.services.backtest.service import BacktestService
 from app.services.backtest.costs import CostModel
-from app.services.backtest.engine import SymbolRunResult
 
 
 class BacktestServiceUnitTests(unittest.TestCase):
@@ -271,8 +270,7 @@ class BacktestServiceUnitTests(unittest.TestCase):
 
     # _run_manual_symbols_mode tests
     @patch("app.services.backtest.service.stock_service")
-    @patch("app.services.backtest.service.run_for_symbol")
-    def test_run_manual_symbols_mode_success(self, mock_run, mock_stock_svc):
+    def test_run_manual_symbols_mode_success(self, mock_stock_svc):
         mock_stock_svc.get_daily_data.return_value = (
             pd.DataFrame(
                 {
@@ -283,25 +281,6 @@ class BacktestServiceUnitTests(unittest.TestCase):
             ),
             None,
             None,
-        )
-
-        mock_run.return_value = SymbolRunResult(
-            symbol="000001",
-            equity_curve=[{"datetime": "2026-01-01 00:00:00", "equity": 100000.0}],
-            position_curve=[
-                {
-                    "datetime": "2026-01-01 00:00:00",
-                    "shares": 0,
-                    "close": 10.0,
-                    "market_value": 0.0,
-                    "cash": 100000.0,
-                    "equity": 100000.0,
-                }
-            ],
-            trades=[],
-            warnings=[],
-            last_equity=100000.0,
-            final_position=0,
         )
 
         # Create a mock cost_config with model_dump() to simulate a Pydantic model

@@ -10,7 +10,6 @@ from typing import Any
 import pandas as pd
 
 from app.services.backtest.costs import CostModel
-from app.services.backtest.registry import get_strategy
 
 
 @dataclass(frozen=True)
@@ -59,15 +58,17 @@ def price_limit_rate(
     """返回指定交易日适用的涨跌停比例。"""
 
     resolved = rule or SecurityRule(board=infer_board(symbol))
-    if resolved.is_st:
-        return 0.05
     board = (resolved.board or infer_board(symbol)).lower()
     if board == "bse":
         return 0.30
     if board == "star":
         return 0.20
-    if board == "gem" and pd.Timestamp(trade_date) >= pd.Timestamp("2020-08-24"):
-        return 0.20
+    if board == "gem":
+        if pd.Timestamp(trade_date) >= pd.Timestamp("2020-08-24"):
+            return 0.20
+        return 0.05 if resolved.is_st else 0.10
+    if resolved.is_st:
+        return 0.05
     return 0.10
 
 
@@ -78,6 +79,19 @@ def _limit_price(previous_close: float, rate: float, direction: int) -> float:
     return float(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
+def price_limit_bounds(
+    previous_close: float,
+    symbol: str,
+    trade_date: date | datetime | pd.Timestamp,
+    rule: SecurityRule | None = None,
+) -> tuple[float, float]:
+    rate = price_limit_rate(symbol, trade_date, rule)
+    return (
+        _limit_price(previous_close, rate, -1),
+        _limit_price(previous_close, rate, 1),
+    )
+
+
 def is_limit_up(
     open_price: float,
     previous_close: float,
@@ -85,8 +99,8 @@ def is_limit_up(
     trade_date: date | datetime | pd.Timestamp,
     rule: SecurityRule | None = None,
 ) -> bool:
-    rate = price_limit_rate(symbol, trade_date, rule)
-    return open_price >= _limit_price(previous_close, rate, 1) - 1e-9
+    _, upper_limit = price_limit_bounds(previous_close, symbol, trade_date, rule)
+    return open_price >= upper_limit - 1e-9
 
 
 def is_limit_down(
@@ -96,8 +110,8 @@ def is_limit_down(
     trade_date: date | datetime | pd.Timestamp,
     rule: SecurityRule | None = None,
 ) -> bool:
-    rate = price_limit_rate(symbol, trade_date, rule)
-    return open_price <= _limit_price(previous_close, rate, -1) + 1e-9
+    lower_limit, _ = price_limit_bounds(previous_close, symbol, trade_date, rule)
+    return open_price <= lower_limit + 1e-9
 
 
 def _prepare_market_data(
@@ -113,11 +127,18 @@ def _prepare_market_data(
         work = frame.copy()
         work["datetime"] = pd.to_datetime(work["datetime"])
         work["trade_date"] = work["datetime"].dt.normalize()
-        work = (
-            work.sort_values("datetime")
-            .drop_duplicates(subset=["trade_date"], keep="last")
-            .reset_index(drop=True)
+        work = work.sort_values("datetime")
+        # 行情契约是日线；若上游意外返回日内多 bar，也必须使用首根的
+        # open 与末根的 close，不能把尾盘 bar 的 open 当成次日开盘价。
+        first_bars = work.drop_duplicates(
+            subset=["trade_date"], keep="first"
+        ).set_index("trade_date")
+        work = work.drop_duplicates(subset=["trade_date"], keep="last").set_index(
+            "trade_date"
         )
+        work["open"] = first_bars["open"]
+        work["datetime"] = first_bars["datetime"]
+        work = work.reset_index()
         work["bar_index"] = work.index
         prepared[symbol] = work
     return prepared
@@ -220,7 +241,10 @@ def run_portfolio(
             ):
                 warnings.append(f"{symbol} {trade_date.date()}: 卖出遇跌停，顺延")
                 continue
-            deal_price = cost_model.apply_sell_slippage(raw_open)
+            lower_limit, _ = price_limit_bounds(
+                previous_close, symbol, trade_date, rules.get(symbol)
+            )
+            deal_price = max(cost_model.apply_sell_slippage(raw_open), lower_limit)
             amount = position.shares * deal_price
             fee = cost_model.sell_cost(amount)
             cash += amount - fee
@@ -295,7 +319,10 @@ def run_portfolio(
             )
             requested_pct = max(0.0, min(1.0, requested_pct))
             exposure_budget = min(pretrade_equity * requested_pct, remaining_exposure)
-            deal_price = cost_model.apply_buy_slippage(raw_open)
+            _, upper_limit = price_limit_bounds(
+                previous_close, symbol, trade_date, rules.get(symbol)
+            )
+            deal_price = min(cost_model.apply_buy_slippage(raw_open), upper_limit)
             qty = _max_affordable_quantity(
                 cash, exposure_budget, deal_price, cost_model, lot_size
             )
@@ -399,72 +426,4 @@ def run_portfolio(
         trades=trades,
         warnings=warnings,
         final_positions=final_positions,
-    )
-
-
-@dataclass
-class SymbolRunResult:
-    """旧逐标的接口的返回结构；服务层不再使用。"""
-
-    symbol: str
-    equity_curve: list[dict[str, Any]]
-    position_curve: list[dict[str, Any]]
-    trades: list[dict[str, Any]]
-    warnings: list[str]
-    last_equity: float
-    final_position: int
-
-
-def run_for_symbol(
-    symbol: str,
-    df: pd.DataFrame,
-    strategy_id: str,
-    strategy_params: dict,
-    init_cash: float,
-    cost_model: CostModel,
-) -> SymbolRunResult:
-    """兼容旧调用方，并委托给同一组合级引擎。"""
-
-    strategy = get_strategy(strategy_id, require_usable=True)
-    work = df.copy()
-    work["symbol"] = symbol
-    candidates = strategy.generate_candidates(work, strategy_params)
-    result = run_portfolio(
-        {symbol: work},
-        candidates,
-        init_cash,
-        cost_model,
-        hold_days=int(strategy_params.get("hold_days", 5) or 5),
-        max_total_position_pct=1.0,
-        default_position_size_pct=1.0,
-    )
-    final_position = next(
-        (p["shares"] for p in result.final_positions if p["symbol"] == symbol), 0
-    )
-    last_equity = (
-        float(result.equity_curve[-1]["equity"])
-        if result.equity_curve
-        else float(init_cash)
-    )
-    position_curve = []
-    for snapshot in result.positions_snapshot:
-        holding = next((h for h in snapshot["holdings"] if h["symbol"] == symbol), None)
-        position_curve.append(
-            {
-                "datetime": snapshot["snapshot_time"],
-                "shares": int(holding["qty"]) if holding else 0,
-                "close": float(holding["last_price"]) if holding else 0.0,
-                "market_value": float(holding["market_value"]) if holding else 0.0,
-                "cash": snapshot["cash"],
-                "equity": snapshot["equity"],
-            }
-        )
-    return SymbolRunResult(
-        symbol=symbol,
-        equity_curve=result.equity_curve,
-        position_curve=position_curve,
-        trades=result.trades,
-        warnings=result.warnings,
-        last_equity=last_equity,
-        final_position=final_position,
     )
