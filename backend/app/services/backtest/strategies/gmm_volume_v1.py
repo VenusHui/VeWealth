@@ -45,6 +45,7 @@ _SHARED_DATA: list[_SymbolData] = []
 class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
     strategy_id = "gmm_volume_v1"
     name = "GMM 成交量密度 v1"
+    min_history_bars = 250
     description = (
         "基于 GMM 多峰拟合的成交量密度策略。"
         "滚动窗口内对价格-成交量分布拟合高斯混合模型，"

@@ -1,7 +1,7 @@
 """回测服务"""
 
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 from typing import Any, Callable
 
@@ -19,8 +19,17 @@ from app.services.backtest.engine import SecurityRule, run_portfolio
 from app.services.backtest.metrics import calc_summary
 from app.services.backtest.policies.base import PolicyContext
 from app.services.backtest.policies.registry import resolve_profile
-from app.services.backtest.registry import get_strategy, list_strategies
+from app.services.backtest.registry import (
+    STRATEGY_REGISTRY,
+    get_strategy,
+    list_strategies,
+)
 from app.services.stock_service import stock_service
+
+#: 在 min_history_bars 之上追加的 warmup 缓冲（覆盖滚动指标首段/重拟合）
+WARMUP_BUFFER_BARS = 30
+#: 交易日约占自然日比例，用于把 bar 数换算成回拉自然日（含节假日冗余）
+_CALENDAR_FACTOR = 1.6
 
 
 class BacktestService:
@@ -297,6 +306,49 @@ class BacktestService:
             },
         }
 
+    def _history_min_bars(self, strategy_id: str) -> int:
+        """返回策略声明的最小历史 bar 数（用于 warmup 回拉）。"""
+        strategy_cls = STRATEGY_REGISTRY.get(strategy_id)
+        if not strategy_cls:
+            return 0
+        value = getattr(strategy_cls, "min_history_bars", 0)
+        return int(value) if isinstance(value, int) else 0
+
+    def _fetch_daily_with_warmup(
+        self, symbol: str, start_date: str, end_date: str, strategy_id: str
+    ):
+        """按策略 min_history_bars + warmup 自动回拉起始日期，保证足量 bar。
+
+        返回 (df, effective_start_date)。df 含 start_date 之前的 warmup bar，
+        供 MA250 / GMM250 等长周期策略计算指标；effective_start_date 供执行层
+        以 trade_start 切片，避免 warmup 污染净值/交易。
+        """
+        min_bars = self._history_min_bars(strategy_id)
+        if min_bars <= 0:
+            df, _, _ = stock_service.get_daily_data(symbol, start_date, end_date)
+            return df, start_date
+
+        warmup_bars = min_bars + WARMUP_BUFFER_BARS
+        cal_days = int(warmup_bars * _CALENDAR_FACTOR)
+        eff_start = (
+            datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=cal_days)
+        ).strftime("%Y-%m-%d")
+
+        run_span_days = max(
+            0,
+            (
+                datetime.strptime(end_date, "%Y-%m-%d")
+                - datetime.strptime(start_date, "%Y-%m-%d")
+            ).days,
+        )
+        run_span_bars = int(run_span_days / 1.4)
+        count = max(500, warmup_bars + run_span_bars + 50)
+
+        df, _, _ = stock_service.get_daily_data(
+            symbol, eff_start, end_date, count=count
+        )
+        return df, eff_start
+
     def run_backtest(
         self,
         request: BacktestRunRequest,
@@ -492,10 +544,11 @@ class BacktestService:
                     }
                 )
             try:
-                df, _, _ = stock_service.get_daily_data(
+                df, _ = self._fetch_daily_with_warmup(
                     symbol=symbol,
                     start_date=request.start_date.strftime("%Y-%m-%d"),
                     end_date=request.end_date.strftime("%Y-%m-%d"),
+                    strategy_id=request.strategy_id,
                 )
             except Exception as exc:
                 warnings.append(f"{symbol}: 获取行情失败({exc})，已跳过")
@@ -584,6 +637,7 @@ class BacktestService:
             max_total_position_pct=float(params.get("max_total_position_pct", 1.0)),
             default_position_size_pct=float(params.get("position_size_pct", 0.1)),
             security_rules=security_rules,
+            trade_start=request.start_date.strftime("%Y-%m-%d"),
         )
         warnings.extend(portfolio.warnings)
         if not candidate_frames:

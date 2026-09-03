@@ -12,6 +12,7 @@ class VolumeShrinkDropV1Strategy(BaseStrategy, BaseStrategyV2):
     strategy_id = "volume_shrink_drop_v1"
     name = "连续缩量下跌反弹 v1"
     description = "连续N天缩量下跌，下一交易日开盘买入，持有M天后开盘卖出。"
+    min_history_bars = 71
 
     @classmethod
     def param_schema(cls) -> list[dict]:

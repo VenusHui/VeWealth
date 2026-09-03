@@ -352,6 +352,95 @@ class UnifiedModeTests(unittest.TestCase):
         self.assertEqual(params["hold_days"]["default"], 5)
 
 
+class WarmupTradeStartJointTests(unittest.TestCase):
+    """VEW-24×VEW-23 联合回归：warmup 取数 + trade_start 执行日切片落到统一引擎。"""
+
+    def test_fetch_daily_with_warmup_pulls_back_start_for_250_day_strategy(self):
+        """250 日策略（GMM min_history_bars=250）取数必须回拉起始日，保证足量 bar。
+
+        回归点：若直接按 request.start_date 取数，GMM250 / MA240 在短区间会因
+        "无历史→0 信号" 而失效 —— 这是 VEW-24 要修的根因。
+        """
+        service = BacktestService()
+        captured = {}
+
+        def fake_get_daily_data(symbol, start_date, end_date, count=None):
+            captured["start_date"] = start_date
+            captured["count"] = count
+            n = 320
+            return (
+                pd.DataFrame(
+                    {
+                        "datetime": pd.bdate_range(end_date, periods=n, freq="D"),
+                        "open": [10.0] * n,
+                        "close": [10.0] * n,
+                    }
+                ),
+                None,
+                None,
+            )
+
+        with patch(
+            "app.services.backtest.service.stock_service.get_daily_data",
+            side_effect=fake_get_daily_data,
+        ):
+            df, effective_start = service._fetch_daily_with_warmup(
+                "000001", "2026-01-05", "2026-01-09", "gmm_volume_v1"
+            )
+
+        # GMM min_history_bars=250，回拉 int((250+30)*1.6)=448 自然日
+        self.assertLess(effective_start, "2026-01-05")
+        self.assertEqual(captured["start_date"], effective_start)
+        self.assertEqual(captured["count"], 500)
+        self.assertGreaterEqual(len(df), 250)
+
+    def test_run_portfolio_trade_start_skips_pre_start_orders_keeps_first_day(self):
+        """trade_start 只对执行日 >= trade_start 的订单成交，warmup bar 不污染净值。
+
+        信号落在 warmup bar（01-05 → 执行 01-06 < start）应被跳过；
+        信号落在 start 前一日（01-06 → 执行 01-07 == start）应被保留（首日交易不丢弃）。
+        """
+        opens = [10.0, 10.0, 10.0, 10.0, 10.0]
+        frame = _bars("000001", opens, opens)  # 2026-01-05..01-09
+        orders = pd.DataFrame(
+            [
+                {
+                    "trade_date": frame.iloc[0]["datetime"],
+                    "symbol": "000001",
+                    "position_size_pct": 1.0,
+                    "reason": "warmup",
+                },  # 信号 01-05 → 执行 01-06 < start → 跳过
+                {
+                    "trade_date": frame.iloc[1]["datetime"],
+                    "symbol": "000001",
+                    "position_size_pct": 1.0,
+                    "reason": "first_day",
+                },  # 信号 01-06 → 执行 01-07 == start → 保留
+            ]
+        )
+        result = run_portfolio(
+            {"000001": frame},
+            orders,
+            100_000.0,
+            CostModel(
+                commission_rate=0.001,
+                min_commission=0.0,
+                stamp_tax_rate=0.001,
+                slippage_rate=0.01,
+            ),
+            hold_days=1,
+            default_position_size_pct=1.0,
+            trade_start="2026-01-07",
+        )
+
+        buys = [t for t in result.trades if t["side"] == "buy"]
+        self.assertEqual(len(buys), 1)
+        self.assertEqual(buys[0]["datetime"][:10], "2026-01-07")
+        self.assertTrue(
+            all(t["datetime"][:10] >= "2026-01-07" for t in result.trades)
+        )
+
+
 class DateAwareMetricsTests(unittest.TestCase):
     def test_annual_return_uses_elapsed_calendar_dates_not_event_count(self):
         curve = [

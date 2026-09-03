@@ -12,6 +12,7 @@ class MACrossV1Strategy(BaseStrategy, BaseStrategyV2):
     strategy_id = "ma_cross_v1"
     name = "双均线策略 v1"
     description = "短均线上穿长均线产生候选，次日开盘买入并按持有天数退出。仅做多。"
+    min_history_bars = 240
 
     @classmethod
     def param_schema(cls) -> list[dict]:

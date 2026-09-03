@@ -173,8 +173,14 @@ def run_portfolio(
     default_position_size_pct: float = 0.1,
     security_rules: dict[str, SecurityRule] | None = None,
     lot_size: int = 100,
+    trade_start: str | None = None,
 ) -> PortfolioRunResult:
-    """按交易日推进共享现金账户；订单日期是信号日，最早次日开盘成交。"""
+    """按交易日推进共享现金账户；订单日期是信号日，最早次日开盘成交。
+
+    trade_start：warmup 取数时信号可能落在 start_date 之前的 bar。为避免 warmup
+    污染净值/交易，仅对执行日 >= trade_start 的订单成交；warmup 最后一 bar 的信号
+    若在首日开盘成交，则被保留（不丢弃首日交易）。
+    """
 
     if initial_cash <= 0:
         raise ValueError("initial_cash 必须大于 0")
@@ -182,6 +188,7 @@ def run_portfolio(
         raise ValueError("lot_size 必须大于 0")
 
     data = _prepare_market_data(market_data_map)
+    trade_start_ts = pd.to_datetime(trade_start) if trade_start else None
     rules = security_rules or {}
     warnings: list[str] = []
     trades: list[dict[str, Any]] = []
@@ -217,6 +224,8 @@ def run_portfolio(
                 )
                 continue
             buy_date = future.iloc[0]["trade_date"]
+            if trade_start_ts is not None and buy_date < trade_start_ts:
+                continue
             payload = order.to_dict()
             payload["signal_date"] = signal_date
             buys_by_date.setdefault(buy_date, []).append(payload)
