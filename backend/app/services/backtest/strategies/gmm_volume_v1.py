@@ -11,6 +11,7 @@ _os.environ["OMP_NUM_THREADS"] = "1"
 
 import logging
 import multiprocessing
+import threading
 from dataclasses import dataclass
 
 import numpy as np
@@ -23,13 +24,12 @@ from app.utils.data_processor import DataProcessor
 _logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------
-# Shared state for fork-based multiprocessing.
-# The parent populates this list BEFORE spawning workers. With fork(),
-# children inherit it via copy-on-write — no pickling needed.
-# Workers receive only (start, end) index ranges.
-#
-# NOT THREAD-SAFE: generate_candidates resets this list on each call.
-# Concurrent calls from different threads will corrupt the data.
+# Per-job share state for fork-based multiprocessing.
+# The parent builds _SymbolData for THIS job and hands it to a per-job
+# worker via thread-local storage (single-process path) or the pool
+# initializer (multi-process path), so concurrent jobs never share a
+# mutable global that could clobber each other. Workers receive only
+# (start, end) index ranges and read their own copy.
 # ------------------------------------------------------------------
 
 
@@ -39,7 +39,18 @@ class _SymbolData:
     chart_data: list[dict]
 
 
-_SHARED_DATA: list[_SymbolData] = []
+# Thread-local holder instead of a module-level global: each background job
+# runs in its own thread, so concurrent scans/backtests no longer overwrite
+# each other's data. The pool initializer sets this inside each forked child.
+_DATA_LOCAL = threading.local()
+
+
+def _set_shared_data(symbol_data: list[_SymbolData]) -> None:
+    _DATA_LOCAL.symbol_data = symbol_data
+
+
+def _get_shared_data() -> list[_SymbolData]:
+    return getattr(_DATA_LOCAL, "symbol_data", [])
 
 
 class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
@@ -192,10 +203,8 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
         refit_int = int(params.get("refit_interval", 5))
         max_workers = int(params.get("max_workers", 4))
 
-        # Pre-serialize all symbol data into the shared global list
-        global _SHARED_DATA
-        _SHARED_DATA = []
-
+        # Pre-serialize all symbol data for THIS job only (job-isolated)
+        symbol_data: list[_SymbolData] = []
         for sym in symbols:
             sym_df = (
                 work[work["symbol"] == sym]
@@ -204,25 +213,32 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
             )
             if len(sym_df) < lookback + 2:
                 continue
-            _SHARED_DATA.append(
+            symbol_data.append(
                 _SymbolData(
                     sym_id=str(sym).strip(),
                     chart_data=_build_chart_data(sym_df),
                 )
             )
 
-        total = len(_SHARED_DATA)
+        total = len(symbol_data)
         if total == 0:
             return pd.DataFrame(columns=cols)
 
-        # Single-process path for small work or max_workers=1
+        # Single-process path for small work or max_workers=1.
+        # Set thread-local just for the duration of this call so concurrent
+        # jobs in other threads can't overwrite our data mid-scan.
         n_workers = min(max_workers, total)
         if n_workers <= 1:
-            result = _scan_range(0, total, lookback, threshold, max_comp, refit_int)
+            _set_shared_data(symbol_data)
+            try:
+                result = _scan_range(0, total, lookback, threshold, max_comp, refit_int)
+            finally:
+                _set_shared_data([])
             return pd.DataFrame(result)
 
         # Multi-process via multiprocessing.Pool with fork.
-        # Workers inherit _SHARED_DATA via copy-on-write.
+        # Each worker gets its OWN copy of this job's symbol_data via the
+        # initializer, so different jobs' pools are fully isolated.
         # BLAS threading is already disabled (module-level env) and
         # re-confirmed in the pool initializer for belt-and-suspenders.
         chunk_size = max(1, total // n_workers)
@@ -233,7 +249,8 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
 
         with ctx.Pool(
             processes=n_workers,
-            initializer=_blas_single_thread,
+            initializer=_pool_init,
+            initargs=(symbol_data,),
             maxtasksperchild=1,
         ) as pool:
             async_results = [
@@ -263,6 +280,12 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
 # ------------------------------------------------------------------
 
 
+def _pool_init(symbol_data: list[_SymbolData]):
+    """Pool initializer: load this job's symbol data + force single-thread BLAS."""
+    _set_shared_data(symbol_data)
+    _blas_single_thread()
+
+
 def _scan_range(
     start: int,
     end: int,
@@ -271,12 +294,13 @@ def _scan_range(
     max_comp: int,
     refit_int: int,
 ) -> list[dict]:
-    """Scan symbols [start, end) using fork-inherited shared data."""
+    """Scan symbols [start, end) using this job's thread-local shared data."""
+    shared = _get_shared_data()
     candidates: list[dict] = []
     lower = 1.0 - threshold
 
     for idx in range(start, end):
-        sd = _SHARED_DATA[idx]
+        sd = shared[idx]
         chart_data = sd.chart_data
         n = len(chart_data)
 

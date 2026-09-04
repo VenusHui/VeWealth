@@ -38,8 +38,25 @@ async def get_scan(
     scan_id: str,
     current_user: User = Depends(get_current_active_user),
 ):
-    """获取扫描状态和结果。扫描中时返回已发现的部分结果。"""
-    result = screener_service.get_scan(scan_id)
+    """获取扫描状态和结果。扫描中时返回已发现的部分结果。
+
+    按当前登录用户校验归属：用户 B 查询用户 A 的 scan 固定返回 404。
+    """
+    result = screener_service.get_scan(scan_id, current_user.id)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="扫描记录不存在"
+        )
+    return ScanResponse(**result)
+
+
+@router.post("/scans/{scan_id}/cancel", response_model=ScanResponse)
+async def cancel_scan(
+    scan_id: str,
+    current_user: User = Depends(get_current_active_user),
+):
+    """取消一次扫描。取消后 worker 会在 5 秒内协作式停止取数/计算。"""
+    result = screener_service.cancel_scan(scan_id, current_user.id)
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="扫描记录不存在"
