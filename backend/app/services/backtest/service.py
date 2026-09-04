@@ -17,6 +17,7 @@ from app.schemas.backtest import BacktestRunRequest
 from app.services.backtest.costs import CostModel
 from app.services.backtest.engine import SecurityRule, run_portfolio
 from app.services.backtest.metrics import calc_summary
+from app.services.evaluator import attach_liquidity_df
 from app.services.backtest.policies.base import PolicyContext
 from app.services.backtest.policies.registry import resolve_profile
 from app.services.backtest.registry import (
@@ -745,6 +746,10 @@ class BacktestService:
         # 首日交易被丢；引擎 run_portfolio 的 trade_start 门仅过滤 buy_date < trade_start
         # 的暖机订单，故这里保留全部候选，执行日边界交由引擎统一处理（TopK 按 trade_date
         # 分组，warmup 候选不会挤占首日 top_k）。
+        # 注入真实流动性（每条候选取其 trade_date 窗口内日均成交额），使回测端
+        # score → liquidity → symbol 的 tie-break 与选股端一致地真正生效。
+        candidates_df = attach_liquidity_df(candidates_df, market_data_map)
+
         policy_profile_id = str(
             params.get("policy_profile") or strategy.default_policy_profile()
         )

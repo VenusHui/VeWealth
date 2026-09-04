@@ -16,15 +16,29 @@ export interface ScreenerResult {
   symbol: string
   stock_name?: string | null
   signal_strength: number
+  // 归一化 [0,1] 策略评分；前端条形与数值同尺度展示
+  strategy_score: number
   reason: string
   current_price?: number | null
   change_pct?: number | null
 }
 
+export interface ScreenerProgress {
+  total: number
+  fetched: number
+  data_ok: number
+  data_failed: number
+  evaluated: number
+  signal_hits: number
+  rejected: number
+  stale_data_count: number
+  as_of_date?: string | null
+}
+
 const SIGNAL_DESCRIPTIONS: Record<string, string> = {
-  gmm_volume_v1: '密度越低信号越强：当前价格处于历史成交稀疏区，均值回归概率较高。',
-  ma_cross_v1: '均线间距越大信号越强：短均线突破长均线的乖离率，趋势动量信号。',
-  volume_shrink_drop_v1: '缩量下跌后反弹信号：连续缩量回调后出现企稳迹象。',
+  gmm_volume_v1: '策略评分 = 1 − 当前价在 GMM 分布中的密度百分位（0~1，越低越值得买入）。',
+  ma_cross_v1: '策略评分 = 金叉日 (ma_short − ma_long) / ma_long 归一化到 0~1（乖离越大越强）。',
+  volume_shrink_drop_v1: '策略评分恒为 1.0（连续缩量下跌命中即入选，无强度差异，同分由流动性/代码排序）。',
 }
 
 export function ScreenerResultsTable({
@@ -35,7 +49,7 @@ export function ScreenerResultsTable({
 }: {
   results: ScreenerResult[]
   status: 'idle' | 'scanning' | 'completed' | 'failed'
-  progress: { total: number; scanned: number; hits: number }
+  progress: ScreenerProgress
   strategyId: string
 }) {
   const [addingCodes, setAddingCodes] = useState<Set<string>>(new Set())
@@ -113,20 +127,21 @@ export function ScreenerResultsTable({
     },
     {
       title: (
-        <Tooltip title={SIGNAL_DESCRIPTIONS[strategyId] || '信号越强，触发条件越显著。'}>
-          <span className="cursor-help border-b border-dotted border-[var(--text-dim)]">信号强度</span>
+        <Tooltip title={SIGNAL_DESCRIPTIONS[strategyId] || '策略评分越高，触发条件越显著。'}>
+          <span className="cursor-help border-b border-dotted border-[var(--text-dim)]">策略评分</span>
         </Tooltip>
       ),
-      dataIndex: 'signal_strength',
-      key: 'signal_strength',
+      dataIndex: 'strategy_score',
+      key: 'strategy_score',
       width: 110,
       align: 'right',
-      sorter: (a, b) => a.signal_strength - b.signal_strength,
+      sorter: (a, b) => (a.strategy_score ?? 0) - (b.strategy_score ?? 0),
       defaultSortOrder: 'descend',
-      render: (v) => {
-        const pct = Math.min(100, Math.max(0, Math.round(v * 1000)))
-        const color =
-          v >= 0.05 ? 'red' : v >= 0.02 ? 'orange' : 'blue'
+      render: (_, row) => {
+        // 条形宽度与数值同尺度：都取自归一化 [0,1] 的策略评分。
+        const score = Math.min(1, Math.max(0, row.strategy_score ?? 0))
+        const pct = Math.round(score * 100)
+        const color = score >= 0.6 ? 'red' : score >= 0.3 ? 'orange' : 'blue'
         return (
           <div className="flex items-center gap-2">
             <div className="h-1.5 flex-1 rounded-full bg-[rgba(0,0,0,0.06)]">
@@ -143,7 +158,7 @@ export function ScreenerResultsTable({
                 }}
               />
             </div>
-            <span className="text-xs tabular-nums">{(v * 100).toFixed(2)}%</span>
+            <span className="text-xs tabular-nums">{score.toFixed(2)}</span>
           </div>
         )
       },
@@ -197,18 +212,18 @@ export function ScreenerResultsTable({
     <SurfaceCard
       title={
         isRunning
-          ? `扫描进度: ${progress.scanned.toLocaleString()} / ${progress.total.toLocaleString()}`
-          : isDone
-            ? `选股结果`
-            : `选股结果`
+          ? `扫描进度: ${progress.fetched.toLocaleString()} / ${progress.total.toLocaleString()}`
+          : `选股结果`
       }
       description={
         isRunning
-          ? `已命中 ${progress.hits} 个信号`
+          ? `已取数 ${progress.fetched} 只，命中 ${progress.signal_hits} 个信号`
           : isDone
             ? results.length > 0
-              ? `共命中 ${results.length} 个信号，按信号强度排序`
-              : '扫描完成，当前市场未触发买入信号'
+              ? `as-of ${progress.as_of_date ?? '—'} 共命中 ${results.length} 个信号，按策略评分排序`
+              : progress.as_of_date
+                ? `as-of ${progress.as_of_date} 未触发买入信号（数据陈旧 ${progress.stale_data_count} 只）`
+                : '扫描完成，当前市场未触发买入信号'
             : undefined
       }
     >
@@ -218,14 +233,22 @@ export function ScreenerResultsTable({
             <div
               className="h-full rounded-full bg-[var(--brand)] transition-all duration-500"
               style={{
-                width: `${Math.round((progress.scanned / progress.total) * 100)}%`,
+                width: `${Math.round((progress.fetched / progress.total) * 100)}%`,
               }}
             />
           </div>
           <div className="mt-2 text-center text-xs text-[var(--text-dim)]">
-            {progress.scanned.toLocaleString()} / {progress.total.toLocaleString()}
+            已取数 {progress.fetched.toLocaleString()} / {progress.total.toLocaleString()}
             {' · '}
-            命中 <span className="font-semibold text-[var(--brand-strong)]">{progress.hits}</span> 个信号
+            命中 <span className="font-semibold text-[var(--brand-strong)]">{progress.signal_hits}</span> 个信号
+            {progress.stale_data_count > 0 ? (
+              <span className="ml-2 text-[var(--text-muted)]">
+                （陈旧 {progress.stale_data_count} 只）
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-1 text-center text-xs text-[var(--text-dim)]">
+            数据可用 {progress.data_ok} · 已评估 {progress.evaluated} · 已拒绝 {progress.rejected}
           </div>
         </div>
       ) : null}
@@ -283,9 +306,9 @@ export function ScreenerResultsTable({
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
                   <div>
-                    <div className="text-[var(--text-dim)]">信号强度</div>
+                    <div className="text-[var(--text-dim)]">策略评分</div>
                     <div className="font-medium text-[var(--text-strong)]">
-                      {(item.signal_strength * 100).toFixed(2)}%
+                      {(item.strategy_score ?? 0).toFixed(2)}
                     </div>
                   </div>
                   <div>

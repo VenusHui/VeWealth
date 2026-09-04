@@ -10,16 +10,29 @@ import { AppPage, MetricCard } from '../components/ui-shell'
 import { ScreenerConfigPanel } from './components/ScreenerConfigPanel'
 import {
   ScreenerResultsTable,
+  type ScreenerProgress,
   type ScreenerResult,
 } from './components/ScreenerResultsTable'
 import type { Strategy } from '../backtest/components/types'
 
 const API_BASE_URL = getApiBaseUrl()
 
+const EMPTY_PROGRESS: ScreenerProgress = {
+  total: 0,
+  fetched: 0,
+  data_ok: 0,
+  data_failed: 0,
+  evaluated: 0,
+  signal_hits: 0,
+  rejected: 0,
+  stale_data_count: 0,
+  as_of_date: null,
+}
+
 interface ScanState {
   scan_id: string
   status: 'idle' | 'scanning' | 'completed' | 'failed'
-  progress: { total: number; scanned: number; hits: number }
+  progress: ScreenerProgress
   results: ScreenerResult[]
   error?: string | null
 }
@@ -40,7 +53,7 @@ export default function ScreenerPage() {
   const [scan, setScan] = useState<ScanState>({
     scan_id: '',
     status: 'idle',
-    progress: { total: 0, scanned: 0, hits: 0 },
+    progress: EMPTY_PROGRESS,
     results: [],
   })
 
@@ -103,7 +116,7 @@ export default function ScreenerPage() {
         setScan({
           scan_id: data.scan_id,
           status: data.status,
-          progress: data.progress || { total: 0, scanned: 0, hits: 0 },
+          progress: data.progress || EMPTY_PROGRESS,
           results: data.results || [],
           error: data.error,
         })
@@ -124,7 +137,7 @@ export default function ScreenerPage() {
       setScan({
         scan_id: '',
         status: 'scanning',
-        progress: { total: 0, scanned: 0, hits: 0 },
+        progress: EMPTY_PROGRESS,
         results: [],
       })
 
@@ -149,7 +162,7 @@ export default function ScreenerPage() {
       setScan({
         scan_id: data.scan_id,
         status: data.status,
-        progress: data.progress || { total: 0, scanned: 0, hits: 0 },
+        progress: data.progress || EMPTY_PROGRESS,
         results: data.results || [],
         error: data.error,
       })
@@ -183,7 +196,7 @@ export default function ScreenerPage() {
           label="扫描标的"
           value={
             scan.status === 'scanning'
-              ? scan.progress.scanned.toLocaleString()
+              ? scan.progress.fetched.toLocaleString()
               : scan.progress.total.toLocaleString()
           }
           meta={scan.status === 'completed' ? '已完成扫描' : scan.status === 'scanning' ? '扫描中…' : '待扫描'}
@@ -191,10 +204,10 @@ export default function ScreenerPage() {
         />
         <MetricCard
           label="命中信号"
-          value={scan.progress.hits.toLocaleString()}
+          value={scan.progress.signal_hits.toLocaleString()}
           meta={
             scan.status === 'completed'
-              ? '当前触发买入信号'
+              ? `as-of ${scan.progress.as_of_date ?? '—'}`
               : scan.status === 'scanning'
                 ? '实时更新'
                 : '—'

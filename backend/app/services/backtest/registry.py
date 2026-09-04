@@ -63,6 +63,7 @@ def list_strategies(include_unusable: bool = True) -> list[dict]:
                 "min_history_bars": validation.get("min_history_bars"),
                 "signal_timestamp": validation.get("signal_timestamp"),
                 "score_definition": validation.get("score_definition"),
+                "score_range": validation.get("score_range"),
                 "exit_rule": validation.get("exit_rule"),
             }
         )

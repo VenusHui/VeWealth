@@ -23,6 +23,7 @@ export type Strategy = {
   min_history_bars?: number
   signal_timestamp?: string
   score_definition?: string
+  score_range?: [number, number] | null
   exit_rule?: string
 }
 

@@ -15,6 +15,7 @@ from app.services.backtest.policies.base import (
     SelectionPolicy,
 )
 from app.services.backtest.policies.profiles import POLICY_PROFILES, PolicyProfile
+from app.services.evaluator import TIEBREAK_ASCENDING, TIEBREAK_COLUMNS
 
 
 class SignalThenLiquidityRanking(RankingPolicy):
@@ -29,10 +30,15 @@ class SignalThenLiquidityRanking(RankingPolicy):
             ranked["signal_strength"] = 0.0
         if "liquidity" not in ranked.columns:
             ranked["liquidity"] = 0.0
+        if "symbol" not in ranked.columns:
+            ranked["symbol"] = ""
 
+        # 先按 trade_date 升序（回测需逐交易日推进），再按 score → liquidity → symbol
+        # 的同分 tie-break。第二段排序直接复用共享评估器的 TIEBREAK_* 常量，保证与选股端
+        # rank_candidates 的同分语义完全一致（单一事实来源）。
         ranked = ranked.sort_values(
-            by=["trade_date", "signal_strength", "liquidity"],
-            ascending=[True, False, False],
+            by=["trade_date", *TIEBREAK_COLUMNS],
+            ascending=[True, *TIEBREAK_ASCENDING],
         ).reset_index(drop=True)
         return ranked
 
