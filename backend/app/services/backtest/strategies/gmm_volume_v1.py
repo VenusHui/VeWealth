@@ -64,6 +64,14 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
         "策略选股模式使用 fork 多进程并行，告别 Python GIL。"
     )
 
+    #: 策略能力契约：手动信号与自动选股均可运行
+    supported_modes = {"manual_symbols", "strategy_select"}
+    #: lookback_days 上限 250，保证长回看配置吃到足量 warmup bar
+    min_history_bars = 250
+    signal_timestamp = "next_open"
+    score_definition = "1 - 当前价在 GMM 分布中的密度百分位（越低越值得买入）"
+    exit_rule = "密度 ≥ threshold 时次日开盘卖出；自动选股持有天数由 policy 决定"
+
     @classmethod
     def param_schema(cls) -> list[dict]:
         return [
@@ -111,15 +119,6 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
                 "default": 0.2,
                 "min": 0.01,
                 "max": 1.0,
-            },
-            {
-                "key": "max_workers",
-                "label": "并行进程数",
-                "type": "int",
-                "required": True,
-                "default": 4,
-                "min": 1,
-                "max": 8,
             },
         ]
 
@@ -201,7 +200,9 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
         threshold = float(params.get("threshold", 0.7))
         max_comp = int(params.get("max_components", 5))
         refit_int = int(params.get("refit_interval", 5))
-        max_workers = int(params.get("max_workers", 4))
+        # max_workers 已从 param_schema 移除（基础设施项），不再接受用户配置；
+        # 内部固定默认并 clamp 到 [1, 8]，避免外部传超大值 fork 出过量进程。
+        max_workers = min(8, max(1, int(params.get("max_workers", 4))))
 
         # Pre-serialize all symbol data for THIS job only (job-isolated)
         symbol_data: list[_SymbolData] = []
