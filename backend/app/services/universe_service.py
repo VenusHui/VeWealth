@@ -184,6 +184,22 @@ def _upsert_snapshot(
 # ---------------------------------------------------------------------------
 
 
+def _snapshot_is_static_fallback(db: Session, snapshot_date: date) -> bool:
+    """判断整张快照是否完全来自静态清单兜底。
+
+    静态兜底时所有行 ``is_st=False``、``list_date/delist_date=None``、``source="static"``，
+    其 ST / 退市信息不可靠，不能当作可信点状态被消费。
+    """
+    rows = (
+        db.query(UniverseSnapshot.source)
+        .filter(UniverseSnapshot.snapshot_date == snapshot_date)
+        .all()
+    )
+    if not rows:
+        return False
+    return all(r[0] == "static" for r in rows)
+
+
 def get_universe_as_of(
     db: Session,
     as_of: str | date,
@@ -209,6 +225,21 @@ def get_universe_as_of(
         symbols = _query_snapshot(
             db, latest_snapshot_date, as_of, norm_boards, exclude_st, limit
         )
+        if _snapshot_is_static_fallback(db, latest_snapshot_date):
+            # 静态清单兜底：is_st 恒为 False、无退市信息，ST / 点状态过滤不可信，
+            # 不得宣称过滤成功（与验收标准「静态回退不再声称过滤成功」一致）。
+            return UniversePool(
+                symbols=symbols,
+                as_of=as_of,
+                source="snapshot_static_fallback",
+                snapshot_date=latest_snapshot_date,
+                st_filter_effective=False,
+                st_point_in_time=False,
+                warning=(
+                    f"股票池快照 {latest_snapshot_date.isoformat()} 来自静态清单兜底，"
+                    "ST/退市信息不可靠，ST 过滤未真正生效"
+                ),
+            )
         return UniversePool(
             symbols=symbols,
             as_of=as_of,
@@ -263,6 +294,8 @@ def _query_snapshot(
     query = db.query(UniverseSnapshot.stock_code).filter(
         UniverseSnapshot.snapshot_date == snapshot_date
     )
+    # 与 _query_current_universe 保持一致的 active 语义：inactive（未设退市日）不入池
+    query = query.filter(UniverseSnapshot.is_active.is_(True))
     if boards:
         query = query.filter(UniverseSnapshot.board.in_(boards))
     if exclude_st:

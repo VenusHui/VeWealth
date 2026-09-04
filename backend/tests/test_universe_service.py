@@ -153,6 +153,34 @@ class GetUniverseAsOfTests(unittest.TestCase):
         )
         # 板块过滤基于代码推断；000001->main, 300001->gem
         self.assertEqual(sorted(pool.symbols), ["000001", "300001"])
+        # 静态兜底不得宣称点状态 / ST 过滤成功（验收标准「静态回退不再声称过滤成功」）
+        self.assertEqual(pool.source, "snapshot_static_fallback")
+        self.assertFalse(pool.st_point_in_time)
+        self.assertFalse(pool.st_filter_effective)
+        self.assertIn("静态", pool.warning)
+
+        pool_st = get_universe_as_of(
+            db, date(2026, 1, 10), boards=["main", "gem"], exclude_st=True
+        )
+        self.assertFalse(pool_st.st_point_in_time)
+        self.assertFalse(pool_st.st_filter_effective)
+
+    def test_snapshot_excludes_inactive_symbols(self):
+        # 与 _query_current_universe 语义一致：inactive（未设退市日）不入池
+        db = _make_session()
+        db.add_all(
+            [
+                _universe_row("000001", board="main", is_active=True),
+                _universe_row("000002", board="main", is_active=False),
+            ]
+        )
+        db.commit()
+        capture_snapshot(db, as_of=date(2026, 1, 10))
+        pool = get_universe_as_of(
+            db, date(2026, 1, 10), boards=["main"], exclude_st=False
+        )
+        self.assertEqual(pool.source, "snapshot")
+        self.assertEqual(pool.symbols, ["000001"])
 
 
 if __name__ == "__main__":
