@@ -20,6 +20,8 @@ class MACrossV1Strategy(BaseStrategy, BaseStrategyV2):
     min_history_bars = 240
     signal_timestamp = "next_open"
     score_definition = "金叉日 (ma_short - ma_long) / ma_long 作为信号强度"
+    #: 均线乖离率，金叉日为正；0~0.2 归一化到 [0,1]，20% 乖离即满分。
+    score_range = (0.0, 0.2)
     exit_rule = "死叉（短均线下穿长均线）次日开盘卖出；仅做多"
 
     @classmethod

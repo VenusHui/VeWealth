@@ -23,6 +23,15 @@ from app.core.database import SessionLocal
 from app.models.screener_job import ScreenerJob
 from app.models.security_universe import SecurityUniverse
 from app.providers.astock_data import tencent_quote
+from app.services.backtest.evaluator import (
+    EvaluationCounters,
+    candidate_date,
+    dedupe_by_symbol,
+    determine_as_of_date,
+    is_stale,
+    normalize_score,
+    rank_candidates,
+)
 from app.services.backtest.registry import get_strategy
 from app.services.stock_service import stock_service
 from app.services.task_executor import CancelToken, background_task_executor
@@ -130,7 +139,17 @@ class ScreenerService:
                 exclude_st=1 if exclude_st else 0,
                 status="pending",
                 stage="pending",
-                progress={"total": len(universe), "scanned": 0, "hits": 0},
+                progress={
+                    "total": len(universe),
+                    "fetched": 0,
+                    "data_ok": 0,
+                    "data_failed": 0,
+                    "evaluated": 0,
+                    "signal_hits": 0,
+                    "rejected": 0,
+                    "stale_data_count": 0,
+                    "as_of_date": None,
+                },
                 result=None,
                 error=None,
                 cancel_requested=0,
@@ -288,7 +307,8 @@ class ScreenerService:
             # Phase 1: parallel data fetching (chunked to bound memory)
             symbol_dfs: dict[str, pd.DataFrame] = {}
             total = len(universe)
-            scanned = 0
+            processed = 0
+            counters = EvaluationCounters()
             _CHUNK = 200
 
             for chunk_start in range(0, total, _CHUNK):
@@ -319,15 +339,15 @@ class ScreenerService:
                                 symbol_dfs[symbol] = df
                         except Exception:
                             logger.warning(f"获取 {symbol} 数据失败，已跳过")
-                        scanned += 1
+                        processed += 1
 
-                        if scanned % 50 == 0 or scanned == total:
+                        if processed % 50 == 0 or processed == total:
                             if self._is_cancelled(token, scan_id):
                                 self._mark_cancelled(scan_id)
                                 return
-                            self._update_progress(
-                                scan_id, total, scanned, len(symbol_dfs)
-                            )
+                            counters.fetched = len(symbol_dfs)
+                            counters.data_failed = processed - counters.fetched
+                            self._update_progress(scan_id, counters, total)
                 finally:
                     # 不阻塞等待仍在跑的 fetch 线程，尽快让出 worker 槽位
                     executor.shutdown(wait=False, cancel_futures=True)
@@ -346,21 +366,29 @@ class ScreenerService:
                 self._mark_failed(scan_id, "所有股票数据获取失败，请检查行情源连接")
                 return
 
-            # Phase 2: signal generation
-            candidates = self._generate_signals(
-                token, strategy_id, strategy, symbol_dfs, params, scan_id, total
+            # as_of_date：全市场最新数据日，后续只允许该日信号，杜绝旧信号冒充当前结果。
+            as_of_date = determine_as_of_date(symbol_dfs)
+
+            # Phase 2: signal generation + as-of/stale classification + ranking
+            candidates, counters = self._evaluate(
+                token,
+                strategy_id,
+                strategy,
+                symbol_dfs,
+                params,
+                scan_id,
+                as_of_date,
+                total,
             )
             if self._is_cancelled(token, scan_id):
                 self._mark_cancelled(scan_id)
                 return
 
-            # Phase 3: enrich with quotes and names
-            enriched = self._enrich_candidates(candidates)
+            # Phase 3: enrich with quotes, names and normalized strategy score
+            enriched = self._enrich_candidates(candidates, strategy)
 
-            # Phase 4: sort and store
-            enriched.sort(key=lambda r: r["signal_strength"], reverse=True)
-
-            self._complete_scan(scan_id, total, enriched)
+            # Phase 4: store
+            self._complete_scan(scan_id, total, counters, as_of_date, enriched)
         except Exception as e:
             logger.exception("Scan %s failed", scan_id)
             self._mark_failed(scan_id, str(e))
@@ -383,7 +411,7 @@ class ScreenerService:
         except Exception:
             return None
 
-    def _generate_signals(
+    def _evaluate(
         self,
         token: CancelToken,
         strategy_id: str,
@@ -391,17 +419,26 @@ class ScreenerService:
         symbol_dfs: dict[str, pd.DataFrame],
         params: dict,
         scan_id: str,
+        as_of_date: str | None,
         total: int,
-    ) -> list[dict]:
-        """Run strategy.generate_candidates() and collect latest-date candidates."""
+    ) -> tuple[list[dict], EvaluationCounters]:
+        """生成候选并按 as_of_date 分类、去重、排序。
+
+        只有 `as_of_date` 当日信号才算候选；数据末日落后者计入 stale_data_count。
+        返回 (排名后的候选, 计数)。counters.signal_hits 为 as_of_date 当日命中的去重
+        股票数，signal_hits + rejected == evaluated。
+        """
+        counters = EvaluationCounters()
         all_candidates: list[dict] = []
+        counters.fetched = len(symbol_dfs)
+        counters.data_failed = total - counters.fetched
 
         if strategy_id == "gmm_volume_v1":
             # GMM: concatenate into one big DataFrame and use internal multiprocessing
             all_dfs = list(symbol_dfs.values())
             for i in range(0, len(all_dfs), _GMM_BATCH_SIZE):
                 if self._is_cancelled(token, scan_id):
-                    return []
+                    return [], counters
                 batch = all_dfs[i : i + _GMM_BATCH_SIZE]
                 big_df = pd.concat(batch, ignore_index=True)
                 try:
@@ -410,57 +447,60 @@ class ScreenerService:
                         all_candidates.extend(cand_df.to_dict("records"))
                 except Exception:
                     logger.exception("GMM generate_candidates batch failed")
-                self._update_progress(scan_id, total, total, len(all_candidates))
         else:
             # MA Cross, VSD: per-stock processing (fast enough)
-            processed = 0
             for symbol, df in symbol_dfs.items():
-                if token.is_cancelled():
-                    return []
+                if self._is_cancelled(token, scan_id):
+                    return [], counters
                 try:
                     cand_df = strategy.generate_candidates(df, params)
                     if cand_df is not None and not cand_df.empty:
                         all_candidates.extend(cand_df.to_dict("records"))
                 except Exception:
                     logger.warning(f"策略计算失败 {symbol}")
-                processed += 1
-                if processed % 100 == 0:
-                    if self._is_cancelled(token, scan_id):
-                        return []
-                    self._update_progress(scan_id, total, total, len(all_candidates))
 
-        # Filter to latest trade_date only
-        if not all_candidates:
-            return []
+        if not as_of_date:
+            # 无法确定 as_of_date，不产出任何候选（保守：全量视为非当日信号）。
+            self._update_progress(scan_id, counters, total)
+            return [], counters
 
-        latest_date = max(
-            str(c.get("trade_date", ""))[:10]
-            for c in all_candidates
-            if c.get("trade_date")
-        )
-
-        latest = [
-            c
-            for c in all_candidates
-            if str(c.get("trade_date", ""))[:10] == latest_date
-        ]
-
-        # Deduplicate by symbol (keep highest signal_strength)
-        seen: dict[str, dict] = {}
-        for c in latest:
+        # as-of 过滤 + 按 symbol 去重（保留 signal_strength 最高）
+        as_of_candidates: dict[str, dict] = {}
+        for c in all_candidates:
             sym = str(c.get("symbol", "")).strip()
             if not sym:
                 continue
-            strength = float(c.get("signal_strength", 0))
-            if sym not in seen or strength > float(seen[sym].get("signal_strength", 0)):
-                seen[sym] = c
+            d = candidate_date(c)
+            if d != as_of_date:
+                # 非 as_of_date 当日信号：一律丢弃，不冒充当前结果。
+                continue
+            score = float(c.get("signal_strength", 0) or 0)
+            cur = as_of_candidates.get(sym)
+            if cur is None or score > float(cur.get("signal_strength", 0) or 0):
+                as_of_candidates[sym] = c
 
-        return list(seen.values())
+        # 逐 symbol 分类计数：stale / data_ok / evaluated / signal_hits / rejected
+        for symbol, df in symbol_dfs.items():
+            if is_stale(df, as_of_date):
+                counters.stale_data_count += 1
+                continue
+            counters.data_ok += 1
+            counters.evaluated += 1
+            if symbol in as_of_candidates:
+                counters.signal_hits += 1
+            else:
+                counters.rejected += 1
 
-    def _enrich_candidates(self, candidates: list[dict]) -> list[dict]:
-        """Add stock names and real-time quotes to candidate list."""
+        self._update_progress(scan_id, counters, total)
+        ranked = rank_candidates(as_of_candidates.values())
+        return dedupe_by_symbol(ranked), counters
+
+    def _enrich_candidates(self, candidates: list[dict], strategy) -> list[dict]:
+        """Add stock names, real-time quotes and normalized strategy score."""
         if not candidates:
             return []
+
+        score_range = getattr(strategy, "score_range", None)
 
         symbols = [
             str(c.get("symbol", "")).strip()
@@ -495,11 +535,15 @@ class ScreenerService:
         enriched: list[dict] = []
         for c in candidates:
             sym = str(c.get("symbol", "")).strip().zfill(6)
+            raw_score = round(float(c.get("signal_strength", 0)), 6)
             q = quotes.get(sym, {})
             item = {
                 "symbol": sym,
                 "stock_name": names.get(sym) or q.get("name"),
-                "signal_strength": round(float(c.get("signal_strength", 0)), 6),
+                # 原始单调强度（用于排序/内部比较）
+                "signal_strength": raw_score,
+                # 归一化 [0,1] 策略评分（前端条形与数值同尺度展示）
+                "strategy_score": round(normalize_score(raw_score, score_range), 4),
                 "reason": str(c.get("reason", "")),
                 "current_price": q.get("price"),
                 "change_pct": q.get("change_pct"),
@@ -573,15 +617,22 @@ class ScreenerService:
             db.close()
 
     def _update_progress(
-        self, scan_id: str, total: int, scanned: int, hits: int
+        self, scan_id: str, counters: EvaluationCounters, total: int
     ) -> None:
         db: Session = SessionLocal()
         try:
-            self._apply_progress(scan_id, total, scanned, hits, db=db)
+            self._apply_progress(scan_id, counters, total, db=db)
         finally:
             db.close()
 
-    def _complete_scan(self, scan_id: str, total: int, enriched: list[dict]) -> None:
+    def _complete_scan(
+        self,
+        scan_id: str,
+        total: int,
+        counters: EvaluationCounters,
+        as_of_date: str | None,
+        enriched: list[dict],
+    ) -> None:
         db: Session = SessionLocal()
         try:
             row = db.query(ScreenerJob).filter(ScreenerJob.scan_id == scan_id).first()
@@ -593,7 +644,8 @@ class ScreenerService:
             else:
                 row.status = "completed"
                 row.stage = "done"
-                row.progress = {"total": total, "scanned": total, "hits": len(enriched)}
+                row.progress = counters.to_progress(total)
+                row.progress["as_of_date"] = as_of_date
                 row.result = enriched
             row.completed_at = datetime.utcnow()
             row.updated_at = datetime.utcnow()
@@ -635,9 +687,8 @@ class ScreenerService:
     def _apply_progress(
         self,
         scan_id: str,
+        counters: EvaluationCounters,
         total: int,
-        scanned: int,
-        hits: int,
         db: Session | None = None,
     ) -> None:
         owns_db = db is None
@@ -650,12 +701,27 @@ class ScreenerService:
             )
             if not row:
                 return
-            row.progress = {"total": total, "scanned": scanned, "hits": hits}
+            row.progress = counters.to_progress(total)
             row.updated_at = datetime.utcnow()
             session.commit()
         finally:
             if owns_db:
                 session.close()
+
+    @staticmethod
+    def _fmt_progress(progress: dict) -> dict:
+        """前端可见进度：漏斗字段 + as_of_date，字段不可复用。"""
+        return {
+            "total": progress.get("total", 0),
+            "fetched": progress.get("fetched", 0),
+            "data_ok": progress.get("data_ok", 0),
+            "data_failed": progress.get("data_failed", 0),
+            "evaluated": progress.get("evaluated", 0),
+            "signal_hits": progress.get("signal_hits", 0),
+            "rejected": progress.get("rejected", 0),
+            "stale_data_count": progress.get("stale_data_count", 0),
+            "as_of_date": progress.get("as_of_date"),
+        }
 
     # ------------------------------------------------------------------
     # Serialization
@@ -676,11 +742,8 @@ class ScreenerService:
             "strategy_name": job.strategy_name,
             "boards": job.boards or [],
             "exclude_st": bool(job.exclude_st),
-            "progress": {
-                "total": progress.get("total", 0),
-                "scanned": progress.get("scanned", 0),
-                "hits": progress.get("hits", 0),
-            },
+            "progress": self._fmt_progress(progress),
+            "as_of_date": progress.get("as_of_date"),
             "results": job.result or [],
             "error": job.error,
             "created_at": self._fmt(job.created_at) or "",
@@ -697,7 +760,7 @@ class ScreenerService:
             "boards": job.boards or [],
             "exclude_st": bool(job.exclude_st),
             "total_scanned": progress.get("total", 0),
-            "total_hits": progress.get("hits", 0),
+            "total_hits": progress.get("signal_hits", 0),
             "created_at": self._fmt(job.created_at) or "",
         }
 

@@ -29,10 +29,14 @@ class SignalThenLiquidityRanking(RankingPolicy):
             ranked["signal_strength"] = 0.0
         if "liquidity" not in ranked.columns:
             ranked["liquidity"] = 0.0
+        if "symbol" not in ranked.columns:
+            ranked["symbol"] = ""
 
+        # signal_strength 降序 → liquidity（业务意义次级排序）降序 → symbol 升序兜底，
+        # 保证同日 Top-K 在缺 liquidity（全为 0）时也不会退化为 DataFrame 内部顺序。
         ranked = ranked.sort_values(
-            by=["trade_date", "signal_strength", "liquidity"],
-            ascending=[True, False, False],
+            by=["trade_date", "signal_strength", "liquidity", "symbol"],
+            ascending=[True, False, False, True],
         ).reset_index(drop=True)
         return ranked
 
