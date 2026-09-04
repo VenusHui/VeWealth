@@ -75,6 +75,26 @@ def probe_data_sources():
     return results
 
 
+def capture_universe_snapshot():
+    """
+    落一份当日的 point-in-time universe 快照（ST / 板块 / 上市退市），
+    供回测按 as_of 选池，消除幸存者偏差。
+    """
+    from app.services.universe_service import capture_snapshot
+
+    logger.info("开始写入 universe 快照")
+    db = SessionLocal()
+    try:
+        count = capture_snapshot(db)
+        logger.info(f"universe 快照写入完成，记录数: {count}")
+        return count
+    except Exception as e:
+        logger.error(f"universe 快照写入失败: {str(e)}", exc_info=True)
+        return 0
+    finally:
+        db.close()
+
+
 class AppScheduler:
     """应用调度器"""
 
@@ -117,6 +137,16 @@ class AppScheduler:
             replace_existing=True,
         )
         logger.info(f"已添加任务: 数据源健康探针 ({settings.SOURCE_HEALTH_PROBE_CRON})")
+
+        # 日落点股票池快照任务
+        self.scheduler.add_job(
+            capture_universe_snapshot,
+            trigger=CronTrigger.from_crontab(settings.UNIVERSE_SNAPSHOT_CRON),
+            id="universe_snapshot_capture",
+            name="universe 快照",
+            replace_existing=True,
+        )
+        logger.info(f"已添加任务: universe 快照 ({settings.UNIVERSE_SNAPSHOT_CRON})")
 
     def start(self):
         """启动调度器"""

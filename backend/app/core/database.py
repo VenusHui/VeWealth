@@ -64,6 +64,7 @@ def init_db():
         backtest_job,
         screener_job,
         security_universe,
+        universe_snapshot,
         alert_history,
     )  # noqa
 

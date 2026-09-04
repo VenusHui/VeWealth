@@ -9,6 +9,7 @@ from .backtest import BacktestRun, BacktestRound
 from .backtest_job import BacktestJob
 from .screener_job import ScreenerJob
 from .security_universe import SecurityUniverse
+from .universe_snapshot import UniverseSnapshot
 
 __all__ = [
     "User",
@@ -19,4 +20,5 @@ __all__ = [
     "BacktestJob",
     "ScreenerJob",
     "SecurityUniverse",
+    "UniverseSnapshot",
 ]

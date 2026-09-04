@@ -37,6 +37,7 @@ class StrategyValidationResult:
     min_history_bars: int | None = None
     signal_timestamp: str | None = None
     score_definition: str | None = None
+    score_range: tuple[float, float] | None = None
     exit_rule: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -239,6 +240,7 @@ def validate_strategy_class(strategy_cls: type) -> StrategyValidationResult:
         min_history_bars=getattr(strategy_cls, "min_history_bars", None),
         signal_timestamp=getattr(strategy_cls, "signal_timestamp", None),
         score_definition=getattr(strategy_cls, "score_definition", None),
+        score_range=getattr(strategy_cls, "score_range", None),
         exit_rule=getattr(strategy_cls, "exit_rule", None),
     )
 

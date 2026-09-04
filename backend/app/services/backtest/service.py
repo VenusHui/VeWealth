@@ -17,6 +17,7 @@ from app.schemas.backtest import BacktestRunRequest
 from app.services.backtest.costs import CostModel
 from app.services.backtest.engine import SecurityRule, run_portfolio
 from app.services.backtest.metrics import calc_summary
+from app.services.evaluator import attach_liquidity_df
 from app.services.backtest.policies.base import PolicyContext
 from app.services.backtest.policies.registry import resolve_profile
 from app.services.backtest.registry import (
@@ -26,6 +27,7 @@ from app.services.backtest.registry import (
     validate_strategy_runtime,
 )
 from app.services.stock_service import stock_service
+from app.services import universe_service
 
 #: 在 min_history_bars 之上追加的 warmup 缓冲（覆盖滚动指标首段/重拟合）
 WARMUP_BUFFER_BARS = 30
@@ -510,13 +512,18 @@ class BacktestService:
         else:
             exclude_st = bool(raw_exclude_st)
 
+        universe_filter = {"boards": boards, "exclude_st": exclude_st}
         if request.universe_type == "custom":
             universe = [s.strip() for s in request.pool_symbols if s.strip()]
+            universe_filter["universe_source"] = "custom"
+            universe_filter["st_point_in_time"] = False
         else:
-            universe = stock_service.get_all_stock_symbols(
-                boards=boards,
-                exclude_st=exclude_st,
+            # 按回测起始日 as_of 解析点状态股票池，而非用当前 is_active/is_st/board
+            pool, pool_note = self._resolve_universe_pool(
+                db, request.start_date, boards, exclude_st
             )
+            universe = pool
+            universe_filter = pool_note
 
         if not universe:
             raise ValueError(
@@ -529,8 +536,55 @@ class BacktestService:
             progress_callback=progress_callback,
             db=db,
             include_diagnostics=True,
-            universe_filter={"boards": boards, "exclude_st": exclude_st},
+            universe_filter=universe_filter,
         )
+
+    def _resolve_universe_pool(
+        self,
+        db: Session | None,
+        as_of,
+        boards: list[str],
+        exclude_st: bool,
+    ) -> tuple[list[str], dict[str, Any]]:
+        """解析 as_of 股票池，返回 (symbols, pool_note)。
+
+        pool_note 记录这次选池的来源（是否用了点状态快照）、ST 过滤是否真正生效，
+        供 diagnostics 与降低后提示使用，避免"看起来成功"的误判。
+        """
+        if db is not None:
+            try:
+                pool = universe_service.get_universe_as_of(
+                    db, as_of, boards=boards, exclude_st=exclude_st
+                )
+                note = {
+                    "boards": boards,
+                    "exclude_st": exclude_st,
+                    "universe_source": pool.source,
+                    "snapshot_date": (
+                        pool.snapshot_date.isoformat() if pool.snapshot_date else None
+                    ),
+                    "st_filter_effective": pool.st_filter_effective,
+                    "st_point_in_time": pool.st_point_in_time,
+                    "universe_warning": pool.warning,
+                }
+                return pool.symbols, note
+            except Exception as exc:
+                logger.warning(f"按 as_of 解析股票池失败，回退当前维表: {exc}")
+
+        # 降级：无 db 或快照解析失败时回退当前维表/静态清单（见 stock_service）
+        symbols, meta = stock_service.get_all_stock_symbols_with_meta(
+            boards=boards, exclude_st=exclude_st
+        )
+        note = {
+            "boards": boards,
+            "exclude_st": exclude_st,
+            "universe_source": meta.get("source"),
+            "snapshot_date": None,
+            "st_filter_effective": meta.get("st_filter_effective", bool(exclude_st)),
+            "st_point_in_time": False,
+            "universe_warning": meta.get("warning"),
+        }
+        return symbols, note
 
     def _load_security_rules(
         self, db: Session | None, symbols: list[str]
@@ -579,6 +633,12 @@ class BacktestService:
         data_empty_count = 0
         total = len(symbols)
 
+        # 行情 provenance 覆盖统计：源分布 / 覆盖缺口 / 源失败
+        provenance_source_counts: dict[str, int] = {}
+        provenance_gap_count = 0
+        provenance_failure_count = 0
+        gap_symbols_preview: list[str] = []
+
         for idx, symbol in enumerate(symbols, start=1):
             if progress_callback:
                 progress_callback(
@@ -599,12 +659,35 @@ class BacktestService:
             except Exception as exc:
                 warnings.append(f"{symbol}: 获取行情失败({exc})，已跳过")
                 data_empty_count += 1
+                provenance_failure_count += 1
                 continue
             if df is None or df.empty:
                 data_empty_count += 1
+                incoming = (
+                    getattr(df, "attrs", {}).get("provenance")
+                    if df is not None
+                    else None
+                )
+                if incoming is not None:
+                    provenance_source_counts[incoming.source] = (
+                        provenance_source_counts.get(incoming.source, 0) + 1
+                    )
+                    if incoming.failure_reason and incoming.source is None:
+                        provenance_failure_count += 1
                 if len(empty_symbols_preview) < 30:
                     empty_symbols_preview.append(symbol)
                 continue
+            incoming = getattr(df, "attrs", {}).get("provenance")
+            if incoming is not None:
+                provenance_source_counts[incoming.source] = (
+                    provenance_source_counts.get(incoming.source, 0) + 1
+                )
+                if incoming.gap:
+                    provenance_gap_count += 1
+                    if len(gap_symbols_preview) < 30:
+                        gap_symbols_preview.append(symbol)
+                if incoming.failure_reason and incoming.source is None:
+                    provenance_failure_count += 1
             missing_cols = sorted(required_columns - set(df.columns))
             if missing_cols:
                 warnings.append(f"{symbol}: 缺少必需列 {missing_cols}，已跳过")
@@ -639,6 +722,19 @@ class BacktestService:
                 + (f"，示例: {preview}{suffix}" if preview else "")
             )
 
+        if provenance_gap_count or provenance_failure_count:
+            warnings.append(
+                f"行情覆盖不完整：{provenance_gap_count} 只存在覆盖缺口、"
+                f"{provenance_failure_count} 只数据源失败，结果已明确降级"
+                "（非'看起来成功'，可能受影响）"
+            )
+            if gap_symbols_preview:
+                warnings.append("缺口股票示例: " + ",".join(gap_symbols_preview))
+
+        pool_warning = (universe_filter or {}).get("universe_warning")
+        if pool_warning:
+            warnings.append(pool_warning)
+
         columns = ["trade_date", "symbol", "signal_strength", "reason"]
         candidates_df = (
             pd.concat(candidate_frames, ignore_index=True)
@@ -650,6 +746,10 @@ class BacktestService:
         # 首日交易被丢；引擎 run_portfolio 的 trade_start 门仅过滤 buy_date < trade_start
         # 的暖机订单，故这里保留全部候选，执行日边界交由引擎统一处理（TopK 按 trade_date
         # 分组，warmup 候选不会挤占首日 top_k）。
+        # 注入真实流动性（每条候选取其 trade_date 窗口内日均成交额），使回测端
+        # score → liquidity → symbol 的 tie-break 与选股端一致地真正生效。
+        candidates_df = attach_liquidity_df(candidates_df, market_data_map)
+
         policy_profile_id = str(
             params.get("policy_profile") or strategy.default_policy_profile()
         )
@@ -728,6 +828,13 @@ class BacktestService:
                 "event_count": int(len(portfolio.trades)),
                 "policy_profile": policy_profile_id,
                 "effective_universe_filter": universe_filter or {},
+                "data_provenance": {
+                    "source_counts": provenance_source_counts,
+                    "gap_count": provenance_gap_count,
+                    "failure_count": provenance_failure_count,
+                    "empty_count": data_empty_count,
+                    "degraded": bool(provenance_gap_count or provenance_failure_count),
+                },
             }
             result["diagnostics"] = diagnostics
             warnings.append(

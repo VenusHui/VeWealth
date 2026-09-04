@@ -69,7 +69,9 @@ class GMMVolumeV1Strategy(BaseStrategy, BaseStrategyV2):
     #: lookback_days 上限 250，保证长回看配置吃到足量 warmup bar
     min_history_bars = 250
     signal_timestamp = "next_open"
-    score_definition = "1 - 当前价在 GMM 分布中的密度百分位（越低越值得买入）"
+    score_definition = "1 - 当前价在 GMM 分布中的密度百分位（越低越值得买入，范围 0~1）"
+    #: 密度百分位 ∈ [0,1]，故 1-density ∈ [0,1]，天然可直接作为策略评分。
+    score_range = (0.0, 1.0)
     exit_rule = "密度 ≥ threshold 时次日开盘卖出；自动选股持有天数由 policy 决定"
 
     @classmethod

@@ -37,6 +37,10 @@ class BaseStrategyV2(ABC):
     #: signal_strength 的计算口径说明（human-readable）。
     score_definition: str = "signal_strength"
 
+    #: signal_strength 的理论取值范围 (min, max)，用于把原始强度归一化为 [0,1] 策略评分。
+    #: hi <= lo（如恒定 1.0 的二元命中）表示无强度差异，normalize 时视为满档。
+    score_range: tuple[float, float] | None = None
+
     #: 平仓/退出规则说明（human-readable），区分手动卖出信号与固定持有。
     exit_rule: str = "hold_days"
 

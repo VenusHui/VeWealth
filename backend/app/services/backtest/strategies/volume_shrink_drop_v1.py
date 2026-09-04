@@ -19,7 +19,9 @@ class VolumeShrinkDropV1Strategy(BaseStrategy, BaseStrategyV2):
     #: consecutive_days(10) + hold_days(60) + 1，保证完整持有周期有足量 bar
     min_history_bars = 71
     signal_timestamp = "next_open"
-    score_definition = "固定 1.0（连续 N 天缩量下跌命中即入选）"
+    score_definition = "固定 1.0（连续 N 天缩量下跌命中即入选，无强度差异）"
+    #: 二元命中：恒定 1.0，normalize 视为满档，强度差异交由 tie-breaker 裁决。
+    score_range = (1.0, 1.0)
     exit_rule = "手动模式持有 hold_days 天后次日开盘卖出；自动选股由 policy 固定持有"
 
     @classmethod

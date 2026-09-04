@@ -95,6 +95,8 @@ class Settings(BaseSettings):
     SCHEDULER_ENABLED: bool = True
     DATA_COLLECT_CRON: str = "0 20 * * 1-5"  # 每周一到周五的20:00执行
     ALERT_CHECK_CRON: str = "*/5 9-15 * * 1-5"
+    # 每个交易日收盘后落一次 point-in-time universe 快照（累积历史 ST/退市信息）
+    UNIVERSE_SNAPSHOT_CRON: str = "40 20 * * 1-5"
 
     # 数据源健康检查 / 监控配置
     SOURCE_HEALTH_PROBE_CRON: str = "*/5 * * * *"  # 源级探针运行周期（每5分钟）
