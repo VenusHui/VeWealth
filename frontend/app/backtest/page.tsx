@@ -11,6 +11,7 @@ import { BacktestCreatePanel } from './components/BacktestCreatePanel'
 import { StrategyManagementPanel } from './components/StrategyManagementPanel'
 import { ACTIVE_JOB_STATUSES } from './components/statusLabels'
 import type {
+  BacktestObservability,
   BacktestOverview,
   BacktestFacts,
   BacktestResult,
@@ -61,6 +62,11 @@ export default function BacktestPage() {
   const [job, setJob] = useState<JobItem | null>(null)
   const [jobs, setJobs] = useState<JobItem[]>([])
   const [jobsLoading, setJobsLoading] = useState(false)
+  const [jobsError, setJobsError] = useState<string | null>(null)
+  const [runsError, setRunsError] = useState<string | null>(null)
+  const [observability, setObservability] = useState<BacktestObservability | null>(null)
+  const [observabilityLoading, setObservabilityLoading] = useState(false)
+  const [observabilityError, setObservabilityError] = useState<string | null>(null)
   const [result, setResult] = useState<BacktestResult | null>(null)
 
   const [runs, setRuns] = useState<RunItem[]>([])
@@ -97,6 +103,13 @@ export default function BacktestPage() {
     snapshots: false,
     strategy: false,
   })
+  const [detailError, setDetailError] = useState<Record<DetailTab, string | null>>({
+    overview: null,
+    trades: null,
+    rounds: null,
+    snapshots: null,
+    strategy: null,
+  })
 
   const [strategyManagementItems, setStrategyManagementItems] = useState<StrategyManagementListItem[]>([])
   const [strategyManagementLoading, setStrategyManagementLoading] = useState(false)
@@ -118,8 +131,10 @@ export default function BacktestPage() {
       })
       setRuns(resp.data?.data || [])
       setRunsTotal(resp.data?.total || 0)
+      setRunsError(null)
     } catch {
-      // ignore
+      // 网络失败显示可重试状态，轮询恢复后自动清除
+      setRunsError('网络请求失败，请检查网络后重试（恢复后自动重新轮询）')
     } finally {
       setRunsLoading(false)
     }
@@ -133,10 +148,27 @@ export default function BacktestPage() {
         headers: getAuthHeader(),
       })
       setJobs(resp.data?.data || [])
+      setJobsError(null)
     } catch {
-      // ignore
+      setJobsError('网络请求失败，请检查网络后重试（恢复后自动重新轮询）')
     } finally {
       if (showLoading) setJobsLoading(false)
+    }
+  }, [])
+
+  const fetchObservability = useCallback(async () => {
+    if (!isAuthenticated()) return
+    setObservabilityLoading(true)
+    try {
+      const resp = await axios.get(`${API_BASE_URL}/api/backtest/observability`, {
+        headers: getAuthHeader(),
+      })
+      setObservability(resp.data?.data || null)
+      setObservabilityError(null)
+    } catch {
+      setObservabilityError('网络请求失败，请检查网络后重试')
+    } finally {
+      setObservabilityLoading(false)
     }
   }, [])
 
@@ -172,6 +204,25 @@ export default function BacktestPage() {
     }
   }, [strategyManagementPage, strategyManagementPageSize, strategyManagementQuery, strategyManagementUsable])
 
+  // 任务卡：取消 / 重试（VEW-29）。失败 tab 原地重试亦复用此接口语义。
+  const cancelJob = useCallback(async (jobId: string) => {
+    try {
+      await axios.post(`${API_BASE_URL}/api/backtest/jobs/${jobId}/cancel`, null, { headers: getAuthHeader() })
+      fetchJobs()
+    } catch {
+      setJobsError('取消任务失败，请重试')
+    }
+  }, [fetchJobs])
+
+  const retryJob = useCallback(async (jobId: string) => {
+    try {
+      await axios.post(`${API_BASE_URL}/api/backtest/jobs/${jobId}/retry`, null, { headers: getAuthHeader() })
+      fetchJobs()
+    } catch {
+      setJobsError('重试任务失败，请重试')
+    }
+  }, [fetchJobs])
+
   const loadRunDetail = (runId: number) => {
     setRunOverview(null)
     setRunTrades([])
@@ -187,6 +238,7 @@ export default function BacktestPage() {
     setRunStrategyConfig(null)
     setDetailLoading({ overview: false, trades: false, rounds: false, snapshots: false, strategy: false })
     setDetailLoaded({ overview: false, trades: false, rounds: false, snapshots: false, strategy: false })
+    setDetailError({ overview: null, trades: null, rounds: null, snapshots: null, strategy: null })
     setSelectedRunId(runId)
     setMainTab('detail')
     setDetailTab('overview')
@@ -201,6 +253,7 @@ export default function BacktestPage() {
   ) => {
     const headers = getAuthHeader()
     setDetailLoading((prev) => ({ ...prev, [tab]: true }))
+    setDetailError((prev) => ({ ...prev, [tab]: null }))
 
     try {
       if (tab === 'overview') {
@@ -242,11 +295,26 @@ export default function BacktestPage() {
         const resp = await axios.get(`${API_BASE_URL}/api/backtest/runs/${runId}/strategy-config`, { headers })
         setRunStrategyConfig(resp.data?.data || null)
       }
+      // 仅成功才标记为 loaded；失败保留 error，供原地重试，避免自动重载成环
+      setDetailLoaded((prev) => ({ ...prev, [tab]: true }))
+    } catch {
+      setDetailError((prev) => ({ ...prev, [tab]: '数据加载失败，请检查网络后重试' }))
     } finally {
       setDetailLoading((prev) => ({ ...prev, [tab]: false }))
-      setDetailLoaded((prev) => ({ ...prev, [tab]: true }))
     }
   }, [runRoundsPage, runRoundsPageSize, runTradesPage, runTradesPageSize])
+
+  // 失败 tab 原地重试：清空错误并重新拉取该 tab。snapshots 需要携带对比选项。
+  const retryDetailTab = useCallback((tab: DetailTab) => {
+    if (!selectedRunId) return
+    setDetailError((prev) => ({ ...prev, [tab]: null }))
+    setDetailLoaded((prev) => ({ ...prev, [tab]: false }))
+    if (tab === 'snapshots') {
+      loadDetailTabData(selectedRunId, 'snapshots', undefined, undefined, { benchmarkCode: snapshotBenchmarkCode, compareRunId: snapshotCompareRunId })
+      return
+    }
+    loadDetailTabData(selectedRunId, tab)
+  }, [selectedRunId, loadDetailTabData, snapshotBenchmarkCode, snapshotCompareRunId])
 
   const downloadCsv = async (url: string, filename: string) => {
     const resp = await axios.get(url, {
@@ -301,12 +369,13 @@ export default function BacktestPage() {
 
     fetchStrategies()
     fetchJobs()
+    fetchObservability()
     // 提交前预检所需的股票池统计（板块数量/是否含 ST），用于展示预计扫描数量。
     axios
       .get(`${API_BASE_URL}/api/backtest/universe/stats`, { headers: getAuthHeader() })
       .then((resp) => setUniverseStats(resp.data?.data))
       .catch(() => setUniverseStats(undefined))
-  }, [fetchJobs, mounted])
+  }, [fetchJobs, fetchObservability, mounted])
 
   useEffect(() => {
     if (!mounted) return
@@ -387,14 +456,14 @@ export default function BacktestPage() {
 
   useEffect(() => {
     if (mainTab !== 'detail' || !selectedRunId) return
-    if (detailTab === 'overview' && !detailLoaded.overview && !detailLoading.overview) return void loadDetailTabData(selectedRunId, 'overview')
-    if (detailTab === 'trades' && !detailLoaded.trades && !detailLoading.trades) return void loadDetailTabData(selectedRunId, 'trades')
-    if (detailTab === 'rounds' && !detailLoaded.rounds && !detailLoading.rounds) return void loadDetailTabData(selectedRunId, 'rounds')
-    if (detailTab === 'snapshots' && !detailLoaded.snapshots && !detailLoading.snapshots) {
+    if (detailTab === 'overview' && !detailLoaded.overview && !detailLoading.overview && !detailError.overview) return void loadDetailTabData(selectedRunId, 'overview')
+    if (detailTab === 'trades' && !detailLoaded.trades && !detailLoading.trades && !detailError.trades) return void loadDetailTabData(selectedRunId, 'trades')
+    if (detailTab === 'rounds' && !detailLoaded.rounds && !detailLoading.rounds && !detailError.rounds) return void loadDetailTabData(selectedRunId, 'rounds')
+    if (detailTab === 'snapshots' && !detailLoaded.snapshots && !detailLoading.snapshots && !detailError.snapshots) {
       return void loadDetailTabData(selectedRunId, 'snapshots', undefined, undefined, { benchmarkCode: snapshotBenchmarkCode, compareRunId: snapshotCompareRunId })
     }
-    if (detailTab === 'strategy' && !detailLoaded.strategy && !detailLoading.strategy) return void loadDetailTabData(selectedRunId, 'strategy')
-  }, [mainTab, selectedRunId, detailTab, detailLoaded, detailLoading, loadDetailTabData, snapshotBenchmarkCode, snapshotCompareRunId])
+    if (detailTab === 'strategy' && !detailLoaded.strategy && !detailLoading.strategy && !detailError.strategy) return void loadDetailTabData(selectedRunId, 'strategy')
+  }, [mainTab, selectedRunId, detailTab, detailLoaded, detailLoading, detailError, loadDetailTabData, snapshotBenchmarkCode, snapshotCompareRunId])
 
   const handleRun = async () => {
     if (!isAuthenticated()) {
@@ -550,7 +619,9 @@ export default function BacktestPage() {
             <BacktestRecordsPanel
               runs={runs}
               runsLoading={runsLoading}
-              activeJobs={activeJobs}
+              jobs={jobs}
+              onCancelJob={cancelJob}
+              onRetryJob={retryJob}
               pollingActive={recordsPolling}
               onRefresh={() => {
                 fetchJobs(false)
@@ -565,6 +636,11 @@ export default function BacktestPage() {
                 setRunsPageSize(size)
                 setRunsPage(1)
               }}
+              jobsError={jobsError || runsError}
+              observability={observability}
+              observabilityLoading={observabilityLoading}
+              observabilityError={observabilityError}
+              onRefreshObservability={fetchObservability}
             />
           ) : null}
 
@@ -596,6 +672,8 @@ export default function BacktestPage() {
               roundsPageSize={runRoundsPageSize}
               onRoundsPageChange={changeRoundsPage}
               onRoundsPageSizeChange={changeRoundsPageSize}
+              detailError={detailError}
+              onRetryTab={retryDetailTab}
             />
           ) : null}
 

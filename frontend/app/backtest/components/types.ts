@@ -62,12 +62,76 @@ export type JobItem = {
   name?: string
   status: string
   progress_pct?: number
+  /* 任务可解释性字段（VEW-29）：阶段 / 进度 / ETA / 错误，用于任务卡 */
+  total_symbols?: number
+  processed_symbols?: number
+  eta_seconds?: number | null
+  stage?: string
+  error?: string | null
   created_at?: string
+  updated_at?: string
+}
+
+export type Diagnostics = {
+  universe_size?: number
+  data_available_count?: number
+  data_empty_count?: number
+  candidate_count?: number
+  ranked_count?: number
+  selected_count?: number
+  ordered_count?: number
+  event_count?: number
+  policy_profile?: string
+  effective_universe_filter?: Record<string, unknown>
+  data_provenance?: {
+    source_counts?: Record<string, number>
+    gap_count?: number
+    failure_count?: number
+    empty_count?: number
+    degraded?: boolean
+  }
 }
 
 export type BacktestOverview = {
+  run_id?: number
+  name?: string
+  status?: string
+  strategy_id?: string
+  start_date?: string
+  end_date?: string
+  benchmark?: string | null
+  initial_cash?: number
   summary?: Record<string, unknown>
+  diagnostics?: Diagnostics | null
   equity_curve?: Array<{ datetime: string; equity: number }>
+  warnings?: string[]
+  created_at?: string
+}
+
+export type ObservabilityActiveJob = JobItem & { strategy_id?: string }
+
+export type ObservabilityScanRun = {
+  run_id: number
+  name?: string
+  strategy_id?: string
+  status?: string
+  start_date?: string
+  end_date?: string
+  summary?: Record<string, unknown>
+  diagnostics?: Diagnostics | null
+  warnings?: string[]
+  created_at?: string
+}
+
+export type BacktestObservability = {
+  generated_at?: string
+  universe?: UniverseStats
+  active_jobs?: ObservabilityActiveJob[]
+  recent_scan_runs?: ObservabilityScanRun[]
+  counters?: {
+    jobs?: Record<string, number>
+    runs?: { total?: number; recent_scan_count?: number }
+  }
 }
 
 export type TradeRow = {

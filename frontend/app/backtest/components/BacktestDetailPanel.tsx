@@ -25,6 +25,7 @@ import {
 } from 'recharts'
 import { LoadingHint } from './LoadingHint'
 import { BacktestTable } from './BacktestTable'
+import { FunnelCard } from './FunnelCard'
 import { formatDrawdownPct, formatPct, marketClassByDrawdown, marketClassByValue } from '../../lib/marketColors'
 import {
   buildComparisonChartData,
@@ -84,6 +85,18 @@ class SnapshotErrorBoundary extends Component<
     }
     return this.props.children
   }
+}
+
+function TabErrorAlert({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <Alert
+      type="error"
+      showIcon
+      message="数据加载失败"
+      description={message}
+      action={<Button size="small" type="primary" onClick={onRetry}>重试</Button>}
+    />
+  )
 }
 
 const tradeColumns: ColumnsType<TradeRow> = [
@@ -193,6 +206,8 @@ export function BacktestDetailPanel({
   roundsPageSize,
   onRoundsPageChange,
   onRoundsPageSizeChange,
+  detailError,
+  onRetryTab,
 }: {
   selectedRunId: number | null
   detailTab: DetailTab
@@ -220,6 +235,8 @@ export function BacktestDetailPanel({
   roundsPageSize: number
   onRoundsPageChange: (page: number) => void
   onRoundsPageSizeChange: (size: number) => void
+  detailError: Record<DetailTab, string | null>
+  onRetryTab: (tab: DetailTab) => void
 }) {
   const filterSummary = (runStrategyConfig?.filter_summary as Record<string, unknown>) || {}
   const symbols = (runStrategyConfig?.symbols as Record<string, unknown>) || {}
@@ -310,11 +327,14 @@ export function BacktestDetailPanel({
           {detailTab === 'overview' && (
             detailLoading.overview ? (
               <LoadingHint text="概览数据加载中..." />
+            ) : detailError.overview ? (
+              <TabErrorAlert message={detailError.overview} onRetry={() => onRetryTab('overview')} />
             ) : (
               <Space direction="vertical" size={16} className="w-full">
+                <FunnelCard diagnostics={runOverview?.diagnostics} warnings={runOverview?.warnings} />
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {Object.entries(runOverview?.summary || {})
-                    .filter(([k]) => !['positions_snapshot', 'final_positions'].includes(k))
+                    .filter(([k]) => !['positions_snapshot', 'final_positions', 'diagnostics', 'mode'].includes(k))
                     .slice(0, 8)
                     .map(([k, v]) => {
                       const isDrawdown = /drawdown/i.test(k)
@@ -349,6 +369,8 @@ export function BacktestDetailPanel({
           {detailTab === 'trades' && (
             detailLoading.trades ? (
               <LoadingHint text="成交明细加载中..." />
+            ) : detailError.trades ? (
+              <TabErrorAlert message={detailError.trades} onRetry={() => onRetryTab('trades')} />
             ) : (
               <Space direction="vertical" size={12} className="w-full">
                 <Button onClick={() => onDownloadCsv(`${apiBaseUrl}/api/backtest/runs/${selectedRunId}/trades/export`, `backtest_run_${selectedRunId}_trades.csv`)}>导出成交 CSV</Button>
@@ -397,6 +419,8 @@ export function BacktestDetailPanel({
           {detailTab === 'rounds' && (
             detailLoading.rounds ? (
               <LoadingHint text="回合交易加载中..." />
+            ) : detailError.rounds ? (
+              <TabErrorAlert message={detailError.rounds} onRetry={() => onRetryTab('rounds')} />
             ) : (
               <Space direction="vertical" size={12} className="w-full">
                 <Button onClick={() => onDownloadCsv(`${apiBaseUrl}/api/backtest/runs/${selectedRunId}/rounds/export`, `backtest_run_${selectedRunId}_rounds.csv`)}>导出回合 CSV</Button>
@@ -449,6 +473,8 @@ export function BacktestDetailPanel({
             <Space direction="vertical" size={12} className="w-full">
               {detailLoading.snapshots ? (
                 <LoadingHint text="持仓快照加载中..." />
+              ) : detailError.snapshots ? (
+                <TabErrorAlert message={detailError.snapshots} onRetry={() => onRetryTab('snapshots')} />
               ) : snapshotDateItems.length === 0 && snapshotItems.length === 0 ? (
                 <Empty description="暂无持仓快照数据" />
               ) : (
@@ -575,6 +601,8 @@ export function BacktestDetailPanel({
           {detailTab === 'strategy' && (
             detailLoading.strategy ? (
               <LoadingHint text="策略配置加载中..." />
+            ) : detailError.strategy ? (
+              <TabErrorAlert message={detailError.strategy} onRetry={() => onRetryTab('strategy')} />
             ) : (
               <Space direction="vertical" size={12} className="w-full">
                 <Descriptions title="业务摘要" bordered size="small" column={2}>
