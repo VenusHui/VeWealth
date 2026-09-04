@@ -11,6 +11,8 @@ import pandas as pd
 
 from app.services.backtest.service import BacktestService
 from app.services.backtest.costs import CostModel
+from app.services.universe_service import UniversePool
+from app.providers.provenance import DataProvenance
 
 
 class BacktestServiceUnitTests(unittest.TestCase):
@@ -542,6 +544,154 @@ class CostModelTests(unittest.TestCase):
         model = CostModel(slippage_rate=0.0005)
         price = model.apply_sell_slippage(10.0)
         self.assertAlmostEqual(price, 10.0 * (1 - 0.0005))
+
+
+class PointInTimeUniverseTests(unittest.TestCase):
+    """VEW-26：回测按 as_of 选池 + 行情 provenance 覆盖提示。"""
+
+    def setUp(self):
+        self.service = BacktestService()
+
+    def test_resolve_universe_pool_uses_snapshot(self):
+        pool = UniversePool(
+            symbols=["000001"],
+            as_of=date(2026, 1, 1),
+            source="snapshot",
+            snapshot_date=date(2026, 1, 1),
+            st_filter_effective=True,
+            st_point_in_time=True,
+            warning=None,
+        )
+        with patch(
+            "app.services.backtest.service.universe_service.get_universe_as_of",
+            return_value=pool,
+        ):
+            symbols, note = self.service._resolve_universe_pool(
+                MagicMock(), date(2026, 1, 1), ["main"], True
+            )
+        self.assertEqual(symbols, ["000001"])
+        self.assertEqual(note["universe_source"], "snapshot")
+        self.assertEqual(note["snapshot_date"], "2026-01-01")
+        self.assertTrue(note["st_point_in_time"])
+        self.assertTrue(note["st_filter_effective"])
+
+    def test_resolve_universe_pool_current_universe_warns(self):
+        pool = UniversePool(
+            symbols=["000001"],
+            as_of=date(2026, 1, 1),
+            source="current_universe",
+            snapshot_date=None,
+            st_filter_effective=True,
+            st_point_in_time=False,
+            warning="数据库尚无快照，ST 过滤使用当前状态（非回测时点状态）",
+        )
+        with patch(
+            "app.services.backtest.service.universe_service.get_universe_as_of",
+            return_value=pool,
+        ):
+            symbols, note = self.service._resolve_universe_pool(
+                MagicMock(), date(2026, 1, 1), ["main"], True
+            )
+        self.assertEqual(symbols, ["000001"])
+        self.assertEqual(note["universe_source"], "current_universe")
+        self.assertFalse(note["st_point_in_time"])
+        self.assertIn("快照", note["universe_warning"])
+
+    def test_unified_portfolio_surfaces_provenance_coverage(self):
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=10, freq="D"),
+                "open": [10.0] * 10,
+                "close": [10.0] * 10,
+            }
+        )
+        df.attrs["provenance"] = DataProvenance(
+            source="mootdx",
+            adjustment="qfq",
+            requested_start="2026-01-01",
+            requested_end="2026-01-31",
+            actual_start="2026-01-01",
+            actual_end="2026-01-10",
+            bar_count=10,
+            last_bar="2026-01-10",
+            gap=True,
+            failure_reason=None,
+        )
+
+        class StubStrategy:
+            def required_columns(self):
+                return {"datetime"}
+
+            def default_policy_profile(self):
+                return "default"
+
+            def generate_candidates(self, work, params):
+                return pd.DataFrame(
+                    {
+                        "trade_date": [work["datetime"].iloc[-1]],
+                        "symbol": [work["symbol"].iloc[-1]],
+                        "signal_strength": [0.5],
+                    }
+                )
+
+        pipeline = {
+            "ranking": SimpleNamespace(rank=lambda df, context: df),
+            "selection": SimpleNamespace(
+                select=lambda df, portfolio_state, context: df
+            ),
+            "allocation": SimpleNamespace(
+                allocate=lambda df, equity, risk_state, context: df
+            ),
+            "risk": SimpleNamespace(
+                check_pre_trade=lambda df, portfolio_state, context: df
+            ),
+        }
+        stub_portfolio = SimpleNamespace(
+            equity_curve=[],
+            trades=[],
+            warnings=[],
+            final_positions=[],
+            positions_snapshot=[],
+        )
+
+        mock_cost_config = MagicMock()
+        mock_cost_config.model_dump.return_value = {
+            "commission_rate": 0.0003,
+            "min_commission": 5.0,
+            "stamp_tax_rate": 0.001,
+            "slippage_rate": 0.0005,
+        }
+        request = BacktestServiceUnitTests._make_request(
+            mode="manual_symbols",
+            strategy_params={"hold_days": 5},
+            cost_config=mock_cost_config,
+        )
+
+        with patch.object(
+            BacktestService, "_fetch_daily_with_warmup", return_value=(df, None)
+        ), patch(
+            "app.services.backtest.service.resolve_profile", return_value=pipeline
+        ), patch(
+            "app.services.backtest.service.run_portfolio", return_value=stub_portfolio
+        ), patch(
+            "app.services.backtest.service.calc_summary",
+            return_value={"total_return": 0.0, "total_trades": 0},
+        ):
+            result = self.service._run_unified_portfolio(
+                request=request,
+                symbols=["000001"],
+                strategy=StubStrategy(),
+                progress_callback=None,
+                db=None,
+                include_diagnostics=True,
+                universe_filter={"boards": ["main"], "exclude_st": True},
+            )
+
+        diagnostics = result["diagnostics"]["data_provenance"]
+        self.assertEqual(diagnostics["gap_count"], 1)
+        self.assertEqual(diagnostics["source_counts"], {"mootdx": 1})
+        self.assertTrue(diagnostics["degraded"])
+        self.assertTrue(any("行情覆盖不完整" in w for w in result["warnings"]))
 
 
 if __name__ == "__main__":

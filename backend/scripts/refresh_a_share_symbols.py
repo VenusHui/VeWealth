@@ -17,6 +17,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.core.database import SessionLocal
 from app.models.security_universe import SecurityUniverse
 from app.providers.astock_data import fetch_all_stock_codes
+from app.services.universe_service import capture_snapshot
 
 
 def detect_market(code: str) -> str:
@@ -88,6 +89,12 @@ def main() -> None:
                 row.is_active = False
 
         db.commit()
+
+        # 落一份今天的 point-in-time 快照，供回测按 as_of 选池（累积历史 ST/退市信息）
+        snapshot_count = capture_snapshot(db, as_of=datetime.now().date())
+        print(
+            f"✅ 已写入 {datetime.now().strftime('%Y-%m-%d')} 的 universe 快照，记录数: {snapshot_count}"
+        )
     finally:
         db.close()
 
