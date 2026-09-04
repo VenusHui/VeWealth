@@ -14,6 +14,7 @@ import type {
   BacktestOverview,
   BacktestFacts,
   BacktestResult,
+  CostConfig,
   DetailTab,
   JobItem,
   MainTab,
@@ -24,9 +25,11 @@ import type {
   StrategyConfig,
   StrategyManagementListItem,
   TradeRow,
+  UniverseStats,
 } from './components/types'
+import { DEFAULT_COST_CONFIG } from './components/types'
 import { AppPage, CompactStatCard } from '../components/ui-shell'
-import { parseStrategyParams, validateStrategyParams } from './calc'
+import { buildStrategyParams, defaultDateRange, validateStrategyParams } from './calc'
 
 const API_BASE_URL = getApiBaseUrl()
 
@@ -42,12 +45,15 @@ export default function BacktestPage() {
   const [universeType, setUniverseType] = useState<'all' | 'custom'>('all')
   const [symbols, setSymbols] = useState('000001')
   const [poolSymbols, setPoolSymbols] = useState('')
-  const [boardFilters, setBoardFilters] = useState<Array<'main' | 'gem' | 'star' | 'bse'>>(['main'])
+  const [boardFilters, setBoardFilters] = useState<Array<'main' | 'gem' | 'star' | 'bse'>>(['main', 'gem', 'star', 'bse'])
   const [excludeSt, setExcludeSt] = useState(true)
-  const [startDate, setStartDate] = useState('2025-01-01')
-  const [endDate, setEndDate] = useState('2025-12-31')
+  const [startDate, setStartDate] = useState(defaultDateRange().startDate)
+  const [endDate, setEndDate] = useState(defaultDateRange().endDate)
   const [initialCash, setInitialCash] = useState('100000')
   const [name, setName] = useState('我的回测')
+  const [costConfig, setCostConfig] = useState<CostConfig>(DEFAULT_COST_CONFIG)
+  const [benchmark, setBenchmark] = useState('不使用')
+  const [universeStats, setUniverseStats] = useState<UniverseStats | undefined>(undefined)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -294,6 +300,11 @@ export default function BacktestPage() {
 
     fetchStrategies()
     fetchJobs()
+    // 提交前预检所需的股票池统计（板块数量/是否含 ST），用于展示预计扫描数量。
+    axios
+      .get(`${API_BASE_URL}/api/backtest/universe/stats`, { headers: getAuthHeader() })
+      .then((resp) => setUniverseStats(resp.data?.data))
+      .catch(() => setUniverseStats(undefined))
   }, [fetchJobs, mounted])
 
   useEffect(() => {
@@ -402,11 +413,11 @@ export default function BacktestPage() {
         setError(validation.errors.join('；'))
         return
       }
-      const castParams = parseStrategyParams(strategyParams)
       if (mode === 'strategy_select' && boardFilters.length === 0) {
         setError('请至少选择一个板块')
         return
       }
+      const castParams = buildStrategyParams(selectedStrategy, strategyParams, mode)
       if (mode === 'strategy_select') {
         castParams.boards = boardFilters
         castParams.exclude_st = excludeSt
@@ -422,6 +433,13 @@ export default function BacktestPage() {
         start_date: startDate,
         end_date: endDate,
         initial_cash: Number(initialCash),
+        benchmark: benchmark === '不使用' ? null : benchmark,
+        cost_config: {
+          commission_rate: Number(costConfig.commission_rate),
+          min_commission: Number(costConfig.min_commission),
+          stamp_tax_rate: Number(costConfig.stamp_tax_rate),
+          slippage_rate: Number(costConfig.slippage_rate),
+        },
       }
       const resp = await axios.post(`${API_BASE_URL}/api/backtest/jobs`, payload, { headers: getAuthHeader() })
       setJob(resp.data?.data)
@@ -492,6 +510,9 @@ export default function BacktestPage() {
             strategyParams={strategyParams}
             boardFilters={boardFilters}
             excludeSt={excludeSt}
+            costConfig={costConfig}
+            benchmark={benchmark}
+            universeStats={universeStats}
             loading={loading}
             error={error}
             onNameChange={setName}
@@ -514,6 +535,8 @@ export default function BacktestPage() {
             }}
             onExcludeStChange={setExcludeSt}
             onStrategyParamChange={(k, v) => setStrategyParams((prev) => ({ ...prev, [k]: v }))}
+            onCostConfigChange={(k, v) => setCostConfig((prev) => ({ ...prev, [k]: Number(v) }))}
+            onBenchmarkChange={setBenchmark}
             onSubmit={handleRun}
           />
         </div>

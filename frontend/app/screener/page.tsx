@@ -13,7 +13,8 @@ import {
   type ScreenerProgress,
   type ScreenerResult,
 } from './components/ScreenerResultsTable'
-import type { Strategy } from '../backtest/components/types'
+import type { Strategy, UniverseStats } from '../backtest/components/types'
+import { buildStrategyParams } from '../backtest/calc'
 
 const API_BASE_URL = getApiBaseUrl()
 
@@ -45,8 +46,10 @@ export default function ScreenerPage() {
   const [strategies, setStrategies] = useState<Strategy[]>([])
   const [strategyId, setStrategyId] = useState('')
   const [strategyParams, setStrategyParams] = useState<Record<string, string>>({})
-  const [boardFilters, setBoardFilters] = useState<Array<'main' | 'gem' | 'star' | 'bse'>>(['main'])
+  // 「全市场」默认勾选全部板块，而非仅主板，避免文案与实际范围不一致。
+  const [boardFilters, setBoardFilters] = useState<Array<'main' | 'gem' | 'star' | 'bse'>>(['main', 'gem', 'star', 'bse'])
   const [excludeSt, setExcludeSt] = useState(true)
+  const [universeStats, setUniverseStats] = useState<UniverseStats | undefined>(undefined)
   const [error, setError] = useState('')
 
   // Scan state
@@ -91,6 +94,11 @@ export default function ScreenerPage() {
       }
     }
     fetchStrategies()
+    // 提交前预检所需的股票池统计（板块数量/是否含 ST）。
+    axios
+      .get(`${API_BASE_URL}/api/backtest/universe/stats`, { headers: getAuthHeader() })
+      .then((resp) => setUniverseStats(resp.data?.data))
+      .catch(() => setUniverseStats(undefined))
   }, [mounted])
 
   // Sync param defaults when strategy changes
@@ -141,11 +149,8 @@ export default function ScreenerPage() {
         results: [],
       })
 
-      const castParams: Record<string, unknown> = {}
-      Object.keys(strategyParams).forEach((k) => {
-        const val = strategyParams[k]
-        castParams[k] = /^-?\d+(\.\d+)?$/.test(val) ? Number(val) : val
-      })
+      // 与回测入口共用同一套序列化逻辑（schema 驱动的数值 cast），保证相同配置两入口产出一致的信号参数。
+      const castParams = buildStrategyParams(selectedStrategy, strategyParams, 'screener')
 
       const resp = await axios.post(
         `${API_BASE_URL}/api/screener/scan`,
@@ -225,6 +230,7 @@ export default function ScreenerPage() {
         strategyParams={strategyParams}
         boardFilters={boardFilters}
         excludeSt={excludeSt}
+        universeStats={universeStats}
         scanning={scan.status === 'scanning'}
         onStrategyChange={setStrategyId}
         onBoardFilterChange={(board, checked) => {

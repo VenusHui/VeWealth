@@ -1,5 +1,5 @@
-import type { Strategy } from './types'
-import { BOARD_LABELS } from './types'
+import type { CostConfig, Strategy, UniverseStats } from './types'
+import { StrategyForm } from './StrategyForm'
 
 export function BacktestCreatePanel({
   name,
@@ -14,6 +14,11 @@ export function BacktestCreatePanel({
   endDate,
   selectedStrategy,
   strategyParams,
+  boardFilters,
+  excludeSt,
+  costConfig,
+  benchmark,
+  universeStats,
   loading,
   error,
   onNameChange,
@@ -25,11 +30,11 @@ export function BacktestCreatePanel({
   onInitialCashChange,
   onStartDateChange,
   onEndDateChange,
-  onStrategyParamChange,
-  boardFilters,
-  excludeSt,
   onBoardFilterChange,
   onExcludeStChange,
+  onStrategyParamChange,
+  onCostConfigChange,
+  onBenchmarkChange,
   onSubmit,
 }: {
   name: string
@@ -44,6 +49,11 @@ export function BacktestCreatePanel({
   endDate: string
   selectedStrategy?: Strategy
   strategyParams: Record<string, string>
+  boardFilters: Array<'main' | 'gem' | 'star' | 'bse'>
+  excludeSt: boolean
+  costConfig: CostConfig
+  benchmark: string
+  universeStats?: UniverseStats
   loading: boolean
   error: string
   onNameChange: (v: string) => void
@@ -55,11 +65,11 @@ export function BacktestCreatePanel({
   onInitialCashChange: (v: string) => void
   onStartDateChange: (v: string) => void
   onEndDateChange: (v: string) => void
-  boardFilters: Array<'main' | 'gem' | 'star' | 'bse'>
-  excludeSt: boolean
   onBoardFilterChange: (board: 'main' | 'gem' | 'star' | 'bse', checked: boolean) => void
   onExcludeStChange: (v: boolean) => void
   onStrategyParamChange: (k: string, v: string) => void
+  onCostConfigChange: (k: keyof CostConfig, v: string) => void
+  onBenchmarkChange: (v: string) => void
   onSubmit: () => void
 }) {
   const isModeSupported = (m: 'manual_symbols' | 'strategy_select') =>
@@ -70,110 +80,64 @@ export function BacktestCreatePanel({
 
   return (
     <section className="ve-panel space-y-5">
-        <div className="space-y-1">
-          <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">新建回测任务</h2>
-        </div>
+      <div className="space-y-1">
+        <h2 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">新建回测任务</h2>
+      </div>
 
-        <div className="grid grid-cols-1 gap-4">
-          <div>
-            <label htmlFor="bt-task-name" className="ve-field-label">任务名称</label>
-            <input id="bt-task-name" className="ve-input" value={name} onChange={(e) => onNameChange(e.target.value)} placeholder="例如：2025 主板趋势轮动" />
-          </div>
-          <div>
-            <label htmlFor="bt-strategy" className="ve-field-label">策略</label>
-            <select id="bt-strategy" className="ve-select" value={strategyId} onChange={(e) => onStrategyChange(e.target.value)}>
-              {strategies.map((s) => (
-                <option key={s.strategy_id} value={s.strategy_id}>{s.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="bt-mode" className="ve-field-label">回测模式</label>
-            <select id="bt-mode" className="ve-select" value={mode} onChange={(e) => onModeChange(e.target.value as 'manual_symbols' | 'strategy_select')}>
-              <option value="manual_symbols" disabled={!isModeSupported('manual_symbols')}>手工股票池</option>
-              <option value="strategy_select" disabled={!isModeSupported('strategy_select')}>策略自动选股</option>
-            </select>
-          </div>
-          {mode === 'manual_symbols' ? (
-            <div>
-              <label htmlFor="bt-symbols" className="ve-field-label">股票代码（逗号分隔）</label>
-              <input id="bt-symbols" className="ve-input" value={symbols} onChange={(e) => onSymbolsChange(e.target.value)} placeholder="000001, 600519, 300750" />
-            </div>
-          ) : (
-            <div>
-              <label htmlFor="bt-universe" className="ve-field-label">选股范围</label>
-              <select id="bt-universe" className="ve-select" value={universeType} onChange={(e) => onUniverseTypeChange(e.target.value as 'all' | 'custom')}>
-                <option value="all">全市场</option>
-                <option value="custom">自定义股票池</option>
-              </select>
-            </div>
-          )}
-          {mode === 'strategy_select' && universeType === 'custom' ? (
-            <div>
-              <label htmlFor="bt-pool-symbols" className="ve-field-label">自定义股票池</label>
-              <input id="bt-pool-symbols" className="ve-input" value={poolSymbols} onChange={(e) => onPoolSymbolsChange(e.target.value)} placeholder="用逗号分隔自定义股票池" />
-            </div>
-          ) : null}
-          <div>
-            <label htmlFor="bt-cash" className="ve-field-label">初始资金</label>
-            <input id="bt-cash" className="ve-input" value={initialCash} onChange={(e) => onInitialCashChange(e.target.value)} placeholder="100000" inputMode="decimal" />
-          </div>
-          <div>
-            <label htmlFor="bt-start-date" className="ve-field-label">开始日期</label>
-            <input id="bt-start-date" type="date" className="ve-date-input" value={startDate} onChange={(e) => onStartDateChange(e.target.value)} />
-          </div>
-          <div>
-            <label htmlFor="bt-end-date" className="ve-field-label">结束日期</label>
-            <input id="bt-end-date" type="date" className="ve-date-input" value={endDate} onChange={(e) => onEndDateChange(e.target.value)} />
-          </div>
-        </div>
+      <div>
+        <label htmlFor="bt-task-name" className="ve-field-label">任务名称</label>
+        <input id="bt-task-name" className="ve-input" value={name} onChange={(e) => onNameChange(e.target.value)} placeholder="例如：2025 主板趋势轮动" />
+      </div>
 
-        {selectedStrategy ? (
-          <div className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] p-5">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-[var(--text-strong)]">策略参数</div>
-                <div className="text-sm text-[var(--text-dim)]">当前策略：{selectedStrategy.name}</div>
-              </div>
-              <div className="ve-info-pill">{selectedStrategy.strategy_id}</div>
-            </div>
-            <div className="grid grid-cols-1 gap-4">
-              {selectedStrategy.param_schema.map((p) => (
-                <div key={p.key}>
-                  <label htmlFor={`bt-param-${p.key}`} className="ve-field-label">{p.label}</label>
-                  <input id={`bt-param-${p.key}`} className="ve-input" value={strategyParams[p.key] ?? ''} onChange={(e) => onStrategyParamChange(p.key, e.target.value)} placeholder={String(p.default ?? '')} />
-                </div>
-              ))}
-            </div>
+      <div>
+        <label htmlFor="bt-mode" className="ve-field-label">回测模式</label>
+        <select id="bt-mode" className="ve-select" value={mode} onChange={(e) => onModeChange(e.target.value as 'manual_symbols' | 'strategy_select')}>
+          <option value="manual_symbols" disabled={!isModeSupported('manual_symbols')}>手工股票池</option>
+          <option value="strategy_select" disabled={!isModeSupported('strategy_select')}>策略自动选股</option>
+        </select>
+        <p className="mt-1 text-xs text-[var(--text-dim)]">模式只决定股票池来源，不改变成交语义；两者使用同一套回测引擎。</p>
+      </div>
 
-            {mode === 'strategy_select' ? (
-              <div className="mt-5 rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--surface-subtle)] p-4">
-                <div className="text-sm font-semibold text-[var(--text-strong)]">股票范围过滤</div>
-                <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-                  {(['main', 'gem', 'star', 'bse'] as const).map((key) => (
-                    <label key={key} className="flex items-center gap-2 rounded-[var(--radius-control)] border border-[var(--border-subtle)] bg-white px-3 py-3 text-sm text-[var(--text-muted)]">
-                      <input type="checkbox" checked={boardFilters.includes(key)} onChange={(e) => onBoardFilterChange(key, e.target.checked)} />
-                      <span>{BOARD_LABELS[key]}</span>
-                    </label>
-                  ))}
-                </div>
-                <label className="mt-4 flex items-center gap-2 text-sm text-[var(--text-muted)]">
-                  <input type="checkbox" checked={excludeSt} onChange={(e) => onExcludeStChange(e.target.checked)} />
-                  <span>排除 ST / *ST</span>
-                </label>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
+      <StrategyForm
+        entry="backtest"
+        backtestMode={mode}
+        strategies={strategies}
+        strategyId={strategyId}
+        selectedStrategy={selectedStrategy}
+        strategyParams={strategyParams}
+        universeType={universeType}
+        symbols={symbols}
+        poolSymbols={poolSymbols}
+        boardFilters={boardFilters}
+        excludeSt={excludeSt}
+        initialCash={initialCash}
+        startDate={startDate}
+        endDate={endDate}
+        costConfig={costConfig}
+        benchmark={benchmark}
+        universeStats={universeStats}
+        onStrategyChange={onStrategyChange}
+        onStrategyParamChange={onStrategyParamChange}
+        onUniverseTypeChange={onUniverseTypeChange}
+        onSymbolsChange={onSymbolsChange}
+        onPoolSymbolsChange={onPoolSymbolsChange}
+        onBoardFilterChange={onBoardFilterChange}
+        onExcludeStChange={onExcludeStChange}
+        onInitialCashChange={onInitialCashChange}
+        onStartDateChange={onStartDateChange}
+        onEndDateChange={onEndDateChange}
+        onCostConfigChange={onCostConfigChange}
+        onBenchmarkChange={onBenchmarkChange}
+      />
 
-        <div className="flex flex-wrap items-center gap-3">
-          <button type="button" onClick={onSubmit} disabled={loading} className="ve-button-primary">
-            {loading ? '提交中…' : '提交回测任务'}
-          </button>
-          <span className="text-sm text-[var(--text-dim)]">提交后将跳转至记录页面，可实时查看任务进度。</span>
-        </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" onClick={onSubmit} disabled={loading} className="ve-button-primary">
+          {loading ? '提交中…' : '提交回测任务'}
+        </button>
+        <span className="text-sm text-[var(--text-dim)]">提交后将跳转至记录页面，可实时查看任务进度。</span>
+      </div>
 
-        {error ? <div className="rounded-[var(--radius-card)] border border-[rgba(220,38,38,0.16)] bg-[rgba(254,242,242,0.86)] px-4 py-3 text-sm text-red-700">{error}</div> : null}
+      {error ? <div className="rounded-[var(--radius-card)] border border-[rgba(220,38,38,0.16)] bg-[rgba(254,242,242,0.86)] px-4 py-3 text-sm text-red-700">{error}</div> : null}
     </section>
   )
 }
