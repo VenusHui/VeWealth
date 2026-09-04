@@ -1,15 +1,18 @@
 """共享候选评估器：as-of 过滤、去重、评分排序与进度计数。
 
-选股 (screener) 与回测 (backtest) 共用同一套「候选 → 结果」语义：
+选股 (screener) 与回测 (backtest) 共用「候选 → 结果」的评分语义：
 
 - **as_of_date 契约**：只有 `as_of_date` 当日信号才算候选；任何更早日期的信号一律
-  抛弃，杜绝「全局最新候选日」把旧信号当当前信号返回。
+  抛弃，杜绝「全局最新候选日」把旧信号当当前信号返回。（回测是时序引擎，按交易日
+  逐日评估，故 as-of / 漏斗用于选股扫描；本模块同时向两端提供统一的评分归一化、
+  liquidity 代理与 tie-break 排序定义。）
 - **数据陈旧**：某只股票数据末日落后于 `as_of_date`，计入 `stale_data_count`，
   而不是进入候选。
 - **进度漏斗**：字段严格拆成 `fetched / data_ok / data_failed / evaluated /
   signal_hits / rejected`，每个字段只表达一件事，不复用。
 - **同分 tie-breaker**：score 降序 → liquidity 降序 → symbol 升序，保证次序确定
-  且有业务意义（流动性优先），避免「同日 Top-K 退化为 DataFrame 顺序」。
+  且有业务意义（流动性优先），避免「同日 Top-K 退化为 DataFrame 顺序」。该顺序由
+  本模块的 TIEBREAK_* 常量统一定义，选股排序与回测 ranking policy 共用。
 """
 
 from __future__ import annotations
@@ -18,6 +21,12 @@ from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
 import pandas as pd
+
+#: 同分排序的统一定义：score 降序 → liquidity 降序 → symbol 升序。
+#: 选股的 rank_candidates 与回测的 SignalThenLiquidityRanking 都据此排序，
+#: 保证两端 tie-break 语义完全一致（单一事实来源）。
+TIEBREAK_COLUMNS: tuple[str, ...] = ("signal_strength", "liquidity", "symbol")
+TIEBREAK_ASCENDING: tuple[bool, ...] = (False, False, True)
 
 #: 进度契约字段：fetch 漏斗，字段间只做数量与归属区分，不混用。
 PROGRESS_FIELDS = (
@@ -126,11 +135,95 @@ def dedupe_by_symbol(
     return list(seen.values())
 
 
+def liquidity_at_date(
+    df: pd.DataFrame,
+    target_date: str | pd.Timestamp | None,
+    window: int = 20,
+) -> float:
+    """业务意义的流动性代理：截至 target_date 的窗口内日均成交额（close × volume）。
+
+    A 股无公开成交额列时以 `close*volume` 近似。选股端传 as_of_date（全市场同一天），
+    回测端传每条候选自身的 trade_date。数据缺失 / 列缺失 / target_date 为空时返回 0，
+    使同分次序仍由 symbol 兜底而不报错。
+    """
+    if df is None or df.empty:
+        return 0.0
+    required = {"datetime", "close", "volume"}
+    if not required.issubset(df.columns):
+        return 0.0
+    try:
+        work = df[["datetime", "close", "volume"]].copy()
+        work["_date"] = pd.to_datetime(work["datetime"]).dt.normalize()
+        work["_turn"] = pd.to_numeric(work["close"], errors="coerce") * pd.to_numeric(
+            work["volume"], errors="coerce"
+        )
+        work = work.dropna(subset=["_turn"])
+        if work.empty:
+            return 0.0
+        if target_date is not None:
+            work = work[work["_date"] <= pd.Timestamp(target_date)]
+        if work.empty:
+            return 0.0
+        return float(work["_turn"].tail(window).mean())
+    except (ValueError, TypeError, KeyError):
+        return 0.0
+
+
+def attach_liquidity_dict(
+    candidates: Iterable[dict[str, Any]],
+    symbol_dfs: dict[str, pd.DataFrame],
+    target_date: str | pd.Timestamp | None,
+    window: int = 20,
+) -> list[dict[str, Any]]:
+    """给 dict 形态候选注入真实 liquidity（选股端用，全体候选同属 as_of_date）。
+
+    每个候选按其 symbol 在该日窗口的日均成交额填充 `liquidity`；找不到行情则置 0。
+    """
+    out: list[dict[str, Any]] = []
+    for c in candidates:
+        sym = str(c.get("symbol", "")).strip()
+        doc = dict(c)
+        doc["liquidity"] = liquidity_at_date(symbol_dfs.get(sym), target_date, window)
+        out.append(doc)
+    return out
+
+
+def attach_liquidity_df(
+    candidates_df: pd.DataFrame,
+    market_data_map: dict[str, pd.DataFrame],
+    window: int = 20,
+) -> pd.DataFrame:
+    """给 DataFrame 形态候选注入真实 liquidity（回测端用，逐候选按其 trade_date）。
+
+    每条候选的 liquidity 取该 symbol 在其 trade_date 窗口内的日均成交额；
+    缺行情的 symbol 置 0，不会改变同分次序（仍由 symbol 兜底）。
+    """
+    if candidates_df is None or candidates_df.empty:
+        return candidates_df if candidates_df is not None else pd.DataFrame()
+    if (
+        "symbol" not in candidates_df.columns
+        or "trade_date" not in candidates_df.columns
+    ):
+        return candidates_df
+    out = candidates_df.copy()
+    if "liquidity" not in out.columns:
+        out["liquidity"] = 0.0
+    for idx, row in out.iterrows():
+        sym = str(row.get("symbol") or "").strip()
+        sdf = market_data_map.get(sym)
+        if sdf is None or sdf.empty:
+            continue
+        out.loc[idx, "liquidity"] = liquidity_at_date(
+            sdf, row.get("trade_date"), window
+        )
+    return out
+
+
 def rank_candidates(
     candidates: Iterable[dict[str, Any]],
     score_key: str = "signal_strength",
 ) -> list[dict[str, Any]]:
-    """确定性排序：score 降序 → liquidity 降序 → symbol 升序。
+    """确定性排序：score 降序 → liquidity 降序 → symbol 升序（TIEBREAK_* 常量定义）。
 
     liquidity 是业务意义的次级排序（流动性越强越优先）；symbol 升序兜底，
     保证同分时输出顺序确定，不随 DataFrame 内部顺序变化。

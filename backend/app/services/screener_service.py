@@ -23,8 +23,9 @@ from app.core.database import SessionLocal
 from app.models.screener_job import ScreenerJob
 from app.models.security_universe import SecurityUniverse
 from app.providers.astock_data import tencent_quote
-from app.services.backtest.evaluator import (
+from app.services.evaluator import (
     EvaluationCounters,
+    attach_liquidity_dict,
     candidate_date,
     dedupe_by_symbol,
     determine_as_of_date,
@@ -460,7 +461,11 @@ class ScreenerService:
                     logger.warning(f"策略计算失败 {symbol}")
 
         if not as_of_date:
-            # 无法确定 as_of_date，不产出任何候选（保守：全量视为非当日信号）。
+            # 无法确定 as_of_date（数据缺 datetime/trade_date 的退化路径），不产出任何
+            # 候选。为保持 data_ok == fetched - stale_data_count 不变式（此时 data_ok==0、
+            # fetched>0），把全量已取数归为 stale（无参考日期 → 数据不可用）。
+            counters.stale_data_count = counters.fetched
+            counters.data_ok = 0
             self._update_progress(scan_id, counters, total)
             return [], counters
 
@@ -492,7 +497,11 @@ class ScreenerService:
                 counters.rejected += 1
 
         self._update_progress(scan_id, counters, total)
-        ranked = rank_candidates(as_of_candidates.values())
+        # 注入真实流动性（as_of_date 窗口内日均成交额），使 score → liquidity → symbol
+        # 的业务意义 tie-break 真正生效，而非 liquidity 恒为 0。
+        as_of_hits = list(as_of_candidates.values())
+        with_liquidity = attach_liquidity_dict(as_of_hits, symbol_dfs, as_of_date)
+        ranked = rank_candidates(with_liquidity)
         return dedupe_by_symbol(ranked), counters
 
     def _enrich_candidates(self, candidates: list[dict], strategy) -> list[dict]:

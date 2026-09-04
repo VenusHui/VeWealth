@@ -19,11 +19,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.models.screener_job import ScreenerJob
-from app.services.backtest.evaluator import (
+from app.services.evaluator import (
     EvaluationCounters,
+    attach_liquidity_df,
     dedupe_by_symbol,
     determine_as_of_date,
     is_stale,
+    liquidity_at_date,
     normalize_score,
     rank_candidates,
 )
@@ -261,6 +263,103 @@ class ScoreAndRankingTests(unittest.TestCase):
         deduped = dedupe_by_symbol(cands)
         self.assertEqual(len(deduped), 2)
         self.assertEqual(deduped[0]["signal_strength"], 0.9)
+
+
+class LiquidityAndUnifiedRankingTests(unittest.TestCase):
+    def setUp(self):
+        self.service = ScreenerService()
+        engine = create_engine("sqlite://")
+        ScreenerJob.__table__.create(bind=engine)
+        self.session_factory = sessionmaker(bind=engine)
+        patcher = patch.object(screener_module, "SessionLocal", self.session_factory)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _token(self, cancelled=False):
+        token = MagicMock()
+        token.is_cancelled.return_value = cancelled
+        return token
+
+    def test_liquidity_at_date_avg_turnover(self):
+        """close*volume 日均成交额作为流动性代理。"""
+        df = _make_daily_df("AAA", "2025-06-10", n=6)
+        # 每根 close=10.5, volume=100000 → 成交额 1,050,000
+        self.assertAlmostEqual(liquidity_at_date(df, "2025-06-10"), 1_050_000.0)
+
+    def test_liquidity_at_date_window_and_bounds(self):
+        df = _make_daily_df("AAA", "2025-06-10", n=6)
+        # 窗口限 2 根 → 仍为单值 1,050,000
+        self.assertAlmostEqual(
+            liquidity_at_date(df, "2025-06-10", window=2), 1_050_000.0
+        )
+        # target_date 更早 → 窗口内无数据 → 0
+        self.assertEqual(liquidity_at_date(df, "2025-06-01"), 0.0)
+        # 缺 close/volume → 0
+        self.assertEqual(
+            liquidity_at_date(pd.DataFrame({"datetime": []}), "2025-06-10"), 0.0
+        )
+
+    def test_rank_uses_real_liquidity_over_symbol(self):
+        """同分时真实流动性高者优先，而非退化为 symbol 顺序。"""
+        cands = [
+            {"symbol": "A", "signal_strength": 0.8, "liquidity": 100.0},
+            {"symbol": "B", "signal_strength": 0.8, "liquidity": 500.0},
+        ]
+        ranked = rank_candidates(cands)
+        self.assertEqual([c["symbol"] for c in ranked], ["B", "A"])
+
+    def test_attach_liquidity_df_populates_per_candidate(self):
+        """回测端 attach_liquidity_df 按每条候选的 trade_date 填充真实流动性。"""
+        df = _make_daily_df("AAA", "2025-06-10", n=6)
+        cand_df = pd.DataFrame(
+            {
+                "trade_date": pd.to_datetime(["2025-06-10", "2025-06-09"]),
+                "symbol": ["AAA", "AAA"],
+                "signal_strength": [0.8, 0.9],
+            }
+        )
+        out = attach_liquidity_df(cand_df, {"AAA": df})
+        self.assertIn("liquidity", out.columns)
+        self.assertGreater(out["liquidity"].iloc[0], 0.0)
+        self.assertGreater(out["liquidity"].iloc[1], 0.0)
+
+    def test_screener_candidates_carry_real_liquidity(self):
+        """_evaluate 返回的候选携带真实 liquidity，而非占位 0。"""
+        symbol_dfs = {"AAA": _make_daily_df("AAA", "2025-06-10")}
+        as_of = determine_as_of_date(symbol_dfs)
+        candidates, _ = self.service._evaluate(
+            token=self._token(),
+            strategy_id="fake_same_day",
+            strategy=_SameDaySignalStrategy(),
+            symbol_dfs=symbol_dfs,
+            params={},
+            scan_id="scan_x",
+            as_of_date=as_of,
+            total=1,
+        )
+        self.assertEqual(len(candidates), 1)
+        self.assertGreater(candidates[0]["liquidity"], 0.0)
+
+    def test_no_asof_sets_stale_and_preserves_invariant(self):
+        """as_of_date 无法确定时：全量归 stale、data_ok=0，且不变式成立。"""
+        symbol_dfs = {"AAA": _make_daily_df("AAA", "2025-06-10")}
+        candidates, counters = self.service._evaluate(
+            token=self._token(),
+            strategy_id="fake_prev_day",
+            strategy=_AsOfSignalStrategy(),
+            symbol_dfs=symbol_dfs,
+            params={},
+            scan_id="scan_x",
+            as_of_date=None,
+            total=1,
+        )
+        self.assertEqual(candidates, [])
+        progress = counters.to_progress(total=1)
+        self.assertEqual(progress["data_ok"], 0)
+        self.assertEqual(progress["stale_data_count"], 1)
+        self.assertEqual(
+            progress["data_ok"], progress["fetched"] - progress["stale_data_count"]
+        )
 
 
 if __name__ == "__main__":
