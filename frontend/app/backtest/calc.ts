@@ -74,6 +74,18 @@ export const EXECUTION_ONLY_PARAMS = new Set<string>([
   'hold_days',
 ])
 
+/**
+ * 给定入口应渲染参数字段；选股入口剔除仅回测执行相关的参数（与
+ * `buildStrategyParams('screener')` 一致），保证「所见即所提交」。
+ */
+export function visibleParamsForEntry(
+  schema: StrategyParamField[] | undefined,
+  entry: 'backtest' | 'screener',
+): StrategyParamField[] {
+  if (!schema) return []
+  return schema.filter((p) => entry !== 'screener' || !EXECUTION_ONLY_PARAMS.has(p.key))
+}
+
 /** 参数所属分组：backend 显式提供时优先，否则按 key 兜底，默认归「信号」。 */
 export function classifyParamGroup(key: string, schemaField?: StrategyParamField): ParamGroup {
   if (schemaField?.group === 'signal' || schemaField?.group === 'portfolio') return schemaField.group

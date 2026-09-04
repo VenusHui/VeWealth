@@ -16,6 +16,7 @@ import {
   checkDataFreshness,
   classifyParamGroup,
   resolveParamMeta,
+  visibleParamsForEntry,
 } from './calc'
 import type { SnapshotHolding, Strategy } from './components/types'
 import { DEFAULT_COST_CONFIG } from './components/types'
@@ -280,6 +281,27 @@ describe('classifyParamGroup / resolveParamMeta', () => {
   it('falls back to frontend metadata for unit/help', () => {
     expect(resolveParamMeta('position_size_pct').unit).toBe('0~1')
     expect(resolveParamMeta('short_window').help).toContain('短均线')
+  })
+})
+
+describe('visibleParamsForEntry', () => {
+  it('keeps execution params in the backtest entry', () => {
+    const keys = visibleParamsForEntry(MA_STRATEGY.param_schema, 'backtest').map((p) => p.key)
+    expect(keys).toContain('hold_days')
+    expect(keys).toContain('position_size_pct')
+  })
+
+  it('drops execution-only params in the screener entry', () => {
+    const fields = visibleParamsForEntry(MA_STRATEGY.param_schema, 'screener')
+    const keys = fields.map((p) => p.key)
+    expect(keys).not.toContain('hold_days')
+    expect(keys).not.toContain('position_size_pct')
+    expect(keys).toContain('short_window')
+    expect(keys).toContain('long_window')
+  })
+
+  it('returns empty for no schema', () => {
+    expect(visibleParamsForEntry(undefined, 'backtest')).toEqual([])
   })
 })
 

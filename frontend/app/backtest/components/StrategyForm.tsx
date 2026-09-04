@@ -10,6 +10,7 @@ import {
   computeStockCount,
   estimateScanDuration,
   resolveParamMeta,
+  visibleParamsForEntry,
 } from '../calc'
 
 /**
@@ -84,13 +85,18 @@ export function StrategyForm({
   onCostConfigChange?: (k: keyof CostConfig, v: string) => void
   onBenchmarkChange?: (v: string) => void
 }) {
+  // 选股入口按 EXECUTION_ONLY_PARAMS 剔除仅回测执行相关的参数，与 buildStrategyParams('screener') 所见即所提交一致。
+  const visibleSchema = useMemo(
+    () => visibleParamsForEntry(selectedStrategy?.param_schema, entry),
+    [selectedStrategy, entry],
+  )
   const signalFields = useMemo(
-    () => selectedStrategy?.param_schema.filter((p) => classifyParamGroup(p.key, p) === 'signal') ?? [],
-    [selectedStrategy],
+    () => visibleSchema.filter((p) => classifyParamGroup(p.key, p) === 'signal'),
+    [visibleSchema],
   )
   const portfolioFields = useMemo(
-    () => selectedStrategy?.param_schema.filter((p) => classifyParamGroup(p.key, p) === 'portfolio') ?? [],
-    [selectedStrategy],
+    () => visibleSchema.filter((p) => classifyParamGroup(p.key, p) === 'portfolio'),
+    [visibleSchema],
   )
 
   const resetGroup = (fields: StrategyParamField[]) => {
@@ -142,7 +148,7 @@ export function StrategyForm({
 
       {/* 信号 */}
       {selectedStrategy && signalFields.length > 0 ? (
-        <FormSection title="信号" description="定义触发买入/卖出信号的策略参数。" onReset={resetGroup} resetDisabled={signalResetDisabled}>
+        <FormSection title="信号" description="定义触发买入/卖出信号的策略参数。" onReset={() => resetGroup(signalFields)} resetDisabled={signalResetDisabled}>
           {signalFields.map((p) => (
             <ParamField key={p.key} field={p} value={strategyParams[p.key] ?? ''} onChange={(v) => onStrategyParamChange(p.key, v)} />
           ))}
@@ -154,7 +160,7 @@ export function StrategyForm({
         <FormSection
           title="组合"
           description={entry === 'backtest' ? '仓位、资金、回测区间、退出规则与比较基准。' : '仓位与退出规则。'}
-          onReset={portfolioFields.length > 0 ? resetGroup : undefined}
+          onReset={portfolioFields.length > 0 ? () => resetGroup(portfolioFields) : undefined}
           resetDisabled={portfolioResetDisabled}
         >
           {portfolioFields.map((p) => (
