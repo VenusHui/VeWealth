@@ -208,11 +208,7 @@ class BacktestJobManager:
         """
         db = SessionLocal()
         try:
-            row = (
-                db.query(BacktestJob)
-                .filter(BacktestJob.job_id == job_id)
-                .first()
-            )
+            row = db.query(BacktestJob).filter(BacktestJob.job_id == job_id).first()
             if not row:
                 return
             row.status = "failed"
