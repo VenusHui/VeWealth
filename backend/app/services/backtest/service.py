@@ -23,6 +23,7 @@ from app.services.backtest.registry import (
     STRATEGY_REGISTRY,
     get_strategy,
     list_strategies,
+    validate_strategy_runtime,
 )
 from app.services.stock_service import stock_service
 
@@ -35,6 +36,46 @@ _CALENDAR_FACTOR = 1.6
 class BacktestService:
     def list_strategies(self) -> list[dict]:
         return list_strategies()
+
+    def _history_min_bars(self, strategy_id: str) -> int:
+        strategy_cls = STRATEGY_REGISTRY.get(strategy_id)
+        if not strategy_cls:
+            return 0
+        value = getattr(strategy_cls, "min_history_bars", 0)
+        return int(value) if isinstance(value, int) else 0
+
+    def _fetch_daily_with_warmup(
+        self, symbol: str, start_date: str, end_date: str, strategy_id: str
+    ):
+        """按策略 min_history_bars + warmup 自动回拉起始日期，保证足量 bar。
+
+        返回 (df, effective_start_date)。df 含 start_date 之前的 warmup bar。
+        """
+        min_bars = self._history_min_bars(strategy_id)
+        if min_bars <= 0:
+            df, _, _ = stock_service.get_daily_data(symbol, start_date, end_date)
+            return df, start_date
+
+        warmup_bars = min_bars + WARMUP_BUFFER_BARS
+        cal_days = int(warmup_bars * _CALENDAR_FACTOR)
+        eff_start = (
+            datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=cal_days)
+        ).strftime("%Y-%m-%d")
+
+        run_span_days = max(
+            0,
+            (
+                datetime.strptime(end_date, "%Y-%m-%d")
+                - datetime.strptime(start_date, "%Y-%m-%d")
+            ).days,
+        )
+        run_span_bars = int(run_span_days / 1.4)
+        count = max(500, warmup_bars + run_span_bars + 50)
+
+        df, _, _ = stock_service.get_daily_data(
+            symbol, eff_start, end_date, count=count
+        )
+        return df, eff_start
 
     def _normalize_symbol_code(self, symbol: Any) -> str:
         raw = str(symbol or "").strip()
@@ -359,6 +400,11 @@ class BacktestService:
         if request.start_date > request.end_date:
             raise ValueError("start_date 不能晚于 end_date")
 
+        # 提交前后共用同一套运行时校验（路由层已校验，此处为运行期兜底）
+        validate_strategy_runtime(
+            request.strategy_id, request.strategy_params, request.mode
+        )
+
         if request.mode == "strategy_select":
             result = self._run_strategy_select_mode(request, progress_callback, db)
         else:
@@ -599,6 +645,11 @@ class BacktestService:
             if candidate_frames
             else pd.DataFrame(columns=columns)
         )
+        # 不在此处按 signal 日截断到 start_date：warmup 回拉的最后 1 根信号（trade_date
+        # == start_date 前一交易日）会于首日（buy_date == trade_start）开盘成交，若截断则
+        # 首日交易被丢；引擎 run_portfolio 的 trade_start 门仅过滤 buy_date < trade_start
+        # 的暖机订单，故这里保留全部候选，执行日边界交由引擎统一处理（TopK 按 trade_date
+        # 分组，warmup 候选不会挤占首日 top_k）。
         policy_profile_id = str(
             params.get("policy_profile") or strategy.default_policy_profile()
         )

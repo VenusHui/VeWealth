@@ -25,6 +25,11 @@ class StrategyInfo(BaseModel):
     usable: bool = True
     unusable_reasons: list[str] = Field(default_factory=list)
     policy_profile: Optional[str] = None
+    supported_modes: Optional[list[str]] = None
+    min_history_bars: Optional[int] = None
+    signal_timestamp: Optional[str] = None
+    score_definition: Optional[str] = None
+    exit_rule: Optional[str] = None
 
 
 class BacktestStrategiesResponse(BaseModel):
