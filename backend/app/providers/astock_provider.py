@@ -14,6 +14,7 @@ import pandas as pd
 
 from app.core.config import settings
 from app.providers.base import MarketDataProvider
+from app.providers.provenance import DailyDataResult, DataProvenance
 from app.providers.astock_data import (
     eastmoney_all_stocks,
     eastmoney_cyq,
@@ -38,6 +39,36 @@ logger = logging.getLogger(__name__)
 
 # Per-attempt sleep multiplier
 _RETRY_SLEEP = 0.6
+
+
+def _norm_request_date(value: str | None) -> str | None:
+    """把请求日期统一归一化为 YYYY-MM-DD（入参可能是 YYYYMMDD 或 YYYY-MM-DD）。"""
+    if not value:
+        return None
+    try:
+        return str(pd.Timestamp(str(value)).normalize())[:10]
+    except Exception:
+        return str(value)
+
+
+def _coverage_gap(
+    req_start: str | None,
+    req_end: str | None,
+    actual_start: str | None,
+    actual_end: str | None,
+) -> bool:
+    """判断实际范围是否覆盖请求范围：起点滞后或终点提前即为覆盖缺口。"""
+    if not actual_start or not actual_end:
+        return True
+    gap = False
+    if req_start:
+        if pd.Timestamp(actual_start).normalize() > pd.Timestamp(req_start).normalize():
+            gap = True
+    if req_end:
+        if pd.Timestamp(actual_end).normalize() < pd.Timestamp(req_end).normalize():
+            gap = True
+    return gap
+
 
 # mootdx frequency mapping: API period str → mootdx frequency int
 # From mootdx.consts: KLINE_1MIN=8, KLINE_5MIN=0, KLINE_15MIN=1,
@@ -88,22 +119,40 @@ class AStockDataProvider(MarketDataProvider):
 
         try:
             cols = ["open", "close", "high", "low", "volume", "amount"]
-            page_size = min(count, 800)
-            klines = _mootdx_client.bars(
-                symbol=stock_code,
-                frequency=freq,
-                start=start_offset,
-                offset=page_size,
-            )
-            if klines is None or klines.empty:
+            # mootdx 单次最多 800；count>800 时按 start_offset 逐页向前翻，避免长区间静默截断。
+            wanted = max(int(count or 500), 1)
+            page_size = min(wanted, 800)
+            if page_size <= 0:
                 return None
 
-            if "datetime" in klines.columns:
-                klines = klines.reset_index(drop=True)
-            else:
-                klines = klines.reset_index()
+            frames: list[pd.DataFrame] = []
+            collected = 0
+            offset = int(start_offset or 0)
+            while collected < wanted:
+                klines = _mootdx_client.bars(
+                    symbol=stock_code,
+                    frequency=freq,
+                    start=offset,
+                    offset=page_size,
+                )
+                if klines is None or klines.empty:
+                    break
+                frames.append(klines)
+                n = len(klines)
+                collected += n
+                offset += n
+                if n < page_size:
+                    break
 
-            df = klines
+            if not frames:
+                return None
+
+            df = pd.concat(frames, ignore_index=True)
+            if "datetime" in df.columns:
+                df = df.reset_index(drop=True)
+            else:
+                df = df.reset_index()
+
             if "index" in df.columns and "datetime" not in df.columns:
                 df = df.rename(columns={"index": "datetime"})
 
@@ -111,6 +160,8 @@ class AStockDataProvider(MarketDataProvider):
                 logger.warning(f"mootdx 缺少datetime列 {stock_code}")
                 return None
 
+            # 分页交界可能重叠，按 datetime 去重后再排序
+            df = df.drop_duplicates(subset=["datetime"], keep="last")
             df = df.sort_values("datetime")
             df["datetime"] = pd.to_datetime(df["datetime"])
 
@@ -143,18 +194,58 @@ class AStockDataProvider(MarketDataProvider):
         count: int = 500,
         start_offset: int = 0,
     ) -> Optional[pd.DataFrame]:
+        # 保持旧签名兼容；带 provenance 的实现见 fetch_daily_data_with_meta
+        return self.fetch_daily_data_with_meta(
+            stock_code,
+            start_date,
+            end_date,
+            adjust=adjust,
+            max_retries=max_retries,
+            count=count,
+            start_offset=start_offset,
+        ).df
+
+    def fetch_daily_data_with_meta(
+        self,
+        stock_code: str,
+        start_date: str,
+        end_date: str,
+        adjust: str = "qfq",
+        max_retries: int = 2,
+        count: int = 500,
+        start_offset: int = 0,
+    ) -> DailyDataResult:
+        """获取日线数据并返回结构化 provenance（source / 复权 / 请求实际范围 / gap / 失败原因）。
+
+        0. 请求入参可能是 YYYYMMDD（provider 层约定），这里统一归一化为 YYYY-MM-DD。
+        1. 先试 mootdx（TCP，无 IP 封锁），count>800 时分页取全。
+        2. 回退 Eastmoney HTTP。
+        3. 回退 Tushare（仅日线）。
+        全部失败时 df=None 并给出 failure_reason。
+        """
+        req_start = _norm_request_date(start_date)
+        req_end = _norm_request_date(end_date)
+        provenance = DataProvenance(
+            source=None,
+            adjustment=adjust,
+            requested_start=req_start,
+            requested_end=req_end,
+        )
+
         # 1. Try mootdx first (TCP, no IP block)
         df = self._fetch_kline_mootdx(
             stock_code,
             period="101",
-            start_date=start_date,
-            end_date=end_date,
+            start_date=req_start,
+            end_date=req_end,
             count=count,
             start_offset=start_offset,
         )
         if df is not None and not df.empty:
             logger.info(f"股票 {stock_code} 日线由 mootdx 返回")
-            return df
+            provenance.source = "mootdx"
+            self._fill_provenance(provenance, df, req_start, req_end, adjust)
+            return DailyDataResult(df=df, provenance=provenance)
 
         # 2. Fallback: Eastmoney → Tushare
         fqt = fqt_code(adjust)
@@ -163,12 +254,14 @@ class AStockDataProvider(MarketDataProvider):
                 df = eastmoney_kline(
                     code=stock_code,
                     klt="101",
-                    beg=start_date,
-                    end=end_date,
+                    beg=start_date or "",
+                    end=end_date or "",
                     fqt=fqt,
                 )
                 if df is not None and not df.empty:
-                    return df
+                    provenance.source = "eastmoney"
+                    self._fill_provenance(provenance, df, req_start, req_end, adjust)
+                    return DailyDataResult(df=df, provenance=provenance)
             except Exception as e:
                 logger.warning(
                     f"获取股票 {stock_code} 日线数据失败(第{attempt}次): {e}"
@@ -179,13 +272,44 @@ class AStockDataProvider(MarketDataProvider):
             logger.warning(f"股票 {stock_code} Eastmoney 日线重试耗尽，回退 Tushare")
             break
 
-        return self._fetch_daily_tushare(
+        # 3. Tushare
+        df = self._fetch_daily_tushare(
             stock_code=stock_code,
             start_date=start_date,
             end_date=end_date,
             adjust=adjust,
             max_retries=settings.TUSHARE_RETRY_TIMES,
         )
+        if df is not None and not df.empty:
+            provenance.source = "tushare"
+            self._fill_provenance(provenance, df, req_start, req_end, adjust)
+            return DailyDataResult(df=df, provenance=provenance)
+
+        provenance.failure_reason = "全部数据源无数据或失败"
+        return DailyDataResult(df=None, provenance=provenance)
+
+    @staticmethod
+    def _fill_provenance(
+        provenance: DataProvenance,
+        df: pd.DataFrame,
+        req_start: Optional[str],
+        req_end: Optional[str],
+        adjust: str,
+    ) -> None:
+        """从实际返回的 df 填充 provenance 的范围、bar 数、覆盖缺口。"""
+        if df is None or df.empty or "datetime" not in df.columns:
+            provenance.bar_count = 0
+            provenance.gap = True
+            return
+        dates = pd.to_datetime(df["datetime"])
+        actual_start = str(dates.min())[:10]
+        actual_end = str(dates.max())[:10]
+        provenance.actual_start = actual_start
+        provenance.actual_end = actual_end
+        provenance.bar_count = int(len(df))
+        provenance.last_bar = actual_end
+        provenance.adjustment = adjust
+        provenance.gap = _coverage_gap(req_start, req_end, actual_start, actual_end)
 
     # ------------------------------------------------------------------
     # Tushare fallback (carried over from AKShareProvider)

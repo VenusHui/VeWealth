@@ -13,11 +13,15 @@ from sqlalchemy.orm import Session
 from app.schemas.stock import StockSearchResult
 from app.utils.data_processor import DataProcessor
 from app.providers import get_data_provider
+from app.providers.provenance import DailyDataResult, DataProvenance
 from app.providers.astock_data import tencent_quote, eastmoney_stock_info
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.stock_data import StockMinuteData
 from app.models.security_universe import SecurityUniverse
+
+#: 空 DataFrame 的标准列（与历史行为保持一致）
+_EMPTY_DAILY_COLUMNS = ["datetime", "open", "high", "low", "close", "volume"]
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +40,28 @@ class StockService:
         exclude_st: bool = True,
     ) -> List[str]:
         """获取股票代码列表，优先使用 security_universe 维表，失败时回退静态清单。"""
+        symbols, _ = self.get_all_stock_symbols_with_meta(
+            limit=limit, boards=boards, exclude_st=exclude_st
+        )
+        return symbols
+
+    def get_all_stock_symbols_with_meta(
+        self,
+        limit: int | None = None,
+        boards: List[str] | None = None,
+        exclude_st: bool = True,
+    ) -> Tuple[List[str], Dict[str, Any]]:
+        """获取股票代码列表，并返回结构化 meta，供调用方感知 ST 过滤是否真正生效。
+
+        meta 字段：
+        - source: universe / static / empty / error
+        - st_filter_effective: exclude_st 是否真正反映在返回名单上
+        - use_static_fallback: 是否走静态清单兜底
+        - warning: 降级说明
+
+        静态清单无法可靠识别 ST，因此当 exclude_st=True 时 st_filter_effective=False，
+        不再声称过滤成功。
+        """
         allowed_boards = {"main", "gem", "star", "bse"}
         normalized_boards = [b for b in (boards or ["main"]) if b in allowed_boards]
 
@@ -60,8 +86,13 @@ class StockService:
                         exclude_st,
                     )
                     if limit and limit > 0:
-                        return symbols[:limit]
-                    return symbols
+                        symbols = symbols[:limit]
+                    return symbols, {
+                        "source": "universe",
+                        "st_filter_effective": bool(exclude_st),
+                        "use_static_fallback": False,
+                        "warning": None,
+                    }
             finally:
                 db.close()
 
@@ -70,7 +101,12 @@ class StockService:
                 logger.error(
                     "security_universe 与静态A股清单均为空，无法执行全市场扫描"
                 )
-                return []
+                return [], {
+                    "source": "empty",
+                    "st_filter_effective": False,
+                    "use_static_fallback": False,
+                    "warning": "security_universe 与静态A股清单均为空，无法执行全市场扫描",
+                }
 
             # 静态池回退时，只做板块过滤（ST 信息无法可靠识别）
             filtered = [
@@ -78,6 +114,17 @@ class StockService:
                 for code in static_codes
                 if self._detect_board(code) in set(normalized_boards or ["main"])
             ]
+            meta = {
+                "source": "static",
+                "st_filter_effective": False,
+                "use_static_fallback": True,
+                "warning": (
+                    "security_universe 为空，已回退静态清单。exclude_st 在静态回退下"
+                    "未生效（ST 无法可靠识别），ST 过滤并未真正执行"
+                    if exclude_st
+                    else "security_universe 为空，已回退静态清单"
+                ),
+            }
             logger.warning(
                 "security_universe 为空，已回退静态清单。boards=%s, exclude_st=%s(回退模式可能不生效), count=%s",
                 normalized_boards,
@@ -85,11 +132,16 @@ class StockService:
                 len(filtered),
             )
             if limit and limit > 0:
-                return filtered[:limit]
-            return filtered
+                filtered = filtered[:limit]
+            return filtered, meta
         except Exception as e:
             logger.error(f"获取全市场股票列表失败: {str(e)}")
-            return []
+            return [], {
+                "source": "error",
+                "st_filter_effective": False,
+                "use_static_fallback": False,
+                "warning": f"获取全市场股票列表失败: {str(e)}",
+            }
 
     @staticmethod
     def _detect_board(code: str) -> str:
@@ -241,11 +293,50 @@ class StockService:
         Returns:
             (日线数据DataFrame, 实际开始日期, 实际结束日期)
         """
+        result = self.get_daily_data_with_meta(
+            symbol, start_date, end_date, count=count, start_offset=start_offset
+        )
+        df = result.df
+        # 把 provenance 挂到 df.attrs，供回测读取覆盖缺口/失败原因
+        if df is not None:
+            df.attrs["provenance"] = result.provenance
+
+        if df is None or df.empty or "datetime" not in df.columns:
+            empty = pd.DataFrame(columns=_EMPTY_DAILY_COLUMNS)
+            empty.attrs["provenance"] = result.provenance
+            return (
+                empty,
+                result.provenance.actual_start or start_date,
+                result.provenance.actual_end or end_date,
+            )
+
+        actual_start = df["datetime"].min()
+        actual_end = df["datetime"].max()
+        return df, actual_start, actual_end
+
+    def get_daily_data_with_meta(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        count: int = 500,
+        start_offset: int = 0,
+    ) -> DailyDataResult:
+        """
+        获取日线数据并返回结构化 provenance。
+
+        与 get_daily_data 不同：此方法不会把"数据不存在"与"源故障"统一吞成空
+        DataFrame，而是经由 provenance.failure_reason / gap 显式区分，供回测做
+        覆盖度判断与明确降级。
+        """
         try:
             start_dt = datetime.strptime(start_date, "%Y-%m-%d")
             end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        except ValueError:
+            raise
 
-            api_df = self.provider.fetch_daily_data(
+        try:
+            return self.provider.fetch_daily_data_with_meta(
                 stock_code=symbol,
                 start_date=start_dt.strftime("%Y%m%d"),
                 end_date=end_dt.strftime("%Y%m%d"),
@@ -253,40 +344,17 @@ class StockService:
                 count=count,
                 start_offset=start_offset,
             )
-
-            if api_df is None or api_df.empty:
-                return (
-                    pd.DataFrame(
-                        columns=["datetime", "open", "high", "low", "close", "volume"]
-                    ),
-                    start_date,
-                    end_date,
-                )
-
-            result_df = api_df
-            if result_df.empty or "datetime" not in result_df.columns:
-                return (
-                    pd.DataFrame(
-                        columns=["datetime", "open", "high", "low", "close", "volume"]
-                    ),
-                    start_date,
-                    end_date,
-                )
-
-            actual_start = result_df["datetime"].min()
-            actual_end = result_df["datetime"].max()
-            return result_df, actual_start, actual_end
-
-        except ValueError:
-            raise
         except Exception as e:
             logger.error(f"获取日线数据失败: {str(e)}")
-            return (
-                pd.DataFrame(
-                    columns=["datetime", "open", "high", "low", "close", "volume"]
+            return DailyDataResult(
+                df=pd.DataFrame(columns=_EMPTY_DAILY_COLUMNS),
+                provenance=DataProvenance(
+                    source=None,
+                    adjustment="qfq",
+                    requested_start=start_date,
+                    requested_end=end_date,
+                    failure_reason=str(e),
                 ),
-                start_date,
-                end_date,
             )
 
     def get_minute_data(
