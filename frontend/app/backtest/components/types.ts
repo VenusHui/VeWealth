@@ -5,18 +5,28 @@ export const BOARD_LABELS: Record<'main' | 'gem' | 'star' | 'bse', string> = {
   bse: '北交所',
 }
 
+export type StrategyParamField = {
+  key: string
+  label: string
+  type: string
+  default?: number | string
+  min?: number
+  max?: number
+  /** 可选项（枚举参数），backend 契约 VEW-24 起提供。 */
+  options?: string[]
+  /** 展示分组（signal / portfolio），backend 未提供时前端按 key 兜底分类。 */
+  group?: string
+  /** 数值单位（如 日 / % / 0~1），用于表单中文帮助。 */
+  unit?: string
+  /** 参数说明文案，用于表单帮助。 */
+  help?: string
+}
+
 export type Strategy = {
   strategy_id: string
   name: string
   description: string
-  param_schema: Array<{
-    key: string
-    label: string
-    type: string
-    default?: number | string
-    min?: number
-    max?: number
-  }>
+  param_schema: StrategyParamField[]
   usable: boolean
   unusable_reasons: string[]
   supported_modes: string[]
@@ -148,6 +158,42 @@ export type BacktestFacts = {
 }
 
 export type StrategyConfig = Record<string, unknown>
+
+/** 成交成本配置，字段与 backend `CostConfig` 契约一一对应。 */
+export type CostConfig = {
+  commission_rate: number
+  min_commission: number
+  stamp_tax_rate: number
+  slippage_rate: number
+}
+
+export const DEFAULT_COST_CONFIG: CostConfig = {
+  commission_rate: 0.0003,
+  min_commission: 5,
+  stamp_tax_rate: 0.001,
+  slippage_rate: 0.0005,
+}
+
+export type BoardKey = 'main' | 'gem' | 'star' | 'bse'
+
+/** `/api/backtest/universe/stats` 返回的股票池统计，用于提交前预估扫描数量。 */
+export type UniverseStats = {
+  total_active?: number
+  st_active?: number
+  non_st_active?: number
+  by_board?: Record<BoardKey, number>
+  by_board_exclude_st?: Record<BoardKey, number>
+  defaults?: { boards?: BoardKey[]; exclude_st?: boolean }
+}
+
+export type BenchmarkOption = { label: string; value: string }
+
+export const BENCHMARK_OPTIONS: BenchmarkOption[] = [
+  { label: '上证综指', value: '000001.SH' },
+  { label: '深证成指', value: '399001.SZ' },
+  { label: '创业板指', value: '399006.SZ' },
+  { label: '沪深300', value: '000300.SH' },
+]
 
 export type BacktestResult = {
   run_id?: number
