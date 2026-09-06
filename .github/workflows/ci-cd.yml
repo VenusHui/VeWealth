@@ -88,7 +88,9 @@ jobs:
       - name: Run backend unit tests
         working-directory: ./backend
         run: |
-          # 任一测试失败都会使该步骤失败，从而整体标红 CI
+          # 任一测试失败都会使该步骤失败，从而整体标红 CI。
+          # VEW-30 质量门禁：覆盖 引擎成交语义 / 绩效指标 / screener / API 集成 /
+          # 并发隔离 / 重启恢复 / 性能回归，任一失败即整体标红。
           python -m pytest tests -v
 
   # 密钥泄露扫描（VEW-13）：防止硬编码密钥（如微信公众号 AppID）再次合入代码库。
