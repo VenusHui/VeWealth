@@ -556,9 +556,9 @@ export default function BacktestPage() {
 
   return (
     <AppPage>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[360px_1fr]">
+      <div className="ve-grid-fixed grid grid-cols-1 gap-4 xl:grid-cols-[360px_1fr]">
         {/* Left sidebar: form + compact stats */}
-        <div className="space-y-4">
+        <div className="ve-scroll-col space-y-4">
           <div className="grid grid-cols-3 gap-2">
             <CompactStatCard label="策略" value={strategies.length} tone="brand" />
             <CompactStatCard label="记录" value={runsTotal} />
@@ -612,7 +612,7 @@ export default function BacktestPage() {
         </div>
 
         {/* Right: results area */}
-        <div className="space-y-4 min-w-0">
+        <div className="ve-scroll-col space-y-4 min-w-0">
           <MainTabSwitcher activeTab={mainTab} onChange={setMainTab} />
 
           {mainTab === 'records' ? (

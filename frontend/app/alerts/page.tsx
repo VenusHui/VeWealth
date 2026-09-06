@@ -158,9 +158,9 @@ export default function AlertsPage() {
 
   return (
     <AppPage>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[360px_1fr]">
+      <div className="ve-grid-fixed grid grid-cols-1 gap-4 xl:grid-cols-[360px_1fr]">
         {/* Left sidebar: stats + filter */}
-        <div className="space-y-4">
+        <div className="ve-scroll-col space-y-4">
           <div className="grid grid-cols-2 gap-2">
             <CompactStatCard label="总预警" value={total} tone="brand" />
             <CompactStatCard label="今日" value={todayCount} />
@@ -183,7 +183,7 @@ export default function AlertsPage() {
         </div>
 
         {/* Right: table */}
-        <div className="min-w-0">
+        <div className="ve-scroll-col min-w-0">
           <SurfaceCard title="预警记录">
             {loading ? (
               <div className="py-16 text-center"><Spin /></div>
