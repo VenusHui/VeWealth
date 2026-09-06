@@ -268,9 +268,9 @@ export default function WatchListPage() {
 
   return (
     <AppPage>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[360px_1fr]">
+      <div className="ve-grid-fixed grid grid-cols-1 gap-4 xl:grid-cols-[360px_1fr]">
         {/* Left sidebar: add form + compact stats */}
-        <div className="space-y-4">
+        <div className="ve-scroll-col space-y-4">
           <div className="grid grid-cols-2 gap-2">
             <CompactStatCard label="监控" value={watchlist.length} tone="brand" />
             <CompactStatCard label="↑涨 ↓跌" value={`${upCount}/${downCount}`} />
@@ -319,7 +319,7 @@ export default function WatchListPage() {
         </div>
 
         {/* Right: watchlist table */}
-        <div className="min-w-0">
+        <div className="ve-scroll-col min-w-0">
           <SurfaceCard title="监控列表">
             {loading ? (
               <div className="py-16 text-center"><Spin /></div>

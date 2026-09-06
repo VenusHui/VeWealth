@@ -56,8 +56,12 @@ html {
 }
 
 body {
-  min-height: 100vh;
-  overflow-x: hidden;
+  /* 固定视口：页面高度锁定为一个屏幕，禁止整页纵向滚动；各面板内部各自滚动 */
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   color: var(--text);
   font-family: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
   line-height: 1.6;
@@ -88,7 +92,12 @@ body {
 }
 
 main {
-  min-height: calc(100vh - 4.5rem);
+  /* 主体区域占满剩余视口高度，溢出交给内部面板滚动 */
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 * {
@@ -99,6 +108,11 @@ main {
 
 .app-page-shell {
   position: relative;
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   padding: 1.25rem 1rem;
 }
 
@@ -109,6 +123,10 @@ main {
   width: 100%;
   flex-direction: column;
   gap: 1.25rem;
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .app-page-container {
@@ -117,6 +135,32 @@ main {
 
 .app-page-container-md {
   max-width: 72rem;
+}
+
+/* ---------- 固定视口 · 双栏独立滚动 ----------
+ * 桌面端把两栏布局约束为剩余高度（禁止整页滚动），
+ * 左右两栏各自内部滚动；移动端保持自然堆叠、由页面容器整体滚动。
+ */
+.ve-grid-fixed {
+  min-height: 0;
+}
+
+@media (min-width: 1280px) {
+  .ve-grid-fixed {
+    flex: 1 1 0%;
+    overflow: hidden;
+    grid-template-rows: minmax(0, 1fr);
+  }
+}
+
+.ve-scroll-col {
+  min-height: 0;
+}
+
+@media (min-width: 1280px) {
+  .ve-scroll-col {
+    overflow-y: auto;
+  }
 }
 
 .app-page-title {

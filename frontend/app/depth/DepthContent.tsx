@@ -463,9 +463,9 @@ export default function DepthContent() {
 
   return (
     <AppPage>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[380px_1fr]">
+      <div className="ve-grid-fixed grid grid-cols-1 gap-4 xl:grid-cols-[380px_1fr]">
         {/* Left sidebar: search + toolbar + summary */}
-        <div className="space-y-4">
+        <div className="ve-scroll-col space-y-4">
           <SurfaceCard title="股票选择与参数">
             <div className="space-y-4">
               <div>
@@ -575,7 +575,7 @@ export default function DepthContent() {
         </div>
 
         {/* Right: chart + statistics */}
-        <div className="space-y-4 min-w-0">
+        <div className="ve-scroll-col space-y-4 min-w-0">
           {klines.length > 0 ? (
         <SurfaceCard
           title={

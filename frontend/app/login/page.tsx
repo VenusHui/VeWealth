@@ -84,8 +84,8 @@ export default function LoginPage() {
   }
 
   return (
-    <AppPage className="min-h-[calc(100vh-4.75rem)]">
-      <div className="mx-auto w-full max-w-md">
+    <AppPage>
+      <div className="mx-auto flex min-h-full w-full max-w-md flex-col items-center justify-center">
         <section className="ve-panel">
           <div className="mb-6 flex rounded-[var(--radius-control)] border border-[var(--border-subtle)] bg-[var(--surface-subtle)] p-1">
             <button
