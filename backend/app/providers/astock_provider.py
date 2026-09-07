@@ -48,20 +48,68 @@ _mootdx_init_failed_at: Optional[float] = None
 # Cooldown between re-init attempts after a failed handshake (seconds).
 _MOOTDX_RETRY_COOLDOWN = 30.0
 
+# Curated public TDX HQ mirrors. Connectivity alone is not enough: some mirrors
+# accept the TCP handshake but return no K-line body, so the primary source would
+# silently serve nothing (VEW-36). We keep a known-good set and validate each on
+# init with a probe fetch, picking the first mirror that actually returns bars.
+_MOOTDX_SERVERS: list[tuple[str, int]] = [
+    ("115.238.56.198", 7709),
+    ("115.238.90.165", 7709),
+    ("180.153.18.170", 7709),
+    ("60.191.117.167", 7709),
+]
+
+
+def _try_mootdx_server(Quotes, server: Optional[tuple[str, int]]):
+    """Build a client for one TDX mirror and confirm it returns a K-line.
+
+    ``server`` of ``None`` means "let mootdx use its configured default" (a bare
+    ``Quotes.factory``). Returns the client on the first mirror that returns real
+    bars, otherwise ``None`` after probing.
+    """
+    try:
+        if server is None:
+            client = Quotes.factory(market="std")
+        else:
+            client = Quotes.factory(market="std", server=server, timeout=5)
+    except Exception as e:
+        logger.warning(f"mootdx 连接 {server or '配置默认'} 失败: {e}")
+        return None
+
+    try:
+        probe = client.bars(symbol="000001", frequency=4, start=0, offset=3)
+        if probe is not None and not probe.empty:
+            logger.info(f"mootdx 通过 {server or '配置默认'} 取得K线, 使用该镜像")
+            return client
+    except Exception as e:  # pragma: no cover - 防御性
+        logger.warning(f"mootdx 通过 {server or '配置默认'} 拉取K线失败: {e}")
+    logger.warning(f"mootdx 镜像 {server or '配置默认'} 未返回有效K线, 跳过")
+    return None
+
 
 def _init_mootdx_client():
-    """Create the mootdx client. Returns None on failure.
+    """Create a mootdx client connected to a mirror that returns real data.
 
-    Isolated into its own function so tests can inject a failing/succeeding
-    factory without reaching the live TDX mirrors.
+    ``Quotes.factory(market="std")`` without ``bestip`` just reuses whatever mirror
+    is recorded in the local mootdx config, and that mirror may handshake but serve
+    no K-line body. Here we probe the curated mirrors (then the configured default
+    as a fallback) and keep the first one that returns bars. Returns ``None`` only
+    if no mirror yields data. Isolated into its own function so tests can inject a
+    failing/succeeding factory without reaching the live TDX mirrors.
     """
     try:
         from mootdx.quotes import Quotes
-
-        return Quotes.factory(market="std")
-    except Exception as e:
-        logger.warning(f"mootdx 客户端初始化失败: {e}")
+    except Exception as e:  # pragma: no cover - 依赖缺失
+        logger.warning(f"mootdx 依赖不可用: {e}")
         return None
+
+    # Curated mirrors first (fast, reachable), then the configured default.
+    candidates: list[Optional[tuple[str, int]]] = list(_MOOTDX_SERVERS) + [None]
+    for server in candidates:
+        client = _try_mootdx_server(Quotes, server)
+        if client is not None:
+            return client
+    return None
 
 
 def _get_mootdx_client():
