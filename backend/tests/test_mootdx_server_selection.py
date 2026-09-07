@@ -17,13 +17,18 @@ from app.providers import astock_provider as ap
 
 
 class FakeClient:
-    """模拟一个 mootdx 客户端，bars() 行为可控。"""
+    """模拟一个 mootdx 客户端，bars() 行为可控。
 
-    def __init__(self, bars_df):
-        self._bars_df = bars_df
+    ``bars`` 为 DataFrame 时所有周期都返回它；为 callable 时按 frequency 参数返回。
+    """
+
+    def __init__(self, bars):
+        self._bars = bars
 
     def bars(self, *args, **kwargs):
-        return self._bars_df
+        if callable(self._bars):
+            return self._bars(kwargs.get("frequency"))
+        return self._bars
 
 
 class FakeQuotes:
@@ -40,6 +45,11 @@ def _nonempty_df() -> pd.DataFrame:
 
 def _empty_df() -> pd.DataFrame:
     return pd.DataFrame()
+
+
+def _daily_only_df(frequency: int | None) -> pd.DataFrame:
+    """仅日线（frequency=4）返回数据，5 分钟（frequency=0）返回空。"""
+    return _nonempty_df() if frequency == 4 else _empty_df()
 
 
 class MootdxServerSelectionTests(unittest.TestCase):
@@ -79,12 +89,20 @@ class MootdxServerSelectionTests(unittest.TestCase):
         got = ap._try_mootdx_server(quotes, ("1.1.1.1", 7709))
         self.assertIs(got, client)
         quotes.factory.assert_called_with(
-            market="std", server=("1.1.1.1", 7709), timeout=5
+            market="std",
+            server=("1.1.1.1", 7709),
+            timeout=ap._MOOTDX_CONNECT_TIMEOUT,
         )
 
     def test_try_server_skips_empty_klines(self):
         """握手成功但返回空 K 线的镜像被丢弃（返回 None）。"""
         client = FakeClient(_empty_df())
+        quotes = FakeQuotes(client)
+        self.assertIsNone(ap._try_mootdx_server(quotes, ("1.1.1.1", 7709)))
+
+    def test_try_server_rejects_mirror_without_minutes(self):
+        """只返回日线、不返回 5 分钟线的镜像被拒绝（深度图默认取 5 分钟）。"""
+        client = FakeClient(_daily_only_df)
         quotes = FakeQuotes(client)
         self.assertIsNone(ap._try_mootdx_server(quotes, ("1.1.1.1", 7709)))
 

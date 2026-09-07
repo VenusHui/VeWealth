@@ -59,32 +59,50 @@ _MOOTDX_SERVERS: list[tuple[str, int]] = [
     ("60.191.117.167", 7709),
 ]
 
+# 建连超时（秒）。选中的客户端沿用该超时用于后续取数，故定成常量便于调整。
+_MOOTDX_CONNECT_TIMEOUT = 5
+
+# 探针校验的取数周期：深度图默认 5 分钟（frequency=0），日线（frequency=4）作
+# 备用。两者都必须能取到才认为镜像可用 —— 只握手、部分周期空回来的镜像不能选。
+_MOOTDX_PROBE_FREQUENCIES: tuple[int, ...] = (4, 0)
+
 
 def _try_mootdx_server(Quotes, server: Optional[tuple[str, int]]):
-    """Build a client for one TDX mirror and confirm it returns a K-line.
+    """Build a client for one TDX mirror and confirm it returns K-lines.
 
     ``server`` of ``None`` means "let mootdx use its configured default" (a bare
-    ``Quotes.factory``). Returns the client on the first mirror that returns real
-    bars, otherwise ``None`` after probing.
+    ``Quotes.factory``). We probe the two periods the depth chart actually uses —
+    daily (frequency=4) and 5-minute (frequency=0) — and accept the mirror only if
+    both return bars, otherwise ``None``. A mirror that handshakes but serves one
+    period empty can still leave part of the UI blank (VEW-36).
     """
     try:
         if server is None:
             client = Quotes.factory(market="std")
         else:
-            client = Quotes.factory(market="std", server=server, timeout=5)
+            client = Quotes.factory(
+                market="std", server=server, timeout=_MOOTDX_CONNECT_TIMEOUT
+            )
     except Exception as e:
         logger.warning(f"mootdx 连接 {server or '配置默认'} 失败: {e}")
         return None
 
-    try:
-        probe = client.bars(symbol="000001", frequency=4, start=0, offset=3)
-        if probe is not None and not probe.empty:
-            logger.info(f"mootdx 通过 {server or '配置默认'} 取得K线, 使用该镜像")
-            return client
-    except Exception as e:  # pragma: no cover - 防御性
-        logger.warning(f"mootdx 通过 {server or '配置默认'} 拉取K线失败: {e}")
-    logger.warning(f"mootdx 镜像 {server or '配置默认'} 未返回有效K线, 跳过")
-    return None
+    for freq in _MOOTDX_PROBE_FREQUENCIES:
+        try:
+            probe = client.bars(symbol="000001", frequency=freq, start=0, offset=3)
+        except Exception as e:  # pragma: no cover - 防御性
+            logger.warning(
+                f"mootdx 通过 {server or '配置默认'} 拉取 freq={freq} K线失败: {e}"
+            )
+            return None
+        if probe is None or probe.empty:
+            logger.warning(
+                f"mootdx 镜像 {server or '配置默认'} freq={freq} 未返回有效K线, 跳过"
+            )
+            return None
+
+    logger.info(f"mootdx 通过 {server or '配置默认'} 取得K线(日线+5分钟), 使用该镜像")
+    return client
 
 
 def _init_mootdx_client():
