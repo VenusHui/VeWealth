@@ -7,6 +7,7 @@ Fallback chain: Eastmoney HTTP → Tushare (daily only).
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any, Optional
 
@@ -28,14 +29,76 @@ try:
 except Exception:
     ts = None
 
-try:
-    from mootdx.quotes import Quotes
-
-    _mootdx_client = Quotes.factory(market="std")
-except Exception:
-    _mootdx_client = None
-
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# mootdx client (lazy, self-healing)
+#
+# The client is initialized on first use rather than at import time. A transient
+# init failure at process start (e.g. TDX mirror handshake dropped mid-connect)
+# used to leave ``_mootdx_client = None`` for the whole process lifetime, silently
+# disabling the primary K-line source until the container was restarted (VEW-36).
+# A lock guards concurrent first-use, and a cooldown prevents hammering the
+# mirrors when the handshake keeps failing.
+# ---------------------------------------------------------------------------
+
+_mootdx_client: Optional["Quotes"] = None
+_mootdx_client_lock = threading.Lock()
+_mootdx_init_failed_at: Optional[float] = None
+# Cooldown between re-init attempts after a failed handshake (seconds).
+_MOOTDX_RETRY_COOLDOWN = 30.0
+
+
+def _init_mootdx_client():
+    """Create the mootdx client. Returns None on failure.
+
+    Isolated into its own function so tests can inject a failing/succeeding
+    factory without reaching the live TDX mirrors.
+    """
+    try:
+        from mootdx.quotes import Quotes
+
+        return Quotes.factory(market="std")
+    except Exception as e:
+        logger.warning(f"mootdx 客户端初始化失败: {e}")
+        return None
+
+
+def _get_mootdx_client():
+    """Return the mootdx client, lazily (re)initializing it if needed.
+
+    Returns ``None`` only if the handshake failed and the cooldown hasn't elapsed;
+    a subsequent call after the cooldown retries. Never permanently wedges the
+    primary source the way the old import-time init did.
+    """
+    global _mootdx_client, _mootdx_init_failed_at
+    if _mootdx_client is not None:
+        return _mootdx_client
+
+    now = time.monotonic()
+    if _mootdx_init_failed_at is not None and (
+        now - _mootdx_init_failed_at < _MOOTDX_RETRY_COOLDOWN
+    ):
+        return None
+
+    with _mootdx_client_lock:
+        if _mootdx_client is not None:
+            return _mootdx_client
+        # Re-check cooldown inside the lock so a failed attempt isn't retried
+        # immediately by two requests racing on the first call.
+        now = time.monotonic()
+        if _mootdx_init_failed_at is not None and (
+            now - _mootdx_init_failed_at < _MOOTDX_RETRY_COOLDOWN
+        ):
+            return None
+        client = _init_mootdx_client()
+        if client is None:
+            _mootdx_init_failed_at = time.monotonic()
+            return None
+        _mootdx_client = client
+        _mootdx_init_failed_at = None
+        return _mootdx_client
+
 
 # Per-attempt sleep multiplier
 _RETRY_SLEEP = 0.6
@@ -110,7 +173,8 @@ class AStockDataProvider(MarketDataProvider):
             start_offset: Skip the first N most-recent bars. Used by the
                           frontend for dynamic scroll-based loading.
         """
-        if _mootdx_client is None:
+        client = _get_mootdx_client()
+        if client is None:
             return None
 
         freq = _FREQ_MAP.get(period)
@@ -129,7 +193,7 @@ class AStockDataProvider(MarketDataProvider):
             collected = 0
             offset = int(start_offset or 0)
             while collected < wanted:
-                klines = _mootdx_client.bars(
+                klines = client.bars(
                     symbol=stock_code,
                     frequency=freq,
                     start=offset,
