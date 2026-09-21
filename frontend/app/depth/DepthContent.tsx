@@ -109,6 +109,7 @@ export default function DepthContent() {
   const loadingMoreRef = useRef(false)
   const depthRequestRef = useRef<AbortController | null>(null)
   const cyqRequestRef = useRef<AbortController | null>(null)
+  const loadMoreRequestRef = useRef<AbortController | null>(null)
   const [cyqLoading, setCyqLoading] = useState(false)
   const [cyqError, setCyqError] = useState('')
 
@@ -339,6 +340,8 @@ export default function DepthContent() {
     setCyqError('')
 
     if (!showCYQ || !/^\d{6}$/.test(stockCode.trim())) {
+      cyqRequestRef.current = null
+      setCyqInfo(null)
       setCyqLoading(false)
       return
     }
@@ -375,13 +378,19 @@ export default function DepthContent() {
     return () => controller.abort()
   }, [showCYQ, stockCode, adjust])
 
-  useEffect(() => () => depthRequestRef.current?.abort(), [])
+  useEffect(() => () => {
+    depthRequestRef.current?.abort()
+    cyqRequestRef.current?.abort()
+    loadMoreRequestRef.current?.abort()
+  }, [])
 
   // Load more historical data when scrolling left.
   // Uses a ref for the loading guard to prevent race conditions from
   // rapid scroll events firing before React commits the state update.
   const loadMore = useCallback(async () => {
     if (loadingMoreRef.current || !hasMore || !stockCode.trim()) return
+    const controller = new AbortController()
+    loadMoreRequestRef.current = controller
     loadingMoreRef.current = true
     setLoadingMore(true)
     try {
@@ -396,6 +405,8 @@ export default function DepthContent() {
           offset: newOffset,
           count: 500,
         },
+        signal: controller.signal,
+        timeout: DEPTH_REQUEST_TIMEOUT_MS,
       })
       const newKlines = response.data.klines || []
       if (newKlines.length < 500) setHasMore(false)
@@ -403,11 +414,15 @@ export default function DepthContent() {
         setKlines((prev) => [...newKlines, ...prev])
         setTotalOffset(newOffset)
       }
-    } catch {
+    } catch (err: unknown) {
+      if (axios.isCancel(err)) return
       // silently fail for loadMore
     } finally {
-      loadingMoreRef.current = false
-      setLoadingMore(false)
+      if (loadMoreRequestRef.current === controller) {
+        loadMoreRequestRef.current = null
+        loadingMoreRef.current = false
+        setLoadingMore(false)
+      }
     }
   }, [hasMore, stockCode, totalOffset, adjust])
 
@@ -419,6 +434,10 @@ export default function DepthContent() {
 
   // Auto-fetch when toolbar params change (if stock is selected)
   useEffect(() => {
+    loadMoreRequestRef.current?.abort()
+    loadMoreRequestRef.current = null
+    loadingMoreRef.current = false
+    setLoadingMore(false)
     setTotalOffset(0)
     setHasMore(true)
     if (stockCode.trim()) {

@@ -16,7 +16,7 @@ router = APIRouter(prefix="/health", tags=["health"])
 
 
 @router.get("")
-async def overall_health(
+def overall_health(
     refresh: bool = Query(False, description="为 true 时先执行一轮实时探针"),
 ):
     """总体健康状态摘要（ok / degraded / unhealthy / unknown）。"""
@@ -29,7 +29,7 @@ async def overall_health(
 
 
 @router.get("/sources")
-async def source_health(
+def source_health(
     refresh: bool = Query(False, description="为 true 时先执行一轮实时探针"),
 ):
     """各数据源健康快照（状态、连续失败、成功率、耗时等）。"""
@@ -39,13 +39,13 @@ async def source_health(
 
 
 @router.get("/metrics")
-async def health_metrics():
+def health_metrics():
     """按数据源聚合的监控指标（请求量 / 成功率 / 平均耗时）。"""
     return source_monitor.metrics()
 
 
 @router.get("/events")
-async def health_events(
+def health_events(
     limit: int = Query(50, ge=1, le=200, description="返回的最大事件条数"),
 ):
     """最近的降级事件（新 → 旧）。"""
