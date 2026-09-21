@@ -9,7 +9,11 @@
 - 每日配额守卫：记录当日调用次数（持久化到 ``quota.json``），超过
   ``TUSHARE_ADJ_FACTOR_DAILY_QUOTA`` 后拒绝真实拉取，只返回缓存或 None；
 - 最小间隔守卫：两次真实调用之间至少间隔 ``TUSHARE_ADJ_FACTOR_MIN_INTERVAL``
-  秒，规避 1 次/分钟 的限制。
+  秒，规避 1 次/分钟 的限制；
+- 新鲜度信号：每次拉取记录日期（``cache_meta.json`` 持久化），
+  ``cache_date(ts_code)`` 暴露缓存日期；超过 ``TUSHARE_ADJ_FACTOR_CACHE_TTL_DAYS``
+  视为陈旧，配额允许时在请求路径上顺手刷新，配额耗尽时仍返回陈旧缓存
+  （比完全失败好，且调用方/前端能经 ``adjust_factor_date`` 感知陈旧）。
 
 调用方（astock_provider / akshare_provider）在 adj_factor 不可用时降级为非复权，
 而不是让整次日线请求失败。
@@ -66,12 +70,17 @@ class AdjFactorStore:
             if min_interval is not None
             else int(getattr(settings, "TUSHARE_ADJ_FACTOR_MIN_INTERVAL", 60))
         )
+        self.cache_ttl_days = int(
+            getattr(settings, "TUSHARE_ADJ_FACTOR_CACHE_TTL_DAYS", 7)
+        )
         self._lock = threading.Lock()
         self._factors: dict[str, pd.DataFrame] = {}
+        self._fetched_at: dict[str, str] = {}  # ts_code -> 最近拉取日期 YYYY-MM-DD
         self._last_fetch_at: Optional[float] = None
         self._quota_date: Optional[str] = None
         self._quota_count = 0
         self._load_quota_state()
+        self._load_cache_meta()
 
     # ------------------------------------------------------------------
     # 配额状态（每日持久化）
@@ -79,6 +88,9 @@ class AdjFactorStore:
 
     def _quota_state_path(self) -> Path:
         return self.cache_dir / "quota.json"
+
+    def _cache_meta_path(self) -> Path:
+        return self.cache_dir / "cache_meta.json"
 
     def _load_quota_state(self) -> None:
         try:
@@ -89,6 +101,25 @@ class AdjFactorStore:
         except (OSError, ValueError, json.JSONDecodeError):
             self._quota_date = None
             self._quota_count = 0
+
+    def _load_cache_meta(self) -> None:
+        """恢复各 ts_code 的缓存拉取日期（无记录时用文件 mtime 兜底）。"""
+        try:
+            with open(self._cache_meta_path(), encoding="utf-8") as f:
+                meta = json.load(f)
+            self._fetched_at = {
+                str(k): str(v) for k, v in (meta or {}).items() if isinstance(v, str)
+            }
+        except (OSError, ValueError, json.JSONDecodeError):
+            self._fetched_at = {}
+
+    def _save_cache_meta(self) -> None:
+        try:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            with open(self._cache_meta_path(), "w", encoding="utf-8") as f:
+                json.dump(self._fetched_at, f)
+        except OSError as e:  # pragma: no cover - 只读文件系统等
+            logger.warning(f"adj_factor 缓存元信息持久化失败: {e}")
 
     def _save_quota_state(self) -> None:
         try:
@@ -153,6 +184,14 @@ class AdjFactorStore:
             return None
         if df is None or df.empty:
             return None
+        # 无缓存元信息（升级前写入的 CSV）时，用文件 mtime 作为缓存日期兜底
+        if ts_code not in self._fetched_at:
+            try:
+                self._fetched_at[ts_code] = time.strftime(
+                    "%Y-%m-%d", time.localtime(path.stat().st_mtime)
+                )
+            except OSError:  # pragma: no cover - 文件已被删除
+                pass
         return df.sort_values("trade_date").reset_index(drop=True)
 
     def _save_to_disk(self, ts_code: str, df: pd.DataFrame) -> None:
@@ -161,6 +200,8 @@ class AdjFactorStore:
             df.to_csv(self._cache_path(ts_code), index=False)
         except OSError as e:  # pragma: no cover - 只读文件系统等
             logger.warning(f"adj_factor 磁盘缓存写入失败 {ts_code}: {e}")
+        self._fetched_at[ts_code] = self._today()
+        self._save_cache_meta()
 
     def get_cached(self, ts_code: str) -> Optional[pd.DataFrame]:
         """返回缓存的 adj_factor 序列（trade_date 升序），无缓存返回 None。"""
@@ -172,6 +213,27 @@ class AdjFactorStore:
             with self._lock:
                 self._factors[ts_code] = df
         return df
+
+    def cache_date(self, ts_code: str) -> Optional[str]:
+        """返回 ts_code 最近一次拉取 adj_factor 的日期（YYYY-MM-DD），无缓存返回 None。"""
+        if ts_code in self._fetched_at:
+            return self._fetched_at[ts_code]
+        # 内存没有但磁盘可能有（_load_from_disk 会回填 _fetched_at）
+        if self.get_cached(ts_code) is not None:
+            return self._fetched_at.get(ts_code)
+        return None
+
+    @staticmethod
+    def _is_stale(fetched_date: Optional[str], ttl_days: int) -> bool:
+        """fetched_date 距今是否超过 ttl_days 天。无日期记录视为陈旧。"""
+        if not fetched_date:
+            return True
+        try:
+            fetched = pd.Timestamp(fetched_date).normalize()
+            age = (pd.Timestamp.now().normalize() - fetched).days
+        except (ValueError, TypeError):
+            return True
+        return age > ttl_days
 
     # ------------------------------------------------------------------
     # 真实拉取（配额守卫）
@@ -200,13 +262,38 @@ class AdjFactorStore:
         out["trade_date"] = out["trade_date"].astype(str)
         return out.sort_values("trade_date").reset_index(drop=True)
 
-    def get_or_fetch(self, ts_code: str) -> Optional[pd.DataFrame]:
-        """返回 ts_code 的 adj_factor 序列：缓存命中直接返回；否则配额允许时
-        真实拉取并写缓存。配额耗尽或网络失败返回 None（调用方降级为非复权）。"""
+    def get_or_fetch(
+        self, ts_code: str, max_age_days: Optional[int] = None
+    ) -> Optional[pd.DataFrame]:
+        """返回 ts_code 的 adj_factor 序列。
+
+        优先级：
+        1. 缓存命中且未超过新鲜度阈值（默认 TUSHARE_ADJ_FACTOR_CACHE_TTL_DAYS）→ 直接返回；
+        2. 缓存陈旧且配额允许 → 刷新（成功替换缓存；失败保留陈旧缓存并告警，返回陈旧值）；
+        3. 无缓存且配额允许 → 真实拉取并写缓存；
+        4. 配额耗尽/间隔未到 → 返回缓存（哪怕陈旧）或 None（调用方降级为非复权）。
+        """
+        max_age_days = (
+            self.cache_ttl_days if max_age_days is None else int(max_age_days)
+        )
         cached = self.get_cached(ts_code)
         if cached is not None:
+            fetched = self.cache_date(ts_code)
+            if not self._is_stale(fetched, max_age_days):
+                return cached
+            # 陈旧缓存：配额允许则顺手刷新；否则降级返回陈旧值（可经 cache_date 感知）。
+            refreshed = self._fetch_if_allowed(ts_code)
+            if refreshed is not None:
+                return refreshed
+            logger.warning(
+                f"adj_factor 缓存已陈旧（{fetched}），配额/间隔受限，返回陈旧缓存 {ts_code}"
+            )
             return cached
 
+        return self._fetch_if_allowed(ts_code)
+
+    def _fetch_if_allowed(self, ts_code: str) -> Optional[pd.DataFrame]:
+        """配额/间隔守卫下真实拉取；不允许或失败返回 None。"""
         with self._lock:
             if not self._can_fetch():
                 logger.warning(
@@ -245,8 +332,12 @@ def apply_adjust(
 
     ``df`` 需含 ``trade_date``（YYYYMMDD 字符串）与 OHLC 列；``adj`` 需含
     ``trade_date`` 与 ``adj_factor`` 列（trade_date 升序）。qfq 用最新因子归一
-    （``factor = adj_factor / adj_factor[-1]``），hfq 直接用 adj_factor。
+    （``factor = adj_factor / adj_factor[-1]``，标准前复权），hfq 直接用 adj_factor。
     因子缺失（NaN）时返回 None，由调用方降级为非复权。
+
+    口径注意（VEW-55）：Tushare 服务端 ``pro_bar(adj='qfq')`` 是「请求窗口首日
+    因子归一」，而这里用「最新因子归一」，两者绝对值不同；统一走本地复权后
+    qfq 价位与旧口径有偏移，volume profile / CYQ 分箱需按最新口径理解。
     """
     if df is None or df.empty or adj is None or adj.empty:
         return None

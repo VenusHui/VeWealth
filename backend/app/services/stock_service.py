@@ -581,6 +581,7 @@ class StockService:
             # 日线实际复权口径（qfq 配额耗尽可能降级为非复权，VEW-55）
             adjust_actual = adjust
             adjust_degraded = False
+            adjust_factor_date = None
 
             if period == "101":
                 df, actual_start, actual_end = self.get_daily_data(
@@ -600,6 +601,7 @@ class StockService:
                     else:
                         adjust_actual = prov.adjustment or adjust
                     adjust_degraded = bool(prov.degraded)
+                    adjust_factor_date = getattr(prov, "adjust_factor_date", None)
             else:
                 start_dt = start_date or "2000-01-01"
                 end_dt = end_date or "2099-12-31"
@@ -623,6 +625,14 @@ class StockService:
                     actual_start = start_datetime
                     actual_end = end_datetime
                 else:
+                    # 分钟数据源（mootdx 非复权 / 东财按 fqt）各自标注实际口径（VEW-55）
+                    served = (
+                        str(df.attrs.get("adjust_served", adjust))
+                        if hasattr(df, "attrs")
+                        else adjust
+                    )
+                    adjust_actual = served
+                    adjust_degraded = bool(adjust) and served != adjust
                     df["datetime"] = df["datetime"].astype(str)
                     actual_start = str(df["datetime"].min())
                     actual_end = str(df["datetime"].max())
@@ -639,6 +649,7 @@ class StockService:
                 "adjust": adjust,
                 "adjust_actual": adjust_actual,
                 "adjust_degraded": adjust_degraded,
+                "adjust_factor_date": adjust_factor_date,
                 "start_date": start_date,
                 "end_date": end_date,
                 "actual_start_date": str(actual_start),
@@ -791,6 +802,7 @@ class StockService:
             "adjust": adjust,
             "adjust_actual": kline_result.get("adjust_actual", adjust),
             "adjust_degraded": kline_result.get("adjust_degraded", False),
+            "adjust_factor_date": kline_result.get("adjust_factor_date"),
             "start_date": start_date,
             "end_date": end_date,
             "klines": klines_list,

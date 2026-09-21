@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     TUSHARE_ADJ_FACTOR_DAILY_QUOTA: int = 5
     TUSHARE_ADJ_FACTOR_MIN_INTERVAL: int = 60  # 两次拉取的最小间隔（秒）
     TUSHARE_ADJ_FACTOR_CACHE_DIR: str = "data/tushare_adj"
+    # 复权因子缓存新鲜度：超过该天数视为陈旧，配额允许时在请求路径上顺手刷新；
+    # 配额耗尽时仍返回陈旧缓存，但通过 adjust_factor_date 暴露缓存日期（VEW-55）。
+    TUSHARE_ADJ_FACTOR_CACHE_TTL_DAYS: int = 7
 
     # 数据查询限制（999999 表示不限制）
     MAX_MINUTE_QUERY_DAYS: int = 999999
@@ -115,7 +118,9 @@ class Settings(BaseSettings):
     # 公开镜像扫描（见 astock_provider._mootdx_scan_candidates）。
     MOOTDX_SERVERS: str = ""
     # 每次公开镜像扫描最多探测的镜像数；0 表示禁用扫描。
-    MOOTDX_SCAN_LIMIT: int = 10
+    # 扫描在 init 热路径内同步执行（每个镜像约 2 个周期 + 5s 建连超时），
+    # 默认限 5 个以控制最坏延迟；镜像恢复后 curated/discovered 会优先命中。
+    MOOTDX_SCAN_LIMIT: int = 5
     # 两次公开镜像扫描之间的最小间隔（秒），避免镜像全挂时每次请求都做全量扫描。
     MOOTDX_SCAN_COOLDOWN: int = 1800
 

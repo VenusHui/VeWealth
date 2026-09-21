@@ -102,10 +102,11 @@ class AdjFactorStoreTests(unittest.TestCase):
         )
 
     def test_cache_hit_skips_fetch(self):
-        """缓存命中后 get_or_fetch 不再触发真实拉取。"""
+        """新鲜缓存命中后 get_or_fetch 不再触发真实拉取。"""
         store = self._make_store()
         adj = _adj_df({"20260101": 2.0, "20260102": 4.0})
         store._factors["000001.SZ"] = adj
+        store._fetched_at["000001.SZ"] = store._today()  # 标记为当天缓存
         with mock.patch.object(store, "_fetch_from_tushare") as fetch:
             got = store.get_or_fetch("000001.SZ")
             fetch.assert_not_called()
@@ -179,6 +180,71 @@ class AdjFactorStoreTests(unittest.TestCase):
         # 新实例从磁盘恢复当日计数
         store2 = ta.AdjFactorStore(cache_dir=cache_dir, daily_quota=5, min_interval=0)
         self.assertEqual(store2.quota_remaining, 3)
+
+    def test_cache_date_exposed_after_fetch(self):
+        """首次拉取后 cache_date 返回拉取当天日期。"""
+        store = self._make_store(quota=2, min_interval=0)
+        with mock.patch.object(
+            store, "_fetch_from_tushare", return_value=_adj_df({"20260101": 2.0})
+        ):
+            store.get_or_fetch("000001.SZ")
+        self.assertEqual(store.cache_date("000001.SZ"), store._today())
+
+    def test_stale_cache_refreshes_when_quota_allows(self):
+        """陈旧缓存且配额允许时刷新，替换为新因子并更新缓存日期。"""
+        store = self._make_store(quota=5, min_interval=0)
+        with mock.patch.object(
+            store, "_fetch_from_tushare", return_value=_adj_df({"20260101": 2.0})
+        ):
+            store.get_or_fetch("000001.SZ")
+        # 手动把缓存标记为极陈旧
+        store._fetched_at["000001.SZ"] = "2000-01-01"
+
+        new_adj = _adj_df({"20260101": 3.0})
+        with mock.patch.object(
+            store, "_fetch_from_tushare", return_value=new_adj
+        ) as fetch:
+            got = store.get_or_fetch("000001.SZ")
+            fetch.assert_called_once_with("000001.SZ")
+        self.assertIs(got, new_adj)
+        self.assertEqual(store.cache_date("000001.SZ"), store._today())
+
+    def test_stale_cache_served_when_quota_exhausted(self):
+        """陈旧缓存且配额耗尽时不拉取，返回陈旧值并保留缓存日期（可感知）。"""
+        store = self._make_store(quota=1, min_interval=0)
+        adj = _adj_df({"20260101": 2.0})
+        with mock.patch.object(store, "_fetch_from_tushare", return_value=adj):
+            store.get_or_fetch("000001.SZ")  # 消耗唯一配额
+        store._fetched_at["000001.SZ"] = "2000-01-01"
+
+        with mock.patch.object(store, "_fetch_from_tushare") as fetch:
+            got = store.get_or_fetch("000001.SZ")
+            fetch.assert_not_called()
+        self.assertIs(got, adj)
+        self.assertEqual(store.cache_date("000001.SZ"), "2000-01-01")
+
+    def test_fresh_cache_skips_fetch(self):
+        """新鲜缓存直接返回，不触发拉取。"""
+        store = self._make_store(quota=5, min_interval=0)
+        adj = _adj_df({"20260101": 2.0})
+        with mock.patch.object(store, "_fetch_from_tushare", return_value=adj):
+            store.get_or_fetch("000001.SZ")
+        with mock.patch.object(store, "_fetch_from_tushare") as fetch:
+            got = store.get_or_fetch("000001.SZ")
+            fetch.assert_not_called()
+        self.assertIs(got, adj)
+
+    def test_cache_date_persists_across_instances(self):
+        """缓存日期持久化到 cache_meta.json，新实例可恢复。"""
+        cache_dir = Path(tempfile.mkdtemp(prefix="tushare_adj_meta_"))
+        store = ta.AdjFactorStore(cache_dir=cache_dir, daily_quota=5, min_interval=0)
+        with mock.patch.object(
+            store, "_fetch_from_tushare", return_value=_adj_df({"20260101": 2.0})
+        ):
+            store.get_or_fetch("000001.SZ")
+
+        store2 = ta.AdjFactorStore(cache_dir=cache_dir, daily_quota=5, min_interval=0)
+        self.assertEqual(store2.cache_date("000001.SZ"), store._today())
 
 
 if __name__ == "__main__":

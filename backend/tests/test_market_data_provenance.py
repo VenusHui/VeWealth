@@ -88,7 +88,9 @@ class FetchDailyDataWithMetaTests(unittest.TestCase):
             )
         self.assertIsNotNone(result.df)
         self.assertEqual(result.provenance.source, "mootdx")
-        self.assertEqual(result.provenance.adjustment, "qfq")
+        # mootdx 只服务非复权原始行情：请求 qfq 时如实标记降级（VEW-55）
+        self.assertEqual(result.provenance.adjustment, "")
+        self.assertTrue(result.provenance.degraded)
         self.assertEqual(result.provenance.requested_start, "2026-01-01")
         self.assertEqual(result.provenance.requested_end, "2026-01-10")
         self.assertEqual(result.provenance.actual_start, "2026-01-01")
@@ -96,6 +98,18 @@ class FetchDailyDataWithMetaTests(unittest.TestCase):
         self.assertEqual(result.provenance.bar_count, 10)
         self.assertEqual(result.provenance.last_bar, "2026-01-10")
         self.assertFalse(result.provenance.gap)
+
+    def test_mootdx_raw_request_not_degraded(self):
+        """请求非复权时 mootdx 原始行情不算降级。"""
+        df = _df_for_dates(pd.date_range("2026-01-01", "2026-01-03"))
+        with patch.object(AStockDataProvider, "_fetch_kline_mootdx", return_value=df):
+            provider = AStockDataProvider()
+            result = provider.fetch_daily_data_with_meta(
+                "000001", "20260101", "20260110", adjust=""
+            )
+        self.assertEqual(result.provenance.source, "mootdx")
+        self.assertEqual(result.provenance.adjustment, "")
+        self.assertFalse(result.provenance.degraded)
 
     def test_gap_detected_on_partial_range(self):
         df = _df_for_dates(pd.date_range("2026-01-05", "2026-01-10"))

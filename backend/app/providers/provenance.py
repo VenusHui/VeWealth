@@ -27,6 +27,8 @@ class DataProvenance:
     last_bar: Optional[str] = None  # 时间上最后一根 bar 的日期
     gap: bool = False  # 覆盖缺口：实际范围未覆盖请求范围（起点滞后或终点提前）
     degraded: bool = False  # 复权口径被降级（如 qfq 请求降级为非复权，VEW-55）
+    # 本地复权所用 adj_factor 的缓存日期（YYYY-MM-DD），用于感知因子陈旧（VEW-55）
+    adjust_factor_date: Optional[str] = None
     failure_reason: Optional[str] = None  # None 表示成功；否则为失败/无数据原因
 
 

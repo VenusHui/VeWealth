@@ -146,11 +146,15 @@ class AKShareProvider(MarketDataProvider):
 
                 actual_adjust = ""
                 degraded = False
+                factor_date = None
                 if adj is not None:
                     adjusted = self._apply_tushare_adjust(ts_code, df, adj)
                     if adjusted is not None:
                         df = adjusted
                         actual_adjust = adj
+                        factor_date = (
+                            str(adjusted.attrs.get("adjust_factor_date", "")) or None
+                        )
                     else:
                         degraded = True
                         logger.warning(
@@ -171,6 +175,7 @@ class AKShareProvider(MarketDataProvider):
                 normalized = normalized.sort_values("日期").reset_index(drop=True)
                 normalized.attrs["adjust_served"] = actual_adjust
                 normalized.attrs["adjust_degraded"] = degraded
+                normalized.attrs["adjust_factor_date"] = factor_date
                 logger.info(f"股票 {stock_code} 日线数据由 Tushare 备源返回")
                 return self._normalize_daily(normalized)
             except Exception as e:
@@ -188,12 +193,19 @@ class AKShareProvider(MarketDataProvider):
         self, ts_code: str, df: pd.DataFrame, adjust: str
     ) -> Optional[pd.DataFrame]:
         """用缓存的 adj_factor 对非复权日线做 qfq/hfq 复权；不可用返回 None。"""
-        from app.providers.tushare_adj import apply_adjust, get_adj_factor
+        from app.providers.tushare_adj import (
+            adj_factor_store,
+            apply_adjust,
+            get_adj_factor,
+        )
 
         adj = get_adj_factor(ts_code)
         if adj is None or adj.empty:
             return None
-        return apply_adjust(df, adj, adjust)
+        out = apply_adjust(df, adj, adjust)
+        if out is not None:
+            out.attrs["adjust_factor_date"] = adj_factor_store.cache_date(ts_code)
+        return out
 
     # ---- minute data ----
 

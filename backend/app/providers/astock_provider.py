@@ -212,34 +212,46 @@ def _curated_mootdx_servers() -> list[tuple[str, int]]:
     return list(_MOOTDX_SERVERS)
 
 
-def _mootdx_scan_candidates() -> list[tuple[str, int]]:
-    """返回有界扫描用的公开 TDX 镜像候选（``mootdx.consts.HQ_HOSTS``）。
+def _mootdx_scan_candidates(
+    hosts: Optional[list[tuple]] = None,
+) -> list[tuple[str, int]]:
+    """返回有界扫描用的公开 TDX 镜像候选。
 
-    扫描规模受 ``settings.MOOTDX_SCAN_LIMIT`` 限制（0 表示禁用扫描），避免死镜像
-    池拖慢 init。游标每次推进 limit，多轮扫描（间隔冷却期）能覆盖完整列表。
-    真正的「能取到 K 线」校验仍在 _try_mootdx_server 中完成。
+    ``hosts`` 缺省时从 ``mootdx.consts.HQ_HOSTS``（三元组 ``(name, ip, port)``）
+    加载；测试可传入固定样例列表，无需依赖 mootdx 安装。扫描规模受
+    ``settings.MOOTDX_SCAN_LIMIT`` 限制（0 表示禁用扫描），避免死镜像池拖慢 init。
+    游标每次推进 limit，多轮扫描（间隔冷却期）能覆盖完整列表；真正的「能取到
+    K 线」校验仍在 _try_mootdx_server 中完成。
     """
     global _mootdx_scan_cursor
     limit = int(getattr(settings, "MOOTDX_SCAN_LIMIT", 10))
     if limit <= 0:
         return []
-    try:
-        from mootdx.consts import HQ_HOSTS  # 延迟导入，避免拖慢 import
-    except Exception:  # pragma: no cover - 依赖缺失
-        return []
+    if hosts is None:
+        try:
+            from mootdx.consts import HQ_HOSTS  # 延迟导入，避免拖慢 import
+        except Exception:  # pragma: no cover - 依赖缺失
+            return []
+        hosts = HQ_HOSTS
     # 去重（部分镜像名不同但 ip 相同）
-    hosts: list[tuple[str, int]] = []
+    deduped: list[tuple[str, int]] = []
     seen: set[tuple[str, int]] = set()
-    for _name, ip, port in HQ_HOSTS:
-        h = (ip, port)
+    for entry in hosts:
+        if len(entry) >= 3:
+            _name, ip, port = entry[0], entry[1], entry[2]
+        elif len(entry) == 2:
+            ip, port = entry[0], entry[1]
+        else:
+            continue
+        h = (ip, int(port))
         if h not in seen:
             seen.add(h)
-            hosts.append(h)
-    if not hosts:
+            deduped.append(h)
+    if not deduped:
         return []
-    start = _mootdx_scan_cursor % len(hosts)
-    window = (hosts[start:] + hosts[:start])[:limit]
-    _mootdx_scan_cursor = (start + limit) % len(hosts)
+    start = _mootdx_scan_cursor % len(deduped)
+    window = (deduped[start:] + deduped[:start])[:limit]
+    _mootdx_scan_cursor = (start + limit) % len(deduped)
     return window
 
 
@@ -471,7 +483,12 @@ class AStockDataProvider(MarketDataProvider):
 
             df["datetime"] = df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
             available = ["datetime"] + [c for c in cols if c in df.columns]
-            return df[available]
+            out = df[available]
+            # mootdx（pytdx get_security_bars）返回非复权原始行情，如实标注。
+            # 调用方请求 qfq/hfq 时据此判定降级（VEW-55）。
+            out.attrs["adjust_served"] = ""
+            out.attrs["adjust_degraded"] = False
+            return out
         except Exception as e:
             logger.warning(f"mootdx K线请求失败 {stock_code}: {e}")
             _invalidate_mootdx_client(client)
@@ -541,7 +558,11 @@ class AStockDataProvider(MarketDataProvider):
         if df is not None and not df.empty:
             logger.info(f"股票 {stock_code} 日线由 mootdx 返回")
             provenance.source = "mootdx"
-            self._fill_provenance(provenance, df, req_start, req_end, adjust)
+            # mootdx 只服务非复权原始行情：请求 qfq/hfq 即视为降级（VEW-55）
+            served = str(df.attrs.get("adjust_served", ""))
+            provenance.adjustment = served
+            provenance.degraded = bool(adjust) and served != adjust
+            self._fill_provenance(provenance, df, req_start, req_end, served)
             return DailyDataResult(df=df, provenance=provenance)
 
         # 2. Fallback: Eastmoney → Tushare
@@ -557,7 +578,10 @@ class AStockDataProvider(MarketDataProvider):
                 )
                 if df is not None and not df.empty:
                     provenance.source = "eastmoney"
-                    self._fill_provenance(provenance, df, req_start, req_end, adjust)
+                    served = str(df.attrs.get("adjust_served", adjust))
+                    provenance.adjustment = served
+                    provenance.degraded = bool(adjust) and served != adjust
+                    self._fill_provenance(provenance, df, req_start, req_end, served)
                     return DailyDataResult(df=df, provenance=provenance)
             except Exception as e:
                 logger.warning(
@@ -582,6 +606,9 @@ class AStockDataProvider(MarketDataProvider):
             served = str(df.attrs.get("adjust_served", adjust))
             provenance.adjustment = served
             provenance.degraded = bool(df.attrs.get("adjust_degraded", False))
+            provenance.adjust_factor_date = (
+                str(df.attrs.get("adjust_factor_date", "")) or None
+            )
             self._fill_provenance(provenance, df, req_start, req_end, served)
             return DailyDataResult(df=df, provenance=provenance)
 
@@ -659,11 +686,15 @@ class AStockDataProvider(MarketDataProvider):
 
                 actual_adjust = ""
                 degraded = False
+                factor_date = None
                 if adj is not None:
                     adjusted = self._apply_tushare_adjust(ts_code, df, adj)
                     if adjusted is not None:
                         df = adjusted
                         actual_adjust = adj
+                        factor_date = (
+                            str(adjusted.attrs.get("adjust_factor_date", "")) or None
+                        )
                     else:
                         degraded = True
                         logger.warning(
@@ -686,6 +717,7 @@ class AStockDataProvider(MarketDataProvider):
                 # 记录实际复权口径与降级标记，供 fetch_daily_data_with_meta 写入 provenance
                 normalized.attrs["adjust_served"] = actual_adjust
                 normalized.attrs["adjust_degraded"] = degraded
+                normalized.attrs["adjust_factor_date"] = factor_date
                 logger.info(f"股票 {stock_code} 日线数据由 Tushare 备源返回")
                 return normalized.rename(
                     columns={
@@ -714,15 +746,23 @@ class AStockDataProvider(MarketDataProvider):
     ) -> Optional[pd.DataFrame]:
         """用缓存的 adj_factor 对非复权日线做 qfq/hfq 复权。
 
-        adj_factor 由 tushare_adj.get_adj_factor 统一管理（缓存 + 配额守卫）；
-        不可用（配额耗尽 / 未缓存 / 拉取失败）时返回 None，由调用方降级为非复权。
+        adj_factor 由 tushare_adj.get_adj_factor 统一管理（缓存 + 配额守卫 +
+        新鲜度刷新）；不可用（配额耗尽 / 未缓存 / 拉取失败）时返回 None，由调用方
+        降级为非复权。返回的 df 携带 adjust_factor_date 供调用方透传缓存日期。
         """
-        from app.providers.tushare_adj import apply_adjust, get_adj_factor
+        from app.providers.tushare_adj import (
+            adj_factor_store,
+            apply_adjust,
+            get_adj_factor,
+        )
 
         adj = get_adj_factor(ts_code)
         if adj is None or adj.empty:
             return None
-        return apply_adjust(df, adj, adjust)
+        out = apply_adjust(df, adj, adjust)
+        if out is not None:
+            out.attrs["adjust_factor_date"] = adj_factor_store.cache_date(ts_code)
+        return out
 
     # ------------------------------------------------------------------
     # Minute data
@@ -770,6 +810,10 @@ class AStockDataProvider(MarketDataProvider):
                     )
 
                 if df is not None and not df.empty:
+                    # 东财分钟线按 fqt 复权（1 分钟走 trends2 接口，无复权参数）。
+                    served = adjust if period != "1" else ""
+                    df.attrs["adjust_served"] = served
+                    df.attrs["adjust_degraded"] = bool(adjust) and served != adjust
                     # Filter to requested datetime range
                     if "datetime" in df.columns:
                         df["datetime"] = pd.to_datetime(df["datetime"])

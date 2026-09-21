@@ -212,6 +212,50 @@ class MootdxServerSelectionTests(unittest.TestCase):
         self.assertIs(got, client)
         quotes.factory.assert_called_once_with(market="std")
 
+    def test_scan_candidates_window_rotation(self):
+        """有界扫描游标推进：多轮扫描覆盖完整列表并回绕。"""
+        ap._mootdx_scan_cursor = 0
+        hosts = [
+            ("srv1", "10.0.0.1", 7709),
+            ("srv2", "10.0.0.2", 7709),
+            ("srv3", "10.0.0.3", 7709),
+            ("srv4", "10.0.0.4", 7709),
+        ]
+        with mock.patch.object(ap.settings, "MOOTDX_SCAN_LIMIT", 3):
+            w1 = ap._mootdx_scan_candidates(hosts)
+            w2 = ap._mootdx_scan_candidates(hosts)
+            w3 = ap._mootdx_scan_candidates(hosts)
+        self.assertEqual(
+            w1, [("10.0.0.1", 7709), ("10.0.0.2", 7709), ("10.0.0.3", 7709)]
+        )
+        # 游标推进 3 个后窗口右移
+        self.assertEqual(
+            w2, [("10.0.0.4", 7709), ("10.0.0.1", 7709), ("10.0.0.2", 7709)]
+        )
+        # 再推一轮回绕到开头
+        self.assertEqual(
+            w3, [("10.0.0.3", 7709), ("10.0.0.4", 7709), ("10.0.0.1", 7709)]
+        )
+
+    def test_scan_candidates_dedupes_shared_ip(self):
+        """镜像名不同但 ip 相同的项去重。"""
+        ap._mootdx_scan_cursor = 0
+        hosts = [
+            ("srv1", "10.0.0.1", 7709),
+            ("srv1b", "10.0.0.1", 7709),
+            ("srv2", "10.0.0.2", 7709),
+        ]
+        with mock.patch.object(ap.settings, "MOOTDX_SCAN_LIMIT", 10):
+            window = ap._mootdx_scan_candidates(hosts)
+        self.assertEqual(window, [("10.0.0.1", 7709), ("10.0.0.2", 7709)])
+
+    def test_scan_candidates_disabled_when_limit_zero(self):
+        """MOOTDX_SCAN_LIMIT=0 时扫描返回空列表。"""
+        with mock.patch.object(ap.settings, "MOOTDX_SCAN_LIMIT", 0):
+            self.assertEqual(
+                ap._mootdx_scan_candidates([("srv1", "10.0.0.1", 7709)]), []
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
