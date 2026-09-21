@@ -35,6 +35,9 @@ docker-compose.override.yml
 # Backend logs
 backend/logs/
 
+# Backend data caches (adj_factor CSV/quota, VEW-55) —— a_share_symbols.txt 保留入库
+backend/data/tushare_adj/
+
 # For test
 test.py
 .omx/

@@ -279,6 +279,7 @@ class StockService:
         end_date: str,
         count: int = 500,
         start_offset: int = 0,
+        adjust: str = "qfq",
     ) -> Tuple[pd.DataFrame, str, str]:
         """
         获取日线数据（用于回测）
@@ -289,12 +290,19 @@ class StockService:
             end_date: 结束日期 YYYY-MM-DD
             count: 返回的最大K线数量（分页用）
             start_offset: 跳过前N根K线（分页用）
+            adjust: 复权口径 qfq/hfq/''。qfq 数据源不可用时可能降级为非复权，
+                    provenance 会记录实际口径（VEW-55）。
 
         Returns:
             (日线数据DataFrame, 实际开始日期, 实际结束日期)
         """
         result = self.get_daily_data_with_meta(
-            symbol, start_date, end_date, count=count, start_offset=start_offset
+            symbol,
+            start_date,
+            end_date,
+            count=count,
+            start_offset=start_offset,
+            adjust=adjust,
         )
         df = result.df
         # 把 provenance 挂到 df.attrs，供回测读取覆盖缺口/失败原因
@@ -321,13 +329,15 @@ class StockService:
         end_date: str,
         count: int = 500,
         start_offset: int = 0,
+        adjust: str = "qfq",
     ) -> DailyDataResult:
         """
         获取日线数据并返回结构化 provenance。
 
         与 get_daily_data 不同：此方法不会把"数据不存在"与"源故障"统一吞成空
         DataFrame，而是经由 provenance.failure_reason / gap 显式区分，供回测做
-        覆盖度判断与明确降级。
+        覆盖度判断与明确降级。``adjust`` 透传给数据源；数据源实际服务的复权口径
+        记录在 provenance.adjustment（qfq 配额耗尽时可能降级为非复权，VEW-55）。
         """
         try:
             start_dt = datetime.strptime(start_date, "%Y-%m-%d")
@@ -340,7 +350,7 @@ class StockService:
                 stock_code=symbol,
                 start_date=start_dt.strftime("%Y%m%d"),
                 end_date=end_dt.strftime("%Y%m%d"),
-                adjust="qfq",
+                adjust=adjust,
                 count=count,
                 start_offset=start_offset,
             )
@@ -350,7 +360,7 @@ class StockService:
                 df=pd.DataFrame(columns=_EMPTY_DAILY_COLUMNS),
                 provenance=DataProvenance(
                     source=None,
-                    adjustment="qfq",
+                    adjustment=adjust,
                     requested_start=start_date,
                     requested_end=end_date,
                     failure_reason=str(e),
@@ -568,6 +578,10 @@ class StockService:
         period_label = self._PERIOD_LABEL_MAP.get(period, f"{period}min")
 
         try:
+            # 日线实际复权口径（qfq 配额耗尽可能降级为非复权，VEW-55）
+            adjust_actual = adjust
+            adjust_degraded = False
+
             if period == "101":
                 df, actual_start, actual_end = self.get_daily_data(
                     symbol=symbol,
@@ -575,7 +589,17 @@ class StockService:
                     end_date=end_date or "2099-12-31",
                     count=count,
                     start_offset=offset,
+                    adjust=adjust,
                 )
+                prov = df.attrs.get("provenance") if hasattr(df, "attrs") else None
+                if prov is not None:
+                    # 降级时 provenance.adjustment 为 ""（非复权），必须如实透传，
+                    # 不能回退到请求口径，否则前端无法感知降级。
+                    if prov.degraded:
+                        adjust_actual = prov.adjustment
+                    else:
+                        adjust_actual = prov.adjustment or adjust
+                    adjust_degraded = bool(prov.degraded)
             else:
                 start_dt = start_date or "2000-01-01"
                 end_dt = end_date or "2099-12-31"
@@ -613,6 +637,8 @@ class StockService:
                 "symbol": symbol,
                 "period": period_label,
                 "adjust": adjust,
+                "adjust_actual": adjust_actual,
+                "adjust_degraded": adjust_degraded,
                 "start_date": start_date,
                 "end_date": end_date,
                 "actual_start_date": str(actual_start),
@@ -763,6 +789,8 @@ class StockService:
             "symbol": symbol,
             "period": kline_result["period"],
             "adjust": adjust,
+            "adjust_actual": kline_result.get("adjust_actual", adjust),
+            "adjust_degraded": kline_result.get("adjust_degraded", False),
             "start_date": start_date,
             "end_date": end_date,
             "klines": klines_list,

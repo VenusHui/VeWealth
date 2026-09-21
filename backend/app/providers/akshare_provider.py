@@ -133,14 +133,29 @@ class AKShareProvider(MarketDataProvider):
         for attempt in range(1, max_retries + 2):
             try:
                 ts.set_token(settings.TUSHARE_TOKEN)
+                # 始终取非复权，复权本地用缓存的 adj_factor 完成（VEW-55）：
+                # pro_bar(adj=...) 内部调用 adj_factor 会快速耗尽 5次/天 的配额。
                 df = ts.pro_bar(
                     ts_code=ts_code,
-                    adj=adj,
+                    adj=None,
                     start_date=start_date,
                     end_date=end_date,
                 )
                 if df is None or df.empty:
                     return None
+
+                actual_adjust = ""
+                degraded = False
+                if adj is not None:
+                    adjusted = self._apply_tushare_adjust(ts_code, df, adj)
+                    if adjusted is not None:
+                        df = adjusted
+                        actual_adjust = adj
+                    else:
+                        degraded = True
+                        logger.warning(
+                            f"Tushare adj_factor 不可用，{stock_code} 降级为非复权"
+                        )
 
                 normalized = pd.DataFrame(
                     {
@@ -154,6 +169,8 @@ class AKShareProvider(MarketDataProvider):
                     }
                 )
                 normalized = normalized.sort_values("日期").reset_index(drop=True)
+                normalized.attrs["adjust_served"] = actual_adjust
+                normalized.attrs["adjust_degraded"] = degraded
                 logger.info(f"股票 {stock_code} 日线数据由 Tushare 备源返回")
                 return self._normalize_daily(normalized)
             except Exception as e:
@@ -166,6 +183,17 @@ class AKShareProvider(MarketDataProvider):
                 logger.error(f"Tushare 获取股票 {stock_code} 日线失败: {e}")
                 return None
         return None
+
+    def _apply_tushare_adjust(
+        self, ts_code: str, df: pd.DataFrame, adjust: str
+    ) -> Optional[pd.DataFrame]:
+        """用缓存的 adj_factor 对非复权日线做 qfq/hfq 复权；不可用返回 None。"""
+        from app.providers.tushare_adj import apply_adjust, get_adj_factor
+
+        adj = get_adj_factor(ts_code)
+        if adj is None or adj.empty:
+            return None
+        return apply_adjust(df, adj, adjust)
 
     # ---- minute data ----
 

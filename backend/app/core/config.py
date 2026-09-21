@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     TUSHARE_TOKEN: str = ""
     TUSHARE_TIMEOUT: int = 30
     TUSHARE_RETRY_TIMES: int = 2
+    # adj_factor 接口配额极低（5次/天 + 1次/分钟 + 1次/小时），qfq/hfq 日线依赖它。
+    # 通过缓存 + 配额管理避免常规请求撞限；耗尽时降级为非复权（VEW-55）。
+    TUSHARE_ADJ_FACTOR_DAILY_QUOTA: int = 5
+    TUSHARE_ADJ_FACTOR_MIN_INTERVAL: int = 60  # 两次拉取的最小间隔（秒）
+    TUSHARE_ADJ_FACTOR_CACHE_DIR: str = "data/tushare_adj"
 
     # 数据查询限制（999999 表示不限制）
     MAX_MINUTE_QUERY_DAYS: int = 999999
@@ -103,6 +108,16 @@ class Settings(BaseSettings):
     SOURCE_HEALTH_EVENT_LIMIT: int = 200  # 降级事件环形缓冲上限
     SOURCE_HEALTH_FAIL_THRESHOLD: int = 3  # 连续失败升级为 ERROR 告警的阈值
     SOURCE_HEALTH_PROBE_SYMBOL: str = "000001"  # 探针使用的样本股票代码
+
+    # mootdx 镜像候选机制（VEW-55）
+    # 逗号分隔的 "ip:port"（或裸 ip，默认 7709 端口）。非空时覆盖内置 curated 列表，
+    # 便于运维在镜像失效时无需改代码即可换源。内置列表失效时会触发有界的
+    # 公开镜像扫描（见 astock_provider._mootdx_scan_candidates）。
+    MOOTDX_SERVERS: str = ""
+    # 每次公开镜像扫描最多探测的镜像数；0 表示禁用扫描。
+    MOOTDX_SCAN_LIMIT: int = 10
+    # 两次公开镜像扫描之间的最小间隔（秒），避免镜像全挂时每次请求都做全量扫描。
+    MOOTDX_SCAN_COOLDOWN: int = 1800
 
     # 预警配置
     DEFAULT_ALERT_THRESHOLD: float = 0.7
