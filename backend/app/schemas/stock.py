@@ -35,6 +35,15 @@ class CyqInfo(BaseModel):
     concentration_70: float = Field(..., description="70%集中度")
 
 
+class CyqResponse(BaseModel):
+    """筹码分布查询响应。"""
+
+    success: bool = True
+    symbol: str
+    adjust: str
+    cyq_info: CyqInfo
+
+
 # ---------------------------------------------------------------------------
 # Depth (combined) endpoint schemas
 # ---------------------------------------------------------------------------

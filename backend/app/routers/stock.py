@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from app.schemas.stock import (
     StockSearchResponse,
     KlineResponse,
+    CyqResponse,
     VolumeProfileResponse,
     DepthResponse,
     StockInfoResponse,
@@ -19,7 +20,7 @@ router = APIRouter(prefix="/stock", tags=["stock"])
 
 
 @router.get("/search", response_model=StockSearchResponse)
-async def search_stock(
+def search_stock(
     keyword: str = Query(..., description="股票代码或名称关键词", min_length=1)
 ):
     """
@@ -35,7 +36,7 @@ async def search_stock(
 
 
 @router.get("/kline", response_model=KlineResponse)
-async def get_kline_data(
+def get_kline_data(
     symbol: str = Query(..., description="股票代码，例如：000001"),
     period: str = Query("5", description="K线周期: 1/5/15/30/60/101"),
     start_date: str = Query("", description="开始日期，格式：YYYY-MM-DD"),
@@ -61,7 +62,7 @@ async def get_kline_data(
 
 
 @router.get("/volume-profile", response_model=VolumeProfileResponse)
-async def get_volume_profile(
+def get_volume_profile(
     symbol: str = Query(..., description="股票代码，例如：000001"),
     period: str = Query("5", description="K线周期: 1/5/15/30/60/101"),
     start_date: str = Query("", description="开始日期，格式：YYYY-MM-DD"),
@@ -84,13 +85,29 @@ async def get_volume_profile(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/cyq", response_model=CyqResponse)
+def get_cyq_data(
+    symbol: str = Query(..., description="股票代码，例如：000001"),
+    adjust: str = Query("qfq", description="复权类型: qfq/hfq/''"),
+):
+    """按需获取筹码分布，避免它阻塞深度图的核心 K 线响应。"""
+    try:
+        data = stock_service.get_cyq_data(symbol=symbol, adjust=adjust)
+        return CyqResponse(**data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/depth", response_model=DepthResponse)
-async def get_depth_data(
+def get_depth_data(
     symbol: str = Query(..., description="股票代码，例如：000001"),
     period: str = Query("5", description="K线周期: 1/5/15/30/60/101"),
     start_date: str = Query("", description="开始日期，格式：YYYY-MM-DD"),
     end_date: str = Query("", description="结束日期，格式：YYYY-MM-DD"),
     adjust: str = Query("qfq", description="复权类型"),
+    include_cyq: bool = Query(
+        True, description="是否同步获取筹码分布；首屏可关闭并通过 /cyq 按需加载"
+    ),
 ):
     """获取深度数据（K线 + Volume Profile + 筹码分布 + 个股信息）。"""
     try:
@@ -100,6 +117,7 @@ async def get_depth_data(
             start_date=start_date,
             end_date=end_date,
             adjust=adjust,
+            include_cyq=include_cyq,
         )
         return DepthResponse(**data)
     except Exception as e:
@@ -107,7 +125,7 @@ async def get_depth_data(
 
 
 @router.get("/info", response_model=StockInfoResponse)
-async def get_stock_info(
+def get_stock_info(
     symbol: str = Query(..., description="股票代码，例如：000001"),
 ):
     """获取个股基本信息 + 腾讯行情数据。"""
@@ -119,7 +137,7 @@ async def get_stock_info(
 
 
 @router.get("/quotes", response_model=BatchQuoteResponse)
-async def get_batch_quotes(
+def get_batch_quotes(
     codes: str = Query(..., description="股票代码列表，逗号分隔，例如：000001,600519"),
 ):
     """批量获取腾讯实时行情。"""

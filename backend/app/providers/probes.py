@@ -152,7 +152,10 @@ def probe_mootdx() -> ProbeResult:
     """
     start = time.monotonic()
     try:
-        from app.providers.astock_provider import _get_mootdx_client
+        from app.providers.astock_provider import (
+            _get_mootdx_client,
+            _invalidate_mootdx_client,
+        )
     except Exception:
         source_monitor.record_skipped("mootdx", detail="mootdx 依赖或客户端初始化失败")
         return ProbeResult(
@@ -175,6 +178,8 @@ def probe_mootdx() -> ProbeResult:
     try:
         df = client.bars(symbol=_probe_symbol(), frequency=4, start=0, offset=3)
         ok = df is not None and not df.empty
+        if not ok:
+            _invalidate_mootdx_client(client)
         duration_ms = (time.monotonic() - start) * 1000
         source_monitor.record_attempt(
             "mootdx",
@@ -190,6 +195,7 @@ def probe_mootdx() -> ProbeResult:
             detail="mootdx K线探针" if ok else "mootdx K线探针返回空",
         )
     except Exception as e:
+        _invalidate_mootdx_client(client)
         duration_ms = (time.monotonic() - start) * 1000
         source_monitor.record_attempt(
             "mootdx",

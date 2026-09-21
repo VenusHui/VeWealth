@@ -67,6 +67,12 @@ _MOOTDX_CONNECT_TIMEOUT = 5
 _MOOTDX_PROBE_FREQUENCIES: tuple[int, ...] = (4, 0)
 
 
+def _mootdx_probe_symbol() -> str:
+    """Return the known-liquid symbol used to distinguish mirror vs symbol gaps."""
+
+    return str(getattr(settings, "SOURCE_HEALTH_PROBE_SYMBOL", "000001")).zfill(6)
+
+
 def _try_mootdx_server(Quotes, server: Optional[tuple[str, int]]):
     """Build a client for one TDX mirror and confirm it returns K-lines.
 
@@ -89,7 +95,9 @@ def _try_mootdx_server(Quotes, server: Optional[tuple[str, int]]):
 
     for freq in _MOOTDX_PROBE_FREQUENCIES:
         try:
-            probe = client.bars(symbol="000001", frequency=freq, start=0, offset=3)
+            probe = client.bars(
+                symbol=_mootdx_probe_symbol(), frequency=freq, start=0, offset=3
+            )
         except Exception as e:  # pragma: no cover - 防御性
             logger.warning(
                 f"mootdx 通过 {server or '配置默认'} 拉取 freq={freq} K线失败: {e}"
@@ -164,6 +172,29 @@ def _get_mootdx_client():
         _mootdx_client = client
         _mootdx_init_failed_at = None
         return _mootdx_client
+
+
+def _invalidate_mootdx_client(client: Any) -> bool:
+    """Discard a cached client that failed after it had been initialized.
+
+    The lazy initializer only repairs startup failures.  A public TDX mirror can
+    become stale later and keep returning empty responses forever; without
+    clearing the cached object every request continues using that dead mirror.
+    Identity-checking under the same lock prevents an older failing request from
+    discarding a client another thread has already replaced.
+
+    Returns ``True`` when ``client`` was still current and was invalidated.
+    A cooldown is recorded so concurrent requests fall through to the secondary
+    source instead of all starting an expensive mirror scan at once.
+    """
+
+    global _mootdx_client, _mootdx_init_failed_at
+    with _mootdx_client_lock:
+        if _mootdx_client is not client:
+            return False
+        _mootdx_client = None
+        _mootdx_init_failed_at = time.monotonic()
+        return True
 
 
 # Per-attempt sleep multiplier
@@ -257,7 +288,8 @@ class AStockDataProvider(MarketDataProvider):
 
             frames: list[pd.DataFrame] = []
             collected = 0
-            offset = int(start_offset or 0)
+            initial_offset = int(start_offset or 0)
+            offset = initial_offset
             while collected < wanted:
                 klines = client.bars(
                     symbol=stock_code,
@@ -266,6 +298,27 @@ class AStockDataProvider(MarketDataProvider):
                     offset=page_size,
                 )
                 if klines is None or klines.empty:
+                    # An empty first page at offset=0 can mean either a dead mirror
+                    # or a symbol with no data.  Confirm with the known-liquid probe
+                    # symbol before invalidating; pagination exhaustion and
+                    # post-fetch date filtering remain normal empty results.
+                    if collected == 0 and initial_offset == 0:
+                        probe_symbol = _mootdx_probe_symbol()
+                        mirror_empty = str(stock_code).zfill(6) == probe_symbol
+                        if not mirror_empty:
+                            probe = client.bars(
+                                symbol=probe_symbol,
+                                frequency=freq,
+                                start=0,
+                                offset=3,
+                            )
+                            mirror_empty = probe is None or probe.empty
+                        if mirror_empty:
+                            logger.warning(
+                                "mootdx 镜像 freq=%s 原始K线返回空，摘除缓存客户端",
+                                freq,
+                            )
+                            _invalidate_mootdx_client(client)
                     break
                 frames.append(klines)
                 n = len(klines)
@@ -308,6 +361,7 @@ class AStockDataProvider(MarketDataProvider):
             return df[available]
         except Exception as e:
             logger.warning(f"mootdx K线请求失败 {stock_code}: {e}")
+            _invalidate_mootdx_client(client)
             return None
 
     # ------------------------------------------------------------------

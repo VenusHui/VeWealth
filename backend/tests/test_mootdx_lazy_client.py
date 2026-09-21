@@ -11,6 +11,8 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+import pandas as pd
+
 from app.providers import astock_provider as ap
 
 
@@ -19,6 +21,18 @@ class FakeQuotes:
 
     def bars(self, *args, **kwargs):
         return []
+
+
+class SymbolAwareClient:
+    """Return configured DataFrames per symbol and record every raw request."""
+
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = []
+
+    def bars(self, *args, **kwargs):
+        self.calls.append(kwargs)
+        return self.responses.get(kwargs["symbol"], pd.DataFrame())
 
 
 class MootdxLazyClientTests(unittest.TestCase):
@@ -59,6 +73,103 @@ class MootdxLazyClientTests(unittest.TestCase):
         with mock.patch.object(ap, "_init_mootdx_client", return_value=client):
             self.assertIs(ap._get_mootdx_client(), client)
             self.assertIsNone(ap._mootdx_init_failed_at)
+
+    def test_runtime_failure_invalidates_cached_client_with_cooldown(self):
+        client = FakeQuotes()
+        ap._mootdx_client = client
+
+        self.assertTrue(ap._invalidate_mootdx_client(client))
+        self.assertIsNone(ap._mootdx_client)
+        self.assertIsNotNone(ap._mootdx_init_failed_at)
+
+        # Concurrent callers fall through during cooldown rather than all
+        # launching an expensive public-mirror scan.
+        with mock.patch.object(ap, "_init_mootdx_client") as init:
+            self.assertIsNone(ap._get_mootdx_client())
+            init.assert_not_called()
+
+    def test_old_failure_does_not_discard_replacement_client(self):
+        stale = FakeQuotes()
+        replacement = FakeQuotes()
+        ap._mootdx_client = replacement
+
+        self.assertFalse(ap._invalidate_mootdx_client(stale))
+        self.assertIs(ap._mootdx_client, replacement)
+        self.assertIsNone(ap._mootdx_init_failed_at)
+
+    def test_empty_probe_symbol_invalidates_on_data_path(self):
+        client = SymbolAwareClient({"000001": pd.DataFrame()})
+        ap._mootdx_client = client
+        provider = object.__new__(ap.AStockDataProvider)
+
+        result = provider._fetch_kline_mootdx("000001", "5", "", "")
+
+        self.assertIsNone(result)
+        self.assertIsNone(ap._mootdx_client)
+        self.assertEqual(len(client.calls), 1)
+
+    def test_symbol_empty_keeps_client_when_probe_symbol_has_data(self):
+        client = SymbolAwareClient(
+            {
+                "600519": pd.DataFrame(),
+                "000001": pd.DataFrame({"close": [10.0]}),
+            }
+        )
+        ap._mootdx_client = client
+        provider = object.__new__(ap.AStockDataProvider)
+
+        result = provider._fetch_kline_mootdx("600519", "5", "", "")
+
+        self.assertIsNone(result)
+        self.assertIs(ap._mootdx_client, client)
+        self.assertEqual(
+            [call["symbol"] for call in client.calls], ["600519", "000001"]
+        )
+
+    def test_symbol_empty_invalidates_when_probe_symbol_is_also_empty(self):
+        client = SymbolAwareClient({"600519": pd.DataFrame(), "000001": pd.DataFrame()})
+        ap._mootdx_client = client
+        provider = object.__new__(ap.AStockDataProvider)
+
+        result = provider._fetch_kline_mootdx("600519", "5", "", "")
+
+        self.assertIsNone(result)
+        self.assertIsNone(ap._mootdx_client)
+        self.assertEqual(
+            [call["symbol"] for call in client.calls], ["600519", "000001"]
+        )
+
+    def test_pagination_exhaustion_does_not_invalidate_client(self):
+        client = SymbolAwareClient({"600519": pd.DataFrame()})
+        ap._mootdx_client = client
+        provider = object.__new__(ap.AStockDataProvider)
+
+        result = provider._fetch_kline_mootdx("600519", "5", "", "", start_offset=500)
+
+        self.assertIsNone(result)
+        self.assertIs(ap._mootdx_client, client)
+        self.assertEqual(len(client.calls), 1)
+
+    def test_date_filter_empty_does_not_invalidate_client(self):
+        client = SymbolAwareClient(
+            {
+                "600519": pd.DataFrame(
+                    {
+                        "datetime": ["2026-09-18 15:00:00"],
+                        "open": [10.0],
+                        "close": [10.5],
+                    }
+                )
+            }
+        )
+        ap._mootdx_client = client
+        provider = object.__new__(ap.AStockDataProvider)
+
+        result = provider._fetch_kline_mootdx("600519", "5", "2026-09-19 09:00:00", "")
+
+        self.assertIsNone(result)
+        self.assertIs(ap._mootdx_client, client)
+        self.assertEqual(len(client.calls), 1)
 
 
 if __name__ == "__main__":

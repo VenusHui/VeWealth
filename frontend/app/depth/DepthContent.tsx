@@ -19,6 +19,8 @@ import type {
 
 const RECENT_SYMBOLS_KEY = 'vewealth_recent_symbols'
 const MAX_RECENT = 5
+const DEPTH_REQUEST_TIMEOUT_MS = 15_000
+const CYQ_REQUEST_TIMEOUT_MS = 12_000
 
 interface StockSearchResult {
   code: string
@@ -105,6 +107,11 @@ export default function DepthContent() {
   const [hasMore, setHasMore] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const loadingMoreRef = useRef(false)
+  const depthRequestRef = useRef<AbortController | null>(null)
+  const cyqRequestRef = useRef<AbortController | null>(null)
+  const loadMoreRequestRef = useRef<AbortController | null>(null)
+  const [cyqLoading, setCyqLoading] = useState(false)
+  const [cyqError, setCyqError] = useState('')
 
   // Toolbar state
   const [period, setPeriod] = useState('daily')
@@ -265,6 +272,10 @@ export default function DepthContent() {
       setError('股票代码格式错误，应为 6 位数字')
       return
     }
+    depthRequestRef.current?.abort()
+    const controller = new AbortController()
+    depthRequestRef.current = controller
+
     try {
       setLoading(true)
       setError('')
@@ -278,15 +289,22 @@ export default function DepthContent() {
           start_date: '',
           end_date: '',
           adjust,
+          include_cyq: false,
         },
+        signal: controller.signal,
+        timeout: DEPTH_REQUEST_TIMEOUT_MS,
       })
 
       if (response.data.success) {
-        setKlines(response.data.klines || [])
+        const nextKlines = response.data.klines || []
+        setKlines(nextKlines)
         setVolumeProfile(response.data.volume_profile || null)
-        setCyqInfo(response.data.cyq_info || null)
         setStockInfo(response.data.stock_info || null)
         setTencentQuote(response.data.tencent_quote || null)
+
+        if (nextKlines.length === 0) {
+          setError('当前数据源暂未返回 K 线，请稍后重试或切换周期')
+        }
 
         const name = response.data.tencent_quote?.name || response.data.stock_info?.name || ''
         if (name) {
@@ -297,24 +315,82 @@ export default function DepthContent() {
         setError('获取数据失败')
       }
     } catch (err: unknown) {
-      if (axios.isAxiosError(err)) {
+      if (axios.isCancel(err)) return
+      if (axios.isAxiosError(err) && err.code === 'ECONNABORTED') {
+        setError('深度数据源响应超时，请稍后重试')
+      } else if (axios.isAxiosError(err)) {
         setError(err.response?.data?.detail || '获取数据失败')
       } else {
         setError('获取数据失败')
       }
       setKlines([])
       setVolumeProfile(null)
-      setCyqInfo(null)
     } finally {
-      setLoading(false)
+      if (depthRequestRef.current === controller) {
+        depthRequestRef.current = null
+        setLoading(false)
+      }
     }
   }, [stockCode, adjust, saveRecentSymbol])
+
+  // CYQ has its own slower upstream chain. Load it only when the overlay is
+  // requested so a failed CYQ provider cannot hold up the core K-line chart.
+  useEffect(() => {
+    cyqRequestRef.current?.abort()
+    setCyqError('')
+
+    if (!showCYQ || !/^\d{6}$/.test(stockCode.trim())) {
+      cyqRequestRef.current = null
+      setCyqInfo(null)
+      setCyqLoading(false)
+      return
+    }
+
+    const controller = new AbortController()
+    cyqRequestRef.current = controller
+    setCyqInfo(null)
+    setCyqLoading(true)
+
+    axios
+      .get(`${API_BASE_URL}/api/stock/cyq`, {
+        params: { symbol: stockCode.trim(), adjust },
+        signal: controller.signal,
+        timeout: CYQ_REQUEST_TIMEOUT_MS,
+      })
+      .then((response) => {
+        if (response.data.success) setCyqInfo(response.data.cyq_info || null)
+      })
+      .catch((err: unknown) => {
+        if (axios.isCancel(err)) return
+        if (axios.isAxiosError(err) && err.code === 'ECONNABORTED') {
+          setCyqError('筹码数据源响应超时，K 线图不受影响')
+        } else {
+          setCyqError('筹码数据暂不可用，K 线图不受影响')
+        }
+      })
+      .finally(() => {
+        if (cyqRequestRef.current === controller) {
+          cyqRequestRef.current = null
+          setCyqLoading(false)
+        }
+      })
+
+    return () => controller.abort()
+  }, [showCYQ, stockCode, adjust])
+
+  useEffect(() => () => {
+    depthRequestRef.current?.abort()
+    cyqRequestRef.current?.abort()
+    loadMoreRequestRef.current?.abort()
+  }, [])
 
   // Load more historical data when scrolling left.
   // Uses a ref for the loading guard to prevent race conditions from
   // rapid scroll events firing before React commits the state update.
   const loadMore = useCallback(async () => {
     if (loadingMoreRef.current || !hasMore || !stockCode.trim()) return
+    const controller = new AbortController()
+    loadMoreRequestRef.current = controller
     loadingMoreRef.current = true
     setLoadingMore(true)
     try {
@@ -329,6 +405,8 @@ export default function DepthContent() {
           offset: newOffset,
           count: 500,
         },
+        signal: controller.signal,
+        timeout: DEPTH_REQUEST_TIMEOUT_MS,
       })
       const newKlines = response.data.klines || []
       if (newKlines.length < 500) setHasMore(false)
@@ -336,11 +414,15 @@ export default function DepthContent() {
         setKlines((prev) => [...newKlines, ...prev])
         setTotalOffset(newOffset)
       }
-    } catch {
+    } catch (err: unknown) {
+      if (axios.isCancel(err)) return
       // silently fail for loadMore
     } finally {
-      loadingMoreRef.current = false
-      setLoadingMore(false)
+      if (loadMoreRequestRef.current === controller) {
+        loadMoreRequestRef.current = null
+        loadingMoreRef.current = false
+        setLoadingMore(false)
+      }
     }
   }, [hasMore, stockCode, totalOffset, adjust])
 
@@ -352,6 +434,10 @@ export default function DepthContent() {
 
   // Auto-fetch when toolbar params change (if stock is selected)
   useEffect(() => {
+    loadMoreRequestRef.current?.abort()
+    loadMoreRequestRef.current = null
+    loadingMoreRef.current = false
+    setLoadingMore(false)
     setTotalOffset(0)
     setHasMore(true)
     if (stockCode.trim()) {
@@ -564,6 +650,8 @@ export default function DepthContent() {
               />
 
               {error && <Alert type="error" showIcon message={error} />}
+              {showCYQ && cyqLoading && <Alert type="info" showIcon message="正在加载筹码数据，K 线图可继续使用" />}
+              {showCYQ && cyqError && <Alert type="warning" showIcon message={cyqError} />}
             </div>
           </SurfaceCard>
 

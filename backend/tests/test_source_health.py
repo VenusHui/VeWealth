@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import unittest
 
 from app.core.source_health import (
@@ -18,6 +19,7 @@ from app.core.source_health import (
     STATUS_UP,
     SourceHealthMonitor,
 )
+from app.routers.health import overall_health, source_health
 
 
 class SourceHealthMonitorTests(unittest.TestCase):
@@ -136,6 +138,10 @@ class SourceHealthMonitorTests(unittest.TestCase):
         sources = self.monitor.snapshot()["sources"]
         self.assertIn("mootdx", sources)
         self.assertIn("tushare", sources)
+
+    def test_refresh_routes_are_sync_for_fastapi_threadpool(self):
+        self.assertFalse(inspect.iscoroutinefunction(overall_health))
+        self.assertFalse(inspect.iscoroutinefunction(source_health))
 
 
 if __name__ == "__main__":
