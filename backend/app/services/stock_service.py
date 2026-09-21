@@ -696,8 +696,14 @@ class StockService:
         start_date: str = "",
         end_date: str = "",
         adjust: str = "qfq",
+        include_cyq: bool = True,
     ) -> Dict[str, Any]:
-        """获取深度数据综合响应 — 一次返回所有所需数据。"""
+        """获取深度数据综合响应。
+
+        CYQ 依赖额外的东财请求和日 K 回退链，源异常时会给首屏增加数秒等待。
+        保留 ``include_cyq=True`` 兼容既有 API 调用方；前端首屏显式关闭后可通过
+        独立 ``/stock/cyq`` 接口按需加载。
+        """
         kline_result = self.get_kline_data(
             symbol=symbol,
             period=period,
@@ -736,11 +742,12 @@ class StockService:
             }
 
         cyq_info = None
-        try:
-            cyq_result = self.get_cyq_data(symbol=symbol, adjust=adjust)
-            cyq_info = cyq_result.get("cyq_info")
-        except Exception:
-            logger.warning(f"获取 {symbol} 筹码分布失败，继续返回其他数据")
+        if include_cyq:
+            try:
+                cyq_result = self.get_cyq_data(symbol=symbol, adjust=adjust)
+                cyq_info = cyq_result.get("cyq_info")
+            except Exception:
+                logger.warning(f"获取 {symbol} 筹码分布失败，继续返回其他数据")
 
         stock_info = None
         tencent_data = None

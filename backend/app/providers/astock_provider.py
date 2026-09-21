@@ -166,6 +166,29 @@ def _get_mootdx_client():
         return _mootdx_client
 
 
+def _invalidate_mootdx_client(client: Any) -> bool:
+    """Discard a cached client that failed after it had been initialized.
+
+    The lazy initializer only repairs startup failures.  A public TDX mirror can
+    become stale later and keep returning empty responses forever; without
+    clearing the cached object every request continues using that dead mirror.
+    Identity-checking under the same lock prevents an older failing request from
+    discarding a client another thread has already replaced.
+
+    Returns ``True`` when ``client`` was still current and was invalidated.
+    A cooldown is recorded so concurrent requests fall through to the secondary
+    source instead of all starting an expensive mirror scan at once.
+    """
+
+    global _mootdx_client, _mootdx_init_failed_at
+    with _mootdx_client_lock:
+        if _mootdx_client is not client:
+            return False
+        _mootdx_client = None
+        _mootdx_init_failed_at = time.monotonic()
+        return True
+
+
 # Per-attempt sleep multiplier
 _RETRY_SLEEP = 0.6
 
@@ -308,6 +331,7 @@ class AStockDataProvider(MarketDataProvider):
             return df[available]
         except Exception as e:
             logger.warning(f"mootdx K线请求失败 {stock_code}: {e}")
+            _invalidate_mootdx_client(client)
             return None
 
     # ------------------------------------------------------------------

@@ -60,6 +60,29 @@ class MootdxLazyClientTests(unittest.TestCase):
             self.assertIs(ap._get_mootdx_client(), client)
             self.assertIsNone(ap._mootdx_init_failed_at)
 
+    def test_runtime_failure_invalidates_cached_client_with_cooldown(self):
+        client = FakeQuotes()
+        ap._mootdx_client = client
+
+        self.assertTrue(ap._invalidate_mootdx_client(client))
+        self.assertIsNone(ap._mootdx_client)
+        self.assertIsNotNone(ap._mootdx_init_failed_at)
+
+        # Concurrent callers fall through during cooldown rather than all
+        # launching an expensive public-mirror scan.
+        with mock.patch.object(ap, "_init_mootdx_client") as init:
+            self.assertIsNone(ap._get_mootdx_client())
+            init.assert_not_called()
+
+    def test_old_failure_does_not_discard_replacement_client(self):
+        stale = FakeQuotes()
+        replacement = FakeQuotes()
+        ap._mootdx_client = replacement
+
+        self.assertFalse(ap._invalidate_mootdx_client(stale))
+        self.assertIs(ap._mootdx_client, replacement)
+        self.assertIsNone(ap._mootdx_init_failed_at)
+
 
 if __name__ == "__main__":
     unittest.main()
