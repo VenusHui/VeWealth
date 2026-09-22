@@ -68,6 +68,16 @@ class KlineResponse(BaseModel):
     symbol: str
     period: str
     adjust: str
+    adjust_actual: Optional[str] = Field(
+        None, description="实际服务的复权口径（qfq 配额耗尽可能降级为非复权，VEW-55）"
+    )
+    adjust_degraded: bool = Field(
+        False, description="复权口径是否被降级（请求 qfq/hfq 但实际返回非复权）"
+    )
+    adjust_factor_date: Optional[str] = Field(
+        None,
+        description="本地复权所用 adj_factor 的缓存日期 YYYY-MM-DD（qfq 配额受限时可能陈旧）",
+    )
     start_date: str
     end_date: str
     actual_start_date: str
@@ -222,6 +232,16 @@ class DepthResponse(BaseModel):
     symbol: str
     period: str
     adjust: str
+    adjust_actual: Optional[str] = Field(
+        None, description="实际服务的复权口径（qfq 配额耗尽可能降级为非复权，VEW-55）"
+    )
+    adjust_degraded: bool = Field(
+        False, description="复权口径是否被降级（请求 qfq/hfq 但实际返回非复权）"
+    )
+    adjust_factor_date: Optional[str] = Field(
+        None,
+        description="本地复权所用 adj_factor 的缓存日期 YYYY-MM-DD（qfq 配额受限时可能陈旧）",
+    )
     start_date: str
     end_date: str
     klines: List[KlineDataPoint]

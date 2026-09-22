@@ -18,7 +18,7 @@ class DataProvenance:
     """一次日线/分钟数据拉取的结构化元信息。"""
 
     source: Optional[str] = None  # mootdx / eastmoney / tushare / None
-    adjustment: str = ""  # "" / "qfq" / "hfq"
+    adjustment: str = ""  # "" / "qfq" / "hfq" —— 实际服务用的复权口径
     requested_start: Optional[str] = None  # 请求起始（YYYY-MM-DD 或原始入参）
     requested_end: Optional[str] = None
     actual_start: Optional[str] = None  # 实际返回的第一根 bar（字符串）
@@ -26,6 +26,9 @@ class DataProvenance:
     bar_count: int = 0
     last_bar: Optional[str] = None  # 时间上最后一根 bar 的日期
     gap: bool = False  # 覆盖缺口：实际范围未覆盖请求范围（起点滞后或终点提前）
+    degraded: bool = False  # 复权口径被降级（如 qfq 请求降级为非复权，VEW-55）
+    # 本地复权所用 adj_factor 的缓存日期（YYYY-MM-DD），用于感知因子陈旧（VEW-55）
+    adjust_factor_date: Optional[str] = None
     failure_reason: Optional[str] = None  # None 表示成功；否则为失败/无数据原因
 
 

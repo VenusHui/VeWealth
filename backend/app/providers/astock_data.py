@@ -351,6 +351,10 @@ def eastmoney_kline(
     if "datetime" in df.columns:
         df["datetime"] = pd.to_datetime(df["datetime"]).dt.strftime("%Y-%m-%d %H:%M:%S")
 
+    # 东财服务端按 fqt 复权；记录实际服务的口径，供 fetch_daily_data_with_meta /
+    # fetch_minute_data 回填 provenance 与 adjust_actual（VEW-55）。
+    df.attrs["adjust_served"] = {"1": "qfq", "2": "hfq", "0": ""}.get(str(fqt), "")
+    df.attrs["adjust_degraded"] = False
     return df
 
 
