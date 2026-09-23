@@ -45,6 +45,9 @@ logger = logging.getLogger(__name__)
 _mootdx_client: Optional["Quotes"] = None
 _mootdx_client_lock = threading.Lock()
 _mootdx_init_failed_at: Optional[float] = None
+# 是否有请求正在执行镜像扫描（_init_mootdx_client）。并发请求在扫描期间直接快速
+# 返回 None 走备源，而不是排队阻塞在锁上等完整扫描（VEW-54）。
+_mootdx_scan_in_progress = False
 # Cooldown between re-init attempts after a failed handshake (seconds).
 _MOOTDX_RETRY_COOLDOWN = 30.0
 
@@ -76,6 +79,15 @@ _MOOTDX_SERVERS: list[tuple[str, int]] = [
 # 建连超时（秒）。选中的客户端沿用该超时用于后续取数，故定成常量便于调整。
 _MOOTDX_CONNECT_TIMEOUT = 5
 
+# 镜像探测墙钟预算（秒）。镜像池全挂时 _init_mootdx_client 会串行探测 curated +
+# 扫描候选 + 配置默认，每个镜像含建连 + 2 次探针取数（各自受 _MOOTDX_CONNECT_TIMEOUT
+# 兜底），最坏可把请求挂起数十秒、超过前端 15s 超时。探测循环按该预算放弃后续
+# 镜像（VEW-54）；调用方给了整体 deadline 时扫描仍不超过该预算（评审 F3）。
+_MOOTDX_SCAN_BUDGET = 6.0
+# 分钟链路整体预算（秒）：mootdx 探测/取数 + 东财回退合计计入，须小于前端 15s
+# 超时。超时放弃本次取数，返回空而非让请求挂起（VEW-54）。
+_MOOTDX_MINUTE_BUDGET = 12.0
+
 # 探针校验的取数周期：深度图默认 5 分钟（frequency=0），日线（frequency=4）作
 # 备用。两者都必须能取到才认为镜像可用 —— 只握手、部分周期空回来的镜像不能选。
 _MOOTDX_PROBE_FREQUENCIES: tuple[int, ...] = (4, 0)
@@ -87,7 +99,9 @@ def _mootdx_probe_symbol() -> str:
     return str(getattr(settings, "SOURCE_HEALTH_PROBE_SYMBOL", "000001")).zfill(6)
 
 
-def _try_mootdx_server(Quotes, server: Optional[tuple[str, int]]):
+def _try_mootdx_server(
+    Quotes, server: Optional[tuple[str, int]], deadline: Optional[float] = None
+):
     """Build a client for one TDX mirror and confirm it returns K-lines.
 
     ``server`` of ``None`` means "let mootdx use its configured default" (a bare
@@ -95,7 +109,13 @@ def _try_mootdx_server(Quotes, server: Optional[tuple[str, int]]):
     daily (frequency=4) and 5-minute (frequency=0) — and accept the mirror only if
     both return bars, otherwise ``None``. A mirror that handshakes but serves one
     period empty can still leave part of the UI blank (VEW-36).
+
+    ``deadline`` is an absolute ``time.monotonic()`` timestamp bounding this probe;
+    once reached the probe gives up (``None``) so a slow mirror cannot eat the whole
+    request budget (VEW-54).
     """
+    if deadline is not None and time.monotonic() >= deadline:
+        return None
     try:
         if server is None:
             client = Quotes.factory(market="std")
@@ -108,6 +128,8 @@ def _try_mootdx_server(Quotes, server: Optional[tuple[str, int]]):
         return None
 
     for freq in _MOOTDX_PROBE_FREQUENCIES:
+        if deadline is not None and time.monotonic() >= deadline:
+            return None
         try:
             probe = client.bars(
                 symbol=_mootdx_probe_symbol(), frequency=freq, start=0, offset=3
@@ -127,7 +149,7 @@ def _try_mootdx_server(Quotes, server: Optional[tuple[str, int]]):
     return client
 
 
-def _init_mootdx_client():
+def _init_mootdx_client(deadline: Optional[float] = None):
     """Create a mootdx client connected to a mirror that returns real data.
 
     ``Quotes.factory(market="std")`` without ``bestip`` just reuses whatever mirror
@@ -144,6 +166,12 @@ def _init_mootdx_client():
     Returns ``None`` only if no mirror yields data. Isolated into its own function
     so tests can inject a failing/succeeding factory without reaching the live TDX
     mirrors.
+
+    ``deadline`` is an absolute ``time.monotonic()`` timestamp bounding the whole
+    scan (default: ``now + _MOOTDX_SCAN_BUDGET``). It is checked between mirror
+    attempts so a fully-dead mirror pool cannot hang the request for tens of
+    seconds; the scan gives up and returns ``None`` once the budget is exhausted
+    (VEW-54).
     """
     try:
         from mootdx.quotes import Quotes
@@ -153,6 +181,9 @@ def _init_mootdx_client():
 
     global _mootdx_discovered_server, _mootdx_last_scan_at
 
+    if deadline is None:
+        deadline = time.monotonic() + _MOOTDX_SCAN_BUDGET
+
     # Fast candidates first: settings override / curated list, then the last
     # mirror a scan discovered.  Each is probed with a real K-line fetch.
     candidates: list[Optional[tuple[str, int]]] = _curated_mootdx_servers()
@@ -160,7 +191,9 @@ def _init_mootdx_client():
         candidates.append(_mootdx_discovered_server)
 
     for server in candidates:
-        client = _try_mootdx_server(Quotes, server)
+        if time.monotonic() >= deadline:
+            break
+        client = _try_mootdx_server(Quotes, server, deadline=deadline)
         if client is not None:
             _mootdx_discovered_server = server
             return client
@@ -169,7 +202,9 @@ def _init_mootdx_client():
     # a cooldown so a dead mirror pool isn't re-scanned on every request (VEW-55).
     if _mootdx_scan_due():
         for server in _mootdx_scan_candidates():
-            client = _try_mootdx_server(Quotes, server)
+            if time.monotonic() >= deadline:
+                break
+            client = _try_mootdx_server(Quotes, server, deadline=deadline)
             if client is not None:
                 _mootdx_discovered_server = server
                 _mootdx_last_scan_at = time.monotonic()
@@ -177,7 +212,9 @@ def _init_mootdx_client():
         _mootdx_last_scan_at = time.monotonic()
 
     # Last resort: mootdx configured default.
-    client = _try_mootdx_server(Quotes, None)
+    if time.monotonic() >= deadline:
+        return None
+    client = _try_mootdx_server(Quotes, None, deadline=deadline)
     if client is not None:
         _mootdx_discovered_server = None
         return client
@@ -263,14 +300,24 @@ def _mootdx_scan_due() -> bool:
     return time.monotonic() - _mootdx_last_scan_at >= cooldown
 
 
-def _get_mootdx_client():
+def _get_mootdx_client(deadline: Optional[float] = None):
     """Return the mootdx client, lazily (re)initializing it if needed.
 
     Returns ``None`` only if the handshake failed and the cooldown hasn't elapsed;
     a subsequent call after the cooldown retries. Never permanently wedges the
     primary source the way the old import-time init did.
+
+    The mirror scan runs OUTSIDE the lock: holding ``_mootdx_client_lock`` across a
+    scan (worst case many mirrors × seconds each) would block every concurrent
+    request on that same lock, turning a slow scan into a 40s+ hang for all of them.
+    Instead only the state check/flip happens under the lock, the scan runs
+    lock-free, and a ``_mootdx_scan_in_progress`` guard makes concurrent callers
+    fast-fail to ``None`` (secondary source) instead of queueing on the lock
+    (VEW-54). The scan phase is separately capped at ``_MOOTDX_SCAN_BUDGET`` even
+    when the caller passes a wider overall deadline, so a fully-dead mirror pool
+    never eats the whole chain budget (评审 F3).
     """
-    global _mootdx_client, _mootdx_init_failed_at
+    global _mootdx_client, _mootdx_init_failed_at, _mootdx_scan_in_progress
     if _mootdx_client is not None:
         return _mootdx_client
 
@@ -290,13 +337,30 @@ def _get_mootdx_client():
             now - _mootdx_init_failed_at < _MOOTDX_RETRY_COOLDOWN
         ):
             return None
-        client = _init_mootdx_client()
-        if client is None:
-            _mootdx_init_failed_at = time.monotonic()
+        if _mootdx_scan_in_progress:
+            # 已有请求在扫描镜像；不再排队等它扫完，本次直接快速返回 None 走备源。
             return None
-        _mootdx_client = client
-        _mootdx_init_failed_at = None
-        return _mootdx_client
+        _mootdx_scan_in_progress = True
+
+    # 扫描阶段单独兜底：整体 deadline 再宽，镜像探测自身也不超过 6s。
+    scan_deadline = time.monotonic() + _MOOTDX_SCAN_BUDGET
+    if deadline is not None:
+        scan_deadline = min(scan_deadline, deadline)
+
+    client = None
+    try:
+        client = _init_mootdx_client(deadline=scan_deadline)
+    finally:
+        # 单次持锁完成「清扫描标志 + 记录结果」：避免两段锁区间之间并发线程在
+        # 标志已清、冷却未记录时再触发一次冗余扫描（评审 F2）。
+        with _mootdx_client_lock:
+            _mootdx_scan_in_progress = False
+            if client is None:
+                _mootdx_init_failed_at = time.monotonic()
+            else:
+                _mootdx_client = client
+                _mootdx_init_failed_at = None
+    return client
 
 
 def _invalidate_mootdx_client(client: Any) -> bool:
@@ -387,6 +451,7 @@ class AStockDataProvider(MarketDataProvider):
         end_date: str,
         count: int = 500,
         start_offset: int = 0,
+        deadline: Optional[float] = None,
     ) -> Optional[pd.DataFrame]:
         """Fetch K-line data via mootdx TCP (通达信).
 
@@ -394,8 +459,17 @@ class AStockDataProvider(MarketDataProvider):
             count: Number of bars to fetch (max 800 per request, capped).
             start_offset: Skip the first N most-recent bars. Used by the
                           frontend for dynamic scroll-based loading.
+            deadline: Absolute ``time.monotonic()`` timestamp bounding the whole
+                      fetch; ``None`` (default) means no budget on the data path
+                      (per-op socket timeout still applies). Only the minute
+                      chain passes one explicitly (``_MOOTDX_MINUTE_BUDGET``) so a
+                      slow mirror cannot hang it beyond the frontend timeout;
+                      the daily/CYQ paths stay unbounded and are never silently
+                      truncated mid-pagination (VEW-54, 评审 F1). Budget
+                      exhaustion returns whatever was collected (or ``None``), it
+                      does NOT invalidate a healthy cached client.
         """
-        client = _get_mootdx_client()
+        client = _get_mootdx_client(deadline=deadline)
         if client is None:
             return None
 
@@ -416,6 +490,11 @@ class AStockDataProvider(MarketDataProvider):
             initial_offset = int(start_offset or 0)
             offset = initial_offset
             while collected < wanted:
+                if deadline is not None and time.monotonic() >= deadline:
+                    logger.warning(
+                        f"mootdx K线取数 {stock_code} 超过取数预算, 提前返回"
+                    )
+                    break
                 klines = client.bars(
                     symbol=stock_code,
                     frequency=freq,
@@ -431,6 +510,10 @@ class AStockDataProvider(MarketDataProvider):
                         probe_symbol = _mootdx_probe_symbol()
                         mirror_empty = str(stock_code).zfill(6) == probe_symbol
                         if not mirror_empty:
+                            if deadline is not None and time.monotonic() >= deadline:
+                                # 预算耗尽无法确认是否镜像空：按普通空结果处理，
+                                # 不摘除缓存客户端。
+                                break
                             probe = client.bars(
                                 symbol=probe_symbol,
                                 frequency=freq,
@@ -778,7 +861,17 @@ class AStockDataProvider(MarketDataProvider):
         max_retries: int = 2,
         count: int = 500,
         start_offset: int = 0,
+        deadline: Optional[float] = None,
     ) -> Optional[pd.DataFrame]:
+        # 分钟链路整体墙钟预算：mootdx 探测/取数 + 东财回退合计计入，须小于前端
+        # 15s 超时。超时即放弃本次取数、返回空 K 线（前端立即显示降级提示），而不
+        # 是让请求在服务端挂起 40s+ 直到前端超时（VEW-54）。
+        if deadline is None:
+            deadline = time.monotonic() + _MOOTDX_MINUTE_BUDGET
+        if time.monotonic() >= deadline:
+            logger.warning(f"分钟数据请求 {stock_code} 已超预算, 快速返回空")
+            return None
+
         # 1. Try mootdx first (TCP, supports all periods including 1min)
         df = self._fetch_kline_mootdx(
             stock_code,
@@ -787,6 +880,7 @@ class AStockDataProvider(MarketDataProvider):
             end_date=end_datetime,
             count=count,
             start_offset=start_offset,
+            deadline=deadline,
         )
         if df is not None and not df.empty:
             logger.info(
@@ -796,6 +890,11 @@ class AStockDataProvider(MarketDataProvider):
 
         # 2. Fallback: Eastmoney HTTP
         for attempt in range(1, max_retries + 2):
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    f"分钟数据请求 {stock_code} 在回退阶段超预算, 放弃本次取数"
+                )
+                return None
             try:
                 if period == "1":
                     df = eastmoney_trends2(code=stock_code)

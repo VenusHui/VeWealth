@@ -62,6 +62,7 @@ class MootdxServerSelectionTests(unittest.TestCase):
         ap._mootdx_discovered_server = None
         ap._mootdx_last_scan_at = None
         ap._mootdx_scan_cursor = 0
+        ap._mootdx_scan_in_progress = False
 
     def tearDown(self):
         ap._mootdx_client = None
@@ -69,13 +70,14 @@ class MootdxServerSelectionTests(unittest.TestCase):
         ap._mootdx_discovered_server = None
         ap._mootdx_last_scan_at = None
         ap._mootdx_scan_cursor = 0
+        ap._mootdx_scan_in_progress = False
 
     def test_init_returns_first_mirror_with_data(self):
         """跳过无数据的镜像，采用第一个能取到 K 线的镜像。"""
         client = FakeClient(_nonempty_df())
         first = ap._curated_mootdx_servers()[0]
         with mock.patch.object(ap, "_try_mootdx_server") as try_srv:
-            try_srv.side_effect = lambda Quotes, server: (
+            try_srv.side_effect = lambda Quotes, server, deadline=None: (
                 client if server and server != first else None
             )
             got = ap._init_mootdx_client()
@@ -89,7 +91,7 @@ class MootdxServerSelectionTests(unittest.TestCase):
         with mock.patch.object(
             ap.settings, "MOOTDX_SERVERS", "8.8.8.8:7709,9.9.9.9"
         ), mock.patch.object(ap, "_try_mootdx_server") as try_srv:
-            try_srv.side_effect = lambda Quotes, server: (
+            try_srv.side_effect = lambda Quotes, server, deadline=None: (
                 client if server == ("9.9.9.9", 7709) else None
             )
             got = ap._init_mootdx_client()
@@ -106,7 +108,7 @@ class MootdxServerSelectionTests(unittest.TestCase):
         with mock.patch.object(
             ap, "_mootdx_scan_due", return_value=False
         ), mock.patch.object(ap, "_try_mootdx_server") as try_srv:
-            try_srv.side_effect = lambda Quotes, server: (
+            try_srv.side_effect = lambda Quotes, server, deadline=None: (
                 default_client if server is None else None
             )
             got = ap._init_mootdx_client()
@@ -135,7 +137,7 @@ class MootdxServerSelectionTests(unittest.TestCase):
             ap, "_try_mootdx_server"
         ) as try_srv:
 
-            def side_effect(Quotes, server):
+            def side_effect(Quotes, server, deadline=None):
                 if server == scan_server:
                     return client
                 return None
@@ -156,7 +158,7 @@ class MootdxServerSelectionTests(unittest.TestCase):
         with mock.patch.object(
             ap, "_mootdx_scan_due", return_value=False
         ), mock.patch.object(ap, "_try_mootdx_server") as try_srv:
-            try_srv.side_effect = lambda Quotes, server: (
+            try_srv.side_effect = lambda Quotes, server, deadline=None: (
                 client if server == discovered else None
             )
             got = ap._init_mootdx_client()
