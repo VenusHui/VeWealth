@@ -40,10 +40,12 @@ class MootdxLazyClientTests(unittest.TestCase):
         # 每次测试前重置模块级状态，避免跨用例泄漏
         ap._mootdx_client = None
         ap._mootdx_init_failed_at = None
+        ap._mootdx_scan_in_progress = False
 
     def tearDown(self):
         ap._mootdx_client = None
         ap._mootdx_init_failed_at = None
+        ap._mootdx_scan_in_progress = False
 
     def test_init_success_returns_client_and_caches(self):
         client = FakeQuotes()
