@@ -79,13 +79,11 @@ _MOOTDX_SERVERS: list[tuple[str, int]] = [
 # 建连超时（秒）。选中的客户端沿用该超时用于后续取数，故定成常量便于调整。
 _MOOTDX_CONNECT_TIMEOUT = 5
 
-# 镜像探测/单次取数的墙钟预算（秒）。镜像池全挂时 _init_mootdx_client 会串行
-# 探测 curated + 扫描候选 + 配置默认，每个镜像含建连 + 2 次探针取数（各自受
-# _MOOTDX_CONNECT_TIMEOUT 兜底），最坏可把请求挂起数十秒、超过前端 15s 超时。
-# 给探测与取数各设硬预算，超时即放弃，让分钟链路「快速返回空 K 线」、前端立即
-# 显示降级提示（VEW-54）。
+# 镜像探测墙钟预算（秒）。镜像池全挂时 _init_mootdx_client 会串行探测 curated +
+# 扫描候选 + 配置默认，每个镜像含建连 + 2 次探针取数（各自受 _MOOTDX_CONNECT_TIMEOUT
+# 兜底），最坏可把请求挂起数十秒、超过前端 15s 超时。探测循环按该预算放弃后续
+# 镜像（VEW-54）；调用方给了整体 deadline 时扫描仍不超过该预算（评审 F3）。
 _MOOTDX_SCAN_BUDGET = 6.0
-_MOOTDX_FETCH_BUDGET = 8.0
 # 分钟链路整体预算（秒）：mootdx 探测/取数 + 东财回退合计计入，须小于前端 15s
 # 超时。超时放弃本次取数，返回空而非让请求挂起（VEW-54）。
 _MOOTDX_MINUTE_BUDGET = 12.0
@@ -315,8 +313,9 @@ def _get_mootdx_client(deadline: Optional[float] = None):
     Instead only the state check/flip happens under the lock, the scan runs
     lock-free, and a ``_mootdx_scan_in_progress`` guard makes concurrent callers
     fast-fail to ``None`` (secondary source) instead of queueing on the lock
-    (VEW-54). ``deadline`` is passed through to the scan so it gives up once the
-    budget is exhausted.
+    (VEW-54). The scan phase is separately capped at ``_MOOTDX_SCAN_BUDGET`` even
+    when the caller passes a wider overall deadline, so a fully-dead mirror pool
+    never eats the whole chain budget (评审 F3).
     """
     global _mootdx_client, _mootdx_init_failed_at, _mootdx_scan_in_progress
     if _mootdx_client is not None:
@@ -343,19 +342,25 @@ def _get_mootdx_client(deadline: Optional[float] = None):
             return None
         _mootdx_scan_in_progress = True
 
+    # 扫描阶段单独兜底：整体 deadline 再宽，镜像探测自身也不超过 6s。
+    scan_deadline = time.monotonic() + _MOOTDX_SCAN_BUDGET
+    if deadline is not None:
+        scan_deadline = min(scan_deadline, deadline)
+
+    client = None
     try:
-        client = _init_mootdx_client(deadline=deadline)
+        client = _init_mootdx_client(deadline=scan_deadline)
     finally:
+        # 单次持锁完成「清扫描标志 + 记录结果」：避免两段锁区间之间并发线程在
+        # 标志已清、冷却未记录时再触发一次冗余扫描（评审 F2）。
         with _mootdx_client_lock:
             _mootdx_scan_in_progress = False
-
-    with _mootdx_client_lock:
-        if client is None:
-            _mootdx_init_failed_at = time.monotonic()
-            return None
-        _mootdx_client = client
-        _mootdx_init_failed_at = None
-        return _mootdx_client
+            if client is None:
+                _mootdx_init_failed_at = time.monotonic()
+            else:
+                _mootdx_client = client
+                _mootdx_init_failed_at = None
+    return client
 
 
 def _invalidate_mootdx_client(client: Any) -> bool:
@@ -455,14 +460,15 @@ class AStockDataProvider(MarketDataProvider):
             start_offset: Skip the first N most-recent bars. Used by the
                           frontend for dynamic scroll-based loading.
             deadline: Absolute ``time.monotonic()`` timestamp bounding the whole
-                      fetch (default: ``now + _MOOTDX_FETCH_BUDGET``). Checked
-                      between pagination pages / the empty-mirror probe so a slow
-                      mirror cannot hang the request beyond the frontend timeout
-                      (VEW-54). Budget exhaustion returns whatever was collected
-                      (or ``None``), it does NOT invalidate a healthy cached client.
+                      fetch; ``None`` (default) means no budget on the data path
+                      (per-op socket timeout still applies). Only the minute
+                      chain passes one explicitly (``_MOOTDX_MINUTE_BUDGET``) so a
+                      slow mirror cannot hang it beyond the frontend timeout;
+                      the daily/CYQ paths stay unbounded and are never silently
+                      truncated mid-pagination (VEW-54, 评审 F1). Budget
+                      exhaustion returns whatever was collected (or ``None``), it
+                      does NOT invalidate a healthy cached client.
         """
-        if deadline is None:
-            deadline = time.monotonic() + _MOOTDX_FETCH_BUDGET
         client = _get_mootdx_client(deadline=deadline)
         if client is None:
             return None
@@ -484,7 +490,7 @@ class AStockDataProvider(MarketDataProvider):
             initial_offset = int(start_offset or 0)
             offset = initial_offset
             while collected < wanted:
-                if time.monotonic() >= deadline:
+                if deadline is not None and time.monotonic() >= deadline:
                     logger.warning(
                         f"mootdx K线取数 {stock_code} 超过取数预算, 提前返回"
                     )
@@ -504,7 +510,7 @@ class AStockDataProvider(MarketDataProvider):
                         probe_symbol = _mootdx_probe_symbol()
                         mirror_empty = str(stock_code).zfill(6) == probe_symbol
                         if not mirror_empty:
-                            if time.monotonic() >= deadline:
+                            if deadline is not None and time.monotonic() >= deadline:
                                 # 预算耗尽无法确认是否镜像空：按普通空结果处理，
                                 # 不摘除缓存客户端。
                                 break

@@ -51,16 +51,20 @@ class FakeClock:
         self._now = now
 
 
-def _kline_df() -> pd.DataFrame:
+def _kline_df(n: int = 1, start: int = 0) -> pd.DataFrame:
+    base = pd.Timestamp("2026-09-23 09:00:00")
     return pd.DataFrame(
         {
-            "datetime": ["2026-09-23 14:00:00"],
-            "open": [1.0],
-            "close": [1.5],
-            "high": [1.6],
-            "low": [0.9],
-            "volume": [100],
-            "amount": [1000.0],
+            "datetime": [
+                (base + pd.Timedelta(seconds=i + start)).strftime("%Y-%m-%d %H:%M:%S")
+                for i in range(n)
+            ],
+            "open": [1.0] * n,
+            "close": [1.5] * n,
+            "high": [1.6] * n,
+            "low": [0.9] * n,
+            "volume": [100] * n,
+            "amount": [1000.0] * n,
         }
     )
 
@@ -129,6 +133,26 @@ class MootdxFastFailTests(unittest.TestCase):
         self.assertIs(got, client)
         self.assertEqual(try_srv.call_count, 1)
 
+    def test_scan_capped_by_budget_even_with_wider_deadline(self):
+        """整体 deadline 更宽时, 扫描自身仍受 _MOOTDX_SCAN_BUDGET 兜底（评审 F3）。"""
+        clock = FakeClock()
+        with mock.patch.object(ap.time, "monotonic", side_effect=clock):
+            with mock.patch.object(
+                ap, "_mootdx_scan_due", return_value=False
+            ), mock.patch.object(ap, "_try_mootdx_server") as try_srv:
+
+                def slow_probe(Quotes, server, deadline=None):
+                    clock.set(clock._now + 2.0)  # 每镜像 2s
+                    return None
+
+                try_srv.side_effect = slow_probe
+                # 调用方给出 1000s 宽 deadline，但扫描阶段仍按 6s 预算停止
+                self.assertIsNone(ap._get_mootdx_client(deadline=1000.0))
+        # 6s 预算 / 2s 每镜像 = 3 次探测；不会按 1000s 继续扫完整列表
+        self.assertEqual(try_srv.call_count, 3)
+        self.assertFalse(ap._mootdx_scan_in_progress)
+        self.assertIsNotNone(ap._mootdx_init_failed_at)
+
     # ------------------------------------------------------------------
     # 并发快速失败（扫描期间不阻塞锁）
     # ------------------------------------------------------------------
@@ -188,6 +212,35 @@ class MootdxFastFailTests(unittest.TestCase):
             )
         self.assertIsNotNone(result)
         self.assertEqual(len(result), 1)
+        self.assertIs(ap._mootdx_client, client)
+
+    def test_fetch_without_deadline_paginates_unbounded(self):
+        """deadline=None（日线/CYQ 路径）时不做取数预算截断：慢页也完整分页（评审 F1）。"""
+        clock = FakeClock()
+
+        class PagingClient:
+            """每页返回 800 行并推进时钟，模拟慢镜像页。"""
+
+            def __init__(self):
+                self.calls = 0
+                self._start = 0
+
+            def bars(self, *args, **kwargs):
+                self.calls += 1
+                clock.set(clock._now + 4.0)  # 每页 4s，3 页累计 12s
+                df = _kline_df(800, start=self._start)
+                self._start += 800  # 各页 datetime 不重叠，去重后仍 2400 行
+                return df
+
+        client = PagingClient()
+        ap._mootdx_client = client
+        provider = object.__new__(ap.AStockDataProvider)
+        with mock.patch.object(ap.time, "monotonic", side_effect=clock):
+            # count=2400 -> 每页 800，需 3 页；累计 12s 超过原有 8s 取数预算也不截断
+            result = provider._fetch_kline_mootdx("600519", "5", "", "", count=2400)
+        self.assertEqual(client.calls, 3)
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result), 2400)
         self.assertIs(ap._mootdx_client, client)
 
     # ------------------------------------------------------------------
