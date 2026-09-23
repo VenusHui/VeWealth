@@ -19,6 +19,8 @@ services:
     volumes:
       - ./backend/logs:/app/logs
       - ./backend/settings:/app/settings:ro  # 挂载环境配置文件（只读）
+      # adj_factor 磁盘缓存与配额计数持久化：重部署不丢缓存/配额（VEW-56）
+      - vewealth-backend-data:/app/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 30s
@@ -54,5 +56,9 @@ networks:
   postgresql:
     external: true
     name: postgresql_default
+
+volumes:
+  # 生产 adj_factor 缓存与配额计数持久卷（VEW-56）
+  vewealth-backend-data:
 
 
