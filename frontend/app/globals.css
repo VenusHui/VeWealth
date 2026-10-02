@@ -22,7 +22,8 @@
   --text: #334155;
   --text-strong: #0f172a;
   --text-muted: #52607a;
-  --text-dim: #76839a;
+  /* 弱化文本 ≥4.5:1（WCAG AA）：#64748b = slate-500 */
+  --text-dim: #64748b;
 
   /* 品牌（teal） */
   --brand: #0f766e;
@@ -30,16 +31,23 @@
   --brand-soft: #eef7f5;
   --brand-line: rgba(15, 118, 110, 0.22);
 
-  /* A股语义色：红涨绿跌 */
+  /* A股语义色：红涨绿跌（白底对比度 ≥4.5:1） */
   --up: #d92d2d;
   --up-soft: #fdf2f2;
   --up-border: rgba(217, 45, 45, 0.14);
-  --down: #0f9d58;
+  --down: #0b8043;
   --down-soft: #eef8f2;
 
   /* 中性 / 警示状态 */
   --warn-bg: #fff8ec;
   --warn-border: rgba(180, 83, 9, 0.14);
+  --warn-text: #b45309;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --danger-border: rgba(220, 38, 38, 0.16);
+  --success: #0b8043;
+  --success-soft: #eef8f2;
+  --success-border: rgba(11, 128, 67, 0.16);
 
   /* 圆角 */
   --radius-panel: 18px;
@@ -49,6 +57,14 @@
   /* 阴影：单层、克制 */
   --shadow: 0 10px 30px -18px rgba(15, 23, 42, 0.22);
   --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 20px -18px rgba(15, 23, 42, 0.14);
+  --shadow-hover: 0 18px 44px -22px rgba(15, 23, 42, 0.28);
+
+  /* 动效：短促、单一方向、克制的缓动 */
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 340ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 html {
@@ -65,13 +81,92 @@ body {
   color: var(--text);
   font-family: 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
   line-height: 1.6;
-  font-feature-settings: 'tnum';
+  /* 数字统一等宽（表格对齐）+ 线性数字，中西文混排更稳定 */
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow-wrap: break-word;
   background:
     linear-gradient(180deg, #fbfcfd 0%, var(--bg) 46%, #f1f3f5 100%);
 }
 
+/* 长标题 / 长英文词不撑破布局 */
+h1, h2, h3 {
+  overflow-wrap: break-word;
+}
+h1, h2, h3, .ve-page-title, .app-page-title {
+  text-wrap: balance;
+}
+
 ::selection {
   background: var(--brand-line);
+}
+
+/* 可访问性：仅键盘导航时显示焦点环，避免点击后残留轮廓 */
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* 主题化滚动条：与圆角/中性色体系一致 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(15, 23, 42, 0.22) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(15, 23, 42, 0.18);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(15, 23, 42, 0.32);
+  background-clip: content-box;
+}
+
+/* 占位符弱化但不至于不可读 */
+::placeholder {
+  color: var(--text-dim);
+  opacity: 1;
+}
+
+/* 页面入场：轻量上浮淡入，配合 prefers-reduced-motion 关闭 */
+.app-page-shell {
+  animation: ve-page-in var(--dur-slow) var(--ease-out) both;
+}
+@keyframes ve-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 尊重系统「减少动态」偏好：关闭平滑滚动、过渡与动画 */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 .skip-link {
@@ -168,6 +263,7 @@ main {
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--text-strong);
+  line-height: 1.18;
 }
 
 .app-section-stack {
@@ -180,12 +276,30 @@ main {
 
 .ve-page-hero {
   position: relative;
+  isolation: isolate;
   overflow: hidden;
   border-radius: var(--radius-panel);
   border: 1px solid var(--border-subtle);
   padding: 1.75rem 1.5rem;
   background: var(--panel);
   box-shadow: var(--shadow-soft);
+  transition: box-shadow var(--dur-base) var(--ease-out);
+}
+
+/* 右上角一抹品牌色径向光晕：克制的品牌识别，不喧宾夺主 */
+.ve-page-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(64rem 22rem at 96% -8%, rgba(15, 118, 110, 0.08) 0%, transparent 55%),
+    radial-gradient(30rem 14rem at -8% 120%, rgba(15, 118, 110, 0.05) 0%, transparent 55%);
+}
+
+.ve-page-hero:hover {
+  box-shadow: var(--shadow);
 }
 
 .ve-page-title {
@@ -215,6 +329,7 @@ main {
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
+  line-height: 1.4;
 }
 
 /* ---------- 面板 / 卡片 ---------- */
@@ -237,6 +352,13 @@ main {
   border: 1px solid var(--border-subtle);
   padding: 1rem 1.125rem;
   background: var(--panel);
+  transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out);
+}
+
+.ve-metric-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border);
+  box-shadow: var(--shadow-hover);
 }
 
 .ve-metric-card--brand {
@@ -264,6 +386,20 @@ main {
   border: 1px solid var(--border-subtle);
   background: rgba(255, 255, 255, 0.8);
   font-size: 1rem;
+  color: var(--brand-strong);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+/* 图标色随卡片语义切换，强化主次对比 */
+.ve-metric-card--positive .ve-metric-icon {
+  color: var(--up);
+}
+.ve-metric-card--warning .ve-metric-icon {
+  color: var(--warn-text);
+}
+.ve-metric-card--brand .ve-metric-icon {
+  background: var(--panel);
+  border-color: var(--brand-line);
 }
 
 .ve-info-pill {
@@ -277,6 +413,8 @@ main {
   color: var(--text-muted);
   font-size: 0.75rem;
   font-weight: 500;
+  line-height: 1.5;
+  transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 
 .ve-empty-state {
@@ -304,13 +442,26 @@ main {
   padding: 1.5rem;
   background: var(--panel);
   box-shadow: var(--shadow-soft);
-  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  transition: transform var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
 }
 
 .ve-quick-link-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-3px);
   border-color: var(--brand-line);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-hover);
+}
+
+.ve-quick-link-card:active {
+  transform: translateY(-1px);
+}
+
+/* 卡片右侧箭头微交互：hover 右移 + 品牌色 */
+.ve-quick-link-card .ve-arrow {
+  transition: transform var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out);
+}
+.ve-quick-link-card:hover .ve-arrow {
+  transform: translateX(3px);
+  color: var(--brand);
 }
 
 /* ---------- 表单控件 ---------- */
@@ -326,7 +477,7 @@ main {
   background: #fff;
   color: var(--text-strong);
   font-size: 0.875rem;
-  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
 }
 
 .ve-input:focus,
@@ -351,7 +502,7 @@ main {
 .ve-button-primary,
 .ve-button-secondary,
 .ve-tab-button {
-  transition: background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 
 .ve-button-primary {
@@ -378,6 +529,10 @@ main {
   background: var(--brand-strong);
 }
 
+.ve-button-primary:active {
+  transform: translateY(1px);
+}
+
 .ve-button-primary:disabled {
   cursor: not-allowed;
   opacity: 0.55;
@@ -398,6 +553,11 @@ main {
 
 .ve-button-secondary:hover {
   background: var(--surface-subtle);
+  border-color: var(--border);
+}
+
+.ve-button-secondary:active {
+  transform: translateY(1px);
 }
 
 .ve-tab-button {
@@ -408,12 +568,19 @@ main {
   color: var(--text-muted);
   font-size: 0.875rem;
   font-weight: 500;
+  text-decoration: none;
+}
+
+.ve-tab-button:hover {
+  color: var(--text-strong);
+  background: rgba(15, 23, 42, 0.04);
 }
 
 .ve-tab-button[data-active='true'] {
   background: var(--brand-soft);
   color: var(--brand-strong);
   font-weight: 500;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
 
 /* ---------- Ant Design 视觉统一 ---------- */
@@ -524,7 +691,21 @@ main {
   border-bottom-color: var(--border-subtle) !important;
 }
 
+/* 表格数字统一等宽：价格 / 涨跌幅 / 收益等列对齐更整齐 */
+:where(.ant-table-wrapper .ant-table-tbody > tr > td),
+:where(.ant-table-wrapper .ant-table-thead > tr > th) {
+  font-variant-numeric: tabular-nums;
+}
+
 :where(.ant-table-wrapper .ant-table-tbody > tr.ant-table-row:hover > td) {
+  background: var(--brand-soft) !important;
+}
+
+:where(.ant-table-wrapper .ant-table-tbody > tr.ant-table-row > td.ant-table-cell-fix-left) {
+  background: var(--panel) !important;
+}
+
+:where(.ant-table-wrapper .ant-table-tbody > tr.ant-table-row:hover > td.ant-table-cell-fix-left) {
   background: var(--brand-soft) !important;
 }
 
@@ -532,6 +713,53 @@ main {
 :where(.ant-pagination .ant-pagination-prev),
 :where(.ant-pagination .ant-pagination-next) {
   border-radius: var(--radius-control) !important;
+}
+
+:where(.ant-pagination .ant-pagination-item-active) {
+  border-color: var(--brand) !important;
+}
+
+:where(.ant-pagination .ant-pagination-item-active a) {
+  color: var(--brand-strong) !important;
+}
+
+:where(.ant-segmented) {
+  background: var(--surface-subtle) !important;
+  border: 1px solid var(--border-subtle);
+}
+
+:where(.ant-segmented-item) {
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+
+:where(.ant-segmented-item-selected) {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+:where(.ant-progress-bg) {
+  transition: width var(--dur-slow) var(--ease-out) !important;
+}
+
+/* ---------- 骨架屏 ---------- */
+
+.ve-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.06);
+  border-radius: var(--radius-card);
+}
+.ve-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+  animation: ve-shimmer 1.6s var(--ease-in-out) infinite;
+}
+@keyframes ve-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 @media (min-width: 768px) {
@@ -542,5 +770,19 @@ main {
   .ve-page-hero,
   .ve-panel {
     padding: 1.5rem 1.75rem;
+  }
+}
+
+/* 小屏：收紧页面留白，避免内容贴边 */
+@media (max-width: 639px) {
+  .app-page-shell {
+    padding: 0.75rem 0.625rem;
+  }
+  .ve-page-hero,
+  .ve-panel {
+    padding: 1rem 0.875rem;
+  }
+  .ve-page-title {
+    font-size: 1.5rem;
   }
 }

@@ -421,10 +421,10 @@ function SubmitPreview({
         {costConfig ? <PreviewRow label="成本摘要" value={buildCostSummary(costConfig)} wide /> : null}
       </div>
       {entry === 'backtest' && stockCount === 0 && !hasSymbols ? (
-        <p className="mt-3 text-xs text-amber-700">当前股票池为空，将不会回测任何标的，请先填写股票代码或选择板块/自定义股票池。</p>
+        <p className="mt-3 text-xs text-[var(--warn-text)]">当前股票池为空，将不会回测任何标的，请先填写股票代码或选择板块/自定义股票池。</p>
       ) : null}
       {entry === 'screener' && stockCount === 0 ? (
-        <p className="mt-3 text-xs text-amber-700">当前未选择任何板块，将不会扫描任何标的。</p>
+        <p className="mt-3 text-xs text-[var(--warn-text)]">当前未选择任何板块，将不会扫描任何标的。</p>
       ) : null}
     </div>
   )
@@ -435,7 +435,7 @@ function PreviewRow({ label, value, warn, wide }: { label: string; value: string
     <div className={wide ? 'md:col-span-2' : undefined}>
       <div className="text-xs text-[var(--text-dim)]">{label}</div>
       <div className="text-sm text-[var(--text-strong)]">{value}</div>
-      {warn ? <div className="mt-1 text-xs text-amber-700">{warn}</div> : null}
+      {warn ? <div className="mt-1 text-xs text-[var(--warn-text)]">{warn}</div> : null}
     </div>
   )
 }

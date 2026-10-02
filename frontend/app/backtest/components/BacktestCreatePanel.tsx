@@ -137,7 +137,7 @@ export function BacktestCreatePanel({
         <span className="text-sm text-[var(--text-dim)]">提交后将跳转至记录页面，可实时查看任务进度。</span>
       </div>
 
-      {error ? <div className="rounded-[var(--radius-card)] border border-[rgba(220,38,38,0.16)] bg-[rgba(254,242,242,0.86)] px-4 py-3 text-sm text-red-700">{error}</div> : null}
+      {error ? <div className="rounded-[var(--radius-card)] border border-[var(--danger-border)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div> : null}
     </section>
   )
 }

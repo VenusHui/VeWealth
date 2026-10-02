@@ -7,6 +7,7 @@ import { Alert } from 'antd'
 import { saveAuth } from '../lib/auth'
 import { getApiBaseUrl } from '../lib/api'
 import { AppPage } from '../components/ui-shell'
+import BrandMark from '../components/BrandMark'
 
 const API_BASE_URL = getApiBaseUrl()
 
@@ -85,8 +86,16 @@ export default function LoginPage() {
 
   return (
     <AppPage>
-      <div className="mx-auto flex min-h-full w-full max-w-md flex-col items-center justify-center">
-        <section className="ve-panel">
+      <div className="mx-auto flex min-h-full w-full max-w-md flex-col items-center justify-center py-8">
+        <div className="mb-6 flex flex-col items-center gap-3">
+          <BrandMark size={56} />
+          <div className="text-center">
+            <div className="text-lg font-semibold tracking-[0.06em] text-[var(--brand-strong)]">VeWealth</div>
+            <div className="text-xs text-[var(--text-dim)]">A 股分析 / 监控 / 回测工作台</div>
+          </div>
+        </div>
+
+        <section className="ve-panel w-full">
           <div className="mb-6 flex rounded-[var(--radius-control)] border border-[var(--border-subtle)] bg-[var(--surface-subtle)] p-1">
             <button
               type="button"

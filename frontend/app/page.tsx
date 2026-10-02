@@ -165,7 +165,7 @@ export default function HomePage() {
             {indicesLoading && Object.keys(indices).length === 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="animate-pulse rounded-2xl bg-slate-100 h-24" />
+                  <div key={i} className="ve-skeleton h-24" />
                 ))}
               </div>
             ) : (
@@ -173,15 +173,15 @@ export default function HomePage() {
                 {INDEX_CODES.map((code) => {
                   const q = indices[code]
                   return (
-                    <div key={code} className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] p-4">
+                    <div key={code} className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] p-4 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--brand-line)] hover:shadow-[var(--shadow-soft)]">
                       <div className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--text-dim)]">
                         {INDEX_LABELS[code] || code}
                       </div>
-                      <div className="mt-2 text-xl font-semibold text-[var(--text-strong)]">
+                      <div className="mt-2 text-xl font-semibold tabular-nums text-[var(--text-strong)]">
                         {q?.price != null ? `¥${q.price.toFixed(2)}` : '—'}
                       </div>
                       {q?.change_pct != null && (
-                        <div className={`mt-1 text-sm font-medium ${marketClassByValue(q.change_pct)}`}>
+                        <div className={`mt-1 text-sm font-medium tabular-nums ${marketClassByValue(q.change_pct)}`}>
                           {q.change_pct > 0 ? '+' : ''}{q.change_pct.toFixed(2)}%
                         </div>
                       )}
@@ -203,9 +203,9 @@ export default function HomePage() {
             }
           >
             {watchlistLoading && watchlistPreview.length === 0 ? (
-              <div className="animate-pulse space-y-2">
+              <div className="space-y-2">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-10 rounded-xl bg-slate-100" />
+                  <div key={i} className="ve-skeleton h-10" />
                 ))}
               </div>
             ) : watchlistPreview.length > 0 ? (
@@ -264,9 +264,9 @@ export default function HomePage() {
             }
           >
             {alertsLoading && alertsPreview.length === 0 ? (
-              <div className="animate-pulse space-y-2">
+              <div className="space-y-2">
                 {[1, 2].map((i) => (
-                  <div key={i} className="h-10 rounded-xl bg-slate-100" />
+                  <div key={i} className="ve-skeleton h-10" />
                 ))}
               </div>
             ) : alertsPreview.length > 0 ? (

@@ -6,6 +6,9 @@ import Navbar from './components/Navbar'
 export const metadata: Metadata = {
   title: 'VeWealth - A股股票分析平台',
   description: '实时A股股票数据查询、分析与监控平台，支持价格预警和微信通知',
+  icons: {
+    icon: '/favicon.svg',
+  },
 }
 
 export default function RootLayout({
@@ -16,6 +19,8 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body>
+        {/* 顶部品牌色发丝线：导航区以上的第一道视觉识别 */}
+        <div className="h-0.5 shrink-0 bg-gradient-to-r from-[var(--brand)] via-[var(--brand)] to-transparent" aria-hidden="true" />
         <a href="#main-content" className="skip-link">跳到主要内容</a>
         <Navbar />
         <main id="main-content">{children}</main>

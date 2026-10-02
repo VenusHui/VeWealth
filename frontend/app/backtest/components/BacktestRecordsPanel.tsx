@@ -120,7 +120,7 @@ function JobTaskCard({
       )}
 
       {job.error ? (
-        <div className="mt-2 rounded-[var(--radius-control)] border border-[rgba(190,18,60,0.16)] bg-[rgba(254,242,242,0.7)] px-3 py-2 text-sm text-[var(--down)]">
+        <div className="mt-2 rounded-[var(--radius-control)] border border-[var(--danger-border)] bg-[var(--danger-soft)] px-3 py-2 text-sm text-[var(--danger)]">
           {job.error}
         </div>
       ) : null}
