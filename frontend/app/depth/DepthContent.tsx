@@ -700,12 +700,12 @@ export default function DepthContent() {
         </SurfaceCard>
       ) : loading ? (
         <SurfaceCard title="深度数据图表" description="正在加载数据...">
-          <div className="animate-pulse space-y-3">
-            <div className="h-[420px] rounded-2xl bg-slate-200/70" />
+          <div className="space-y-3">
+            <div className="ve-skeleton h-[420px] rounded-2xl" />
             <div className="flex gap-3">
-              <div className="h-10 w-24 rounded-xl bg-slate-200/70" />
-              <div className="h-10 w-20 rounded-xl bg-slate-200/70" />
-              <div className="h-10 w-28 rounded-xl bg-slate-200/70" />
+              <div className="ve-skeleton h-10 w-24" />
+              <div className="ve-skeleton h-10 w-20" />
+              <div className="ve-skeleton h-10 w-28" />
             </div>
           </div>
         </SurfaceCard>

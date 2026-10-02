@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { clearAuth, getUser, isAuthenticated } from '../lib/auth'
 import { cx } from './ui-shell'
+import BrandMark from './BrandMark'
 
 export default function Navbar() {
   const pathname = usePathname()
@@ -47,10 +48,8 @@ export default function Navbar() {
   return (
     <header className="sticky top-0 z-50 border-b border-[var(--border-subtle)] bg-white/85 backdrop-blur-xl">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-3 py-3 md:px-6">
-        <Link href="/" className="flex min-w-0 items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--brand-line)] bg-[var(--brand-soft)] text-base text-[var(--brand-strong)]">
-            ⌁
-          </div>
+        <Link href="/" className="group flex min-w-0 items-center gap-3">
+          <BrandMark size={40} />
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold tracking-[0.06em] text-[var(--brand-strong)]">VeWealth</div>
             <div className="truncate text-xs text-[var(--text-dim)]">A 股分析 / 监控 / 回测工作台</div>
@@ -58,7 +57,7 @@ export default function Navbar() {
         </Link>
 
         <nav aria-label="主导航" className="hidden flex-1 justify-center md:flex">
-          <div className="flex items-center gap-1 rounded-[var(--radius-control)] border border-[var(--border-subtle)] bg-[var(--surface-subtle)] p-1">
+          <div className="flex items-center gap-1 rounded-[var(--radius-control)] border border-[var(--border-subtle)] bg-[var(--surface-subtle)] p-1 shadow-sm">
             {navLinks.map((link) => {
               if (link.requireAuth && !isLoggedIn) return null
               const active = pathname === link.href || pathname.startsWith(`${link.href}/`)
@@ -68,6 +67,7 @@ export default function Navbar() {
                   href={link.href}
                   className={cx('ve-tab-button', active && 'shadow-sm')}
                   data-active={active}
+                  aria-current={active ? 'page' : undefined}
                 >
                   {link.label}
                 </Link>
@@ -98,7 +98,7 @@ export default function Navbar() {
             if (link.requireAuth && !isLoggedIn) return null
             const active = pathname === link.href || pathname.startsWith(`${link.href}/`)
             return (
-              <Link key={link.href} href={link.href} className="ve-tab-button whitespace-nowrap" data-active={active}>
+              <Link key={link.href} href={link.href} className="ve-tab-button whitespace-nowrap" data-active={active} aria-current={active ? 'page' : undefined}>
                 {link.label}
               </Link>
             )

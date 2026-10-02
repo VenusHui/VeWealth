@@ -103,9 +103,9 @@ export function MetricCard({
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-2">
           <div className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-dim)]">{label}</div>
-          <div className="text-2xl font-semibold tracking-tight text-[var(--text-strong)] md:text-3xl">{value}</div>
+          <div className="text-2xl font-semibold tracking-tight text-[var(--text-strong)] tabular-nums md:text-3xl">{value}</div>
         </div>
-        {icon ? <div className="ve-metric-icon">{icon}</div> : null}
+        {icon ? <div className="ve-metric-icon" aria-hidden="true">{icon}</div> : null}
       </div>
       {meta ? <div className="text-sm text-[var(--text-muted)]">{meta}</div> : null}
     </div>
@@ -175,7 +175,7 @@ export function QuickLinkCard({
     <Link href={href} className="ve-quick-link-card group">
       <div className="flex items-center justify-between gap-3">
         <span className="ve-info-pill">{label}</span>
-        <span className="text-sm text-[var(--text-dim)] transition-transform duration-200 group-hover:translate-x-1">→</span>
+        <span className="ve-arrow text-sm text-[var(--text-dim)]">→</span>
       </div>
       <div className="space-y-2">
         <h3 className="text-xl font-semibold tracking-tight text-[var(--text-strong)]">{title}</h3>

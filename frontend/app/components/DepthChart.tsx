@@ -492,8 +492,8 @@ export default function DepthChart({
                   const w = barWidth(vol)
                   return (
                     <div key={i} className="absolute top-0" style={{ right: `${w}%` }}>
-                      <div className="h-2 border-l border-blue-400/30" />
-                      <span className="absolute top-2 -translate-x-1/2 text-[10px] text-blue-400/60 font-mono whitespace-nowrap">
+                      <div className="h-2 border-l border-[rgba(15,118,110,0.3)]" />
+                      <span className="absolute top-2 -translate-x-1/2 text-[10px] text-[rgba(15,118,110,0.55)] font-mono whitespace-nowrap">
                         {i === 0 ? '0' : label}
                       </span>
                     </div>
@@ -504,7 +504,7 @@ export default function DepthChart({
             {profileBars.map((bar, i) => (
               <div
                 key={i}
-                className="absolute right-0 bg-blue-400/15 hover:bg-blue-400/25"
+                className="absolute right-0 bg-[rgba(15,118,110,0.14)] hover:bg-[rgba(15,118,110,0.24)] transition-colors"
                 style={{
                   bottom: `${bar.yPct}%`,
                   height: `${Math.max(100 / profileBars.length, 0.8)}%`,
