@@ -42,9 +42,9 @@
   --warn-bg: #fff8ec;
   --warn-border: rgba(180, 83, 9, 0.14);
   --warn-text: #b45309;
-  --danger: #dc2626;
+  --danger: #b91c1c;
   --danger-soft: #fef2f2;
-  --danger-border: rgba(220, 38, 38, 0.16);
+  --danger-border: rgba(185, 28, 28, 0.16);
   --success: #0b8043;
   --success-soft: #eef8f2;
   --success-border: rgba(11, 128, 67, 0.16);

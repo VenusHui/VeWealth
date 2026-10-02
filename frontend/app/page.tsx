@@ -173,7 +173,7 @@ export default function HomePage() {
                 {INDEX_CODES.map((code) => {
                   const q = indices[code]
                   return (
-                    <div key={code} className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] p-4 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--brand-line)] hover:shadow-[var(--shadow-soft)]">
+                    <div key={code} className="rounded-[var(--radius-card)] border border-[var(--border-subtle)] bg-[var(--panel)] p-4 transition-all duration-[var(--dur-base)] ease-[var(--ease-out)] hover:-translate-y-0.5 hover:border-[var(--brand-line)] hover:shadow-[var(--shadow-soft)]">
                       <div className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--text-dim)]">
                         {INDEX_LABELS[code] || code}
                       </div>

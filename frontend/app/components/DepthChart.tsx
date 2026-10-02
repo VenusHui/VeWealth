@@ -81,7 +81,8 @@ export default function DepthChart({
       layout: {
         background: { color: 'transparent' },
         textColor: '#64748b',
-      },      grid: {
+      },
+      grid: {
         vertLines: { color: 'rgba(226,232,240,0.5)' },
         horzLines: { color: 'rgba(226,232,240,0.5)' },
       },
