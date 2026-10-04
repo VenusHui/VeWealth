@@ -6,7 +6,8 @@ app.core.source_health.source_monitor，供健康检查接口与定时任务消�
 
 - eastmoney: 复用 astock_data.eastmoney_ping（探针自记语义结果，低层 record=False）
 - tencent:   复用 astock_data.tencent_quote（探针自记语义结果，低层 _record=False）
-- mootdx:    直接调用 mootdx TCP 客户端取 3 根日 K（探针内埋点）
+- mootdx:    直接调用 mootdx TCP 客户端取 3 根日 K（探针内埋点）；与取数路径共用
+             client，故同样持取数锁，但等锁有上限，超时本轮顺延（不改源状态）
 - tushare:   配置缺失 / 依赖未装时标记为 skipped（不算故障）
 - akshare:   依赖未装时标记为 skipped
 
@@ -27,6 +28,7 @@ from app.core.source_health import (
     source_monitor,
     STATUS_DOWN,
     STATUS_SKIPPED,
+    STATUS_UNKNOWN,
     STATUS_UP,
 )
 from app.providers.astock_data import eastmoney_ping, tencent_quote
@@ -150,11 +152,12 @@ def probe_mootdx() -> ProbeResult:
     Uses the lazy accessor so a transient init failure at boot is retried on
     subsequent probes (VEW-36), instead of being permanently reported skipped.
     """
-    start = time.monotonic()
     try:
         from app.providers.astock_provider import (
             _get_mootdx_client,
             _invalidate_mootdx_client,
+            _mootdx_fetch_guard,
+            _MOOTDX_PROBE_LOCK_TIMEOUT,
         )
     except Exception:
         source_monitor.record_skipped("mootdx", detail="mootdx 依赖或客户端初始化失败")
@@ -175,41 +178,66 @@ def probe_mootdx() -> ProbeResult:
             detail="mootdx 客户端未初始化",
         )
 
-    try:
-        df = client.bars(symbol=_probe_symbol(), frequency=4, start=0, offset=3)
-        ok = df is not None and not df.empty
-        if not ok:
+    # 探针与取数路径共用同一 client：TDX 一问一答，不持锁并发调用会让响应错位、
+    # 静默返回空，进而误判镜像故障并摘除客户端（VEW-60）。等锁有上限：取数正在翻页
+    # 时不等满全程，超时即顺延本轮 —— 既不算源故障，也不把串行的 run_all_probes()
+    # 拖住，让排在后面的 eastmoney 探针（熔断恢复主路径）按时执行（VEW-60 评审 M3）。
+    with _mootdx_fetch_guard(_MOOTDX_PROBE_LOCK_TIMEOUT) as acquired:
+        if not acquired:
+            logger.warning(
+                "[source-probe] mootdx 等待取数锁超时(%.1fs)，本轮顺延",
+                _MOOTDX_PROBE_LOCK_TIMEOUT,
+            )
+            # 顺延 ≠ skipped：本轮没测到不代表「未配置 / 依赖缺失」。用
+            # record_deferred 只留痕、不改 status，否则繁忙扫描期间 mootdx 会间歇性
+            # 显示为 skipped（正是本 issue 要消除的现象），还会被 overall_status 从
+            # active 集合里剔除而误报 ok（VEW-60 评审）。
+            source_monitor.record_deferred("mootdx", detail="取数进行中，探针等锁超时")
+            return ProbeResult(
+                source="mootdx",
+                status=STATUS_UNKNOWN,
+                duration_ms=0,
+                detail="取数进行中，探针等锁超时（本轮顺延）",
+            )
+
+        # duration_ms 从拿到锁之后开始计：探针与取数共用 client，把等锁时间算进去会
+        # 让 /api/health/sources 的源延迟随并发取数虚高（VEW-60 评审 M3）。
+        start = time.monotonic()
+        try:
+            df = client.bars(symbol=_probe_symbol(), frequency=4, start=0, offset=3)
+            ok = df is not None and not df.empty
+            if not ok:
+                _invalidate_mootdx_client(client)
+            duration_ms = (time.monotonic() - start) * 1000
+            source_monitor.record_attempt(
+                "mootdx",
+                ok=ok,
+                duration_ms=duration_ms,
+                error=None if ok else "mootdx 探针返回空",
+                context="probe",
+            )
+            return ProbeResult(
+                source="mootdx",
+                status=STATUS_UP if ok else STATUS_DOWN,
+                duration_ms=duration_ms,
+                detail="mootdx K线探针" if ok else "mootdx K线探针返回空",
+            )
+        except Exception as e:
             _invalidate_mootdx_client(client)
-        duration_ms = (time.monotonic() - start) * 1000
-        source_monitor.record_attempt(
-            "mootdx",
-            ok=ok,
-            duration_ms=duration_ms,
-            error=None if ok else "mootdx 探针返回空",
-            context="probe",
-        )
-        return ProbeResult(
-            source="mootdx",
-            status=STATUS_UP if ok else STATUS_DOWN,
-            duration_ms=duration_ms,
-            detail="mootdx K线探针" if ok else "mootdx K线探针返回空",
-        )
-    except Exception as e:
-        _invalidate_mootdx_client(client)
-        duration_ms = (time.monotonic() - start) * 1000
-        source_monitor.record_attempt(
-            "mootdx",
-            ok=False,
-            duration_ms=duration_ms,
-            error=str(e),
-            context="probe",
-        )
-        return ProbeResult(
-            source="mootdx",
-            status=STATUS_DOWN,
-            duration_ms=duration_ms,
-            error=str(e),
-        )
+            duration_ms = (time.monotonic() - start) * 1000
+            source_monitor.record_attempt(
+                "mootdx",
+                ok=False,
+                duration_ms=duration_ms,
+                error=str(e),
+                context="probe",
+            )
+            return ProbeResult(
+                source="mootdx",
+                status=STATUS_DOWN,
+                duration_ms=duration_ms,
+                error=str(e),
+            )
 
 
 def probe_tushare() -> ProbeResult:

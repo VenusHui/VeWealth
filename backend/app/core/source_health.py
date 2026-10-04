@@ -32,6 +32,7 @@ EVENT_FAILURE = "failure"  # 单次请求失败
 EVENT_FALLBACK = "fallback"  # 主动降级到备源
 EVENT_RECOVERY = "recovery"  # 数据源恢复
 EVENT_SKIPPED = "skipped"  # 未配置 / 依赖缺失，未纳入健康判断
+EVENT_DEFERRED = "deferred"  # 本轮探针顺延（未测到），源状态保持不变
 
 # 状态值
 STATUS_UP = "up"
@@ -302,9 +303,62 @@ class SourceHealthMonitor:
             )
         )
 
+    def record_deferred(
+        self,
+        source: str,
+        detail: Optional[str] = None,
+    ) -> None:
+        """记录一次「本轮未测到」的探针顺延（只留痕，**不改源状态**）。
+
+        与 ``record_skipped`` 的区别在于语义：skipped 是「未配置 / 依赖缺失，未纳入
+        健康判断」，会把 ``status`` 置为 ``skipped``，而 ``overall_status()`` 又把
+        skipped 源从 active 集合里剔除；顺延只是这一轮没测到（如探针等取数锁超时），
+        源本身是好的，必须保留上次已知状态。否则繁忙扫描期间 mootdx 会间歇性显示为
+        ``skipped``，与「依赖缺失 / 握手失败」在快照里无法区分，且若它是唯一异常源，
+        总体健康度还会被误报成 ``ok``（VEW-60 评审）。
+
+        因此这里既不写 ``status``，也不动 ``total_skipped`` / ``last_checked_at``
+        （该源本轮确实没被检查），只往降级事件流里记一条 INFO。
+        """
+        self.register_source(source)
+        self._emit(
+            DegradationEvent(
+                ts=_now_iso(),
+                source=source,
+                event_type=EVENT_DEFERRED,
+                level="INFO",
+                message=f"数据源 {source} 本轮探针顺延（未测到，保留上次状态）",
+                detail=detail,
+            )
+        )
+
     # ------------------------------------------------------------------
     # 查询
     # ------------------------------------------------------------------
+
+    def is_down(self, source: str) -> bool:
+        """数据源是否**连续失败达到阈值**（取数链用它做快速熔断）。
+
+        判定口径是 ``consecutive_failures >= fail_threshold``，与 ``record_attempt``
+        里决定告警级别的口径保持一致：单次失败只是 WARNING（可能只是该标的无数据、
+        或一次网络抖动），不足以让取数链放弃整个源。``status`` 仍在首次失败即置
+        ``down``（供 ``overall_status`` / 健康接口反映「最近一次请求失败」），所以
+        ``is_down`` 是比 ``status == down`` 更严格的判据。
+
+        取数链消费该信号可以跳过已知不可用源的重试等待，而不是逐标的重复撞墙
+        （VEW-60）。未注册的数据源返回 ``False``（未知不等于不可用，不熔断）。
+        恢复由源级探针负责：探针每轮都会真实请求一次并 ``record_attempt``，成功即
+        把连续失败计数清零、状态翻回 ``up``，熔断随之自动解除。
+
+        消费方仅限日线链路（``fetch_daily_data_with_meta`` 跳过东财重试）；分钟链路
+        刻意不消费该信号 —— 它走不同的东财接口（``eastmoney_trends2`` / 不同 klt），
+        且自带 ``_MOOTDX_MINUTE_BUDGET`` 墙钟预算，多一次失败重试不突破前端超时约束。
+        """
+        with self._lock:
+            st = self._states.get(source)
+            if st is None:
+                return False
+            return st.consecutive_failures >= self._fail_threshold
 
     def snapshot(self) -> dict[str, Any]:
         """返回全部数据源健康快照（含总体状态）。"""
