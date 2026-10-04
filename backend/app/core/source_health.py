@@ -306,6 +306,18 @@ class SourceHealthMonitor:
     # 查询
     # ------------------------------------------------------------------
 
+    def is_down(self, source: str) -> bool:
+        """数据源当前是否处于 ``down``（取数链用它做快速熔断）。
+
+        取数链消费该信号可以跳过已知不可用源的重试等待，而不是逐标的重复撞墙
+        （VEW-60）。未注册的数据源返回 ``False``（未知不等于不可用，不熔断）。
+        恢复由源级探针负责：探针每轮都会真实请求一次并 ``record_attempt``，
+        成功即把状态翻回 ``up``，熔断随之自动解除。
+        """
+        with self._lock:
+            st = self._states.get(source)
+            return st is not None and st.status == STATUS_DOWN
+
     def snapshot(self) -> dict[str, Any]:
         """返回全部数据源健康快照（含总体状态）。"""
         with self._lock:

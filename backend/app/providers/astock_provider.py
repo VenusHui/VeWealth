@@ -14,6 +14,7 @@ from typing import Any, Optional
 import pandas as pd
 
 from app.core.config import settings
+from app.core.source_health import source_monitor
 from app.providers.base import MarketDataProvider
 from app.providers.provenance import DailyDataResult, DataProvenance
 from app.providers.astock_data import (
@@ -44,6 +45,12 @@ logger = logging.getLogger(__name__)
 
 _mootdx_client: Optional["Quotes"] = None
 _mootdx_client_lock = threading.Lock()
+# 取数串行化锁：TDX 协议是「一条 TCP 连接上一次一问一答」，共享 client 被多线程
+# 并发调用时响应会互相错位，取数**静默**返回空/None（调用方会当成「该标的无数据」
+# 跳过，不抛异常）。实测 20 标的 × 250 根、20 线程下共享 client 仅 2/20 完整返回；
+# 加锁后 20/20，且因省掉每线程建连开销反而快于每线程独立 client（12.0s vs 23.8s）
+# —— 这不是性能与正确性的取舍（VEW-60）。所有共享 client 的 bars() 调用都必须持锁。
+_mootdx_fetch_lock = threading.Lock()
 _mootdx_init_failed_at: Optional[float] = None
 # 是否有请求正在执行镜像扫描（_init_mootdx_client）。并发请求在扫描期间直接快速
 # 返回 None 走备源，而不是排队阻塞在锁上等完整扫描（VEW-54）。
@@ -99,6 +106,30 @@ def _mootdx_probe_symbol() -> str:
     return str(getattr(settings, "SOURCE_HEALTH_PROBE_SYMBOL", "000001")).zfill(6)
 
 
+def _disable_tdx_setup_handshake(
+    client: Any, server: Optional[tuple[str, int]]
+) -> None:
+    """关闭 pytdx/tdxpy 客户端的 setup 握手包（VEW-60）。
+
+    底层 ``TdxHq_API`` 默认 ``need_setup=True``：连接后先发 3 个 setup 包（取服务器
+    信息），之后才发首个业务请求。公开通达信镜像普遍不实现该握手，其响应与后续
+    ``get_security_bars`` 的响应**错位**，导致每次取数都解析失败、恒返回 ``None``。
+    而 ``_try_mootdx_server`` 把「取数为空」判定为镜像不可用，于是 curated 6 个
+    镜像被逐个跳过、mootdx 整体 ``skipped``——主源其实可用，只是被库的握手挡在门外
+    （实测：裸 TDX 协议直连同一镜像取数正常，置 ``need_setup=False`` 后同一调用
+    立即返回 K 线）。
+
+    属性不存在时静默跳过，不因 mootdx/tdxpy 版本差异中断初始化。
+    """
+    api = getattr(client, "client", None)
+    if api is None or not hasattr(api, "need_setup"):
+        return
+    try:
+        api.need_setup = False
+    except Exception as e:  # pragma: no cover - 防御性
+        logger.warning(f"mootdx 关闭 setup 握手失败({server or '配置默认'}): {e}")
+
+
 def _try_mootdx_server(
     Quotes, server: Optional[tuple[str, int]], deadline: Optional[float] = None
 ):
@@ -126,6 +157,8 @@ def _try_mootdx_server(
     except Exception as e:
         logger.warning(f"mootdx 连接 {server or '配置默认'} 失败: {e}")
         return None
+
+    _disable_tdx_setup_handshake(client, server)
 
     for freq in _MOOTDX_PROBE_FREQUENCIES:
         if deadline is not None and time.monotonic() >= deadline:
@@ -489,51 +522,58 @@ class AStockDataProvider(MarketDataProvider):
             collected = 0
             initial_offset = int(start_offset or 0)
             offset = initial_offset
-            while collected < wanted:
-                if deadline is not None and time.monotonic() >= deadline:
-                    logger.warning(
-                        f"mootdx K线取数 {stock_code} 超过取数预算, 提前返回"
+            # 共享 client 的整段翻页都持取数锁：TDX 一问一答，并发调用会让响应错位、
+            # 静默返回空（见 _mootdx_fetch_lock 注释）。锁只覆盖网络取数，随后的
+            # 本地清洗/排序在锁外进行。
+            with _mootdx_fetch_lock:
+                while collected < wanted:
+                    if deadline is not None and time.monotonic() >= deadline:
+                        logger.warning(
+                            f"mootdx K线取数 {stock_code} 超过取数预算, 提前返回"
+                        )
+                        break
+                    klines = client.bars(
+                        symbol=stock_code,
+                        frequency=freq,
+                        start=offset,
+                        offset=page_size,
                     )
-                    break
-                klines = client.bars(
-                    symbol=stock_code,
-                    frequency=freq,
-                    start=offset,
-                    offset=page_size,
-                )
-                if klines is None or klines.empty:
-                    # An empty first page at offset=0 can mean either a dead mirror
-                    # or a symbol with no data.  Confirm with the known-liquid probe
-                    # symbol before invalidating; pagination exhaustion and
-                    # post-fetch date filtering remain normal empty results.
-                    if collected == 0 and initial_offset == 0:
-                        probe_symbol = _mootdx_probe_symbol()
-                        mirror_empty = str(stock_code).zfill(6) == probe_symbol
-                        if not mirror_empty:
-                            if deadline is not None and time.monotonic() >= deadline:
-                                # 预算耗尽无法确认是否镜像空：按普通空结果处理，
-                                # 不摘除缓存客户端。
-                                break
-                            probe = client.bars(
-                                symbol=probe_symbol,
-                                frequency=freq,
-                                start=0,
-                                offset=3,
-                            )
-                            mirror_empty = probe is None or probe.empty
-                        if mirror_empty:
-                            logger.warning(
-                                "mootdx 镜像 freq=%s 原始K线返回空，摘除缓存客户端",
-                                freq,
-                            )
-                            _invalidate_mootdx_client(client)
-                    break
-                frames.append(klines)
-                n = len(klines)
-                collected += n
-                offset += n
-                if n < page_size:
-                    break
+                    if klines is None or klines.empty:
+                        # An empty first page at offset=0 can mean either a dead mirror
+                        # or a symbol with no data.  Confirm with the known-liquid probe
+                        # symbol before invalidating; pagination exhaustion and
+                        # post-fetch date filtering remain normal empty results.
+                        if collected == 0 and initial_offset == 0:
+                            probe_symbol = _mootdx_probe_symbol()
+                            mirror_empty = str(stock_code).zfill(6) == probe_symbol
+                            if not mirror_empty:
+                                if (
+                                    deadline is not None
+                                    and time.monotonic() >= deadline
+                                ):
+                                    # 预算耗尽无法确认是否镜像空：按普通空结果处理，
+                                    # 不摘除缓存客户端。
+                                    break
+                                probe = client.bars(
+                                    symbol=probe_symbol,
+                                    frequency=freq,
+                                    start=0,
+                                    offset=3,
+                                )
+                                mirror_empty = probe is None or probe.empty
+                            if mirror_empty:
+                                logger.warning(
+                                    "mootdx 镜像 freq=%s 原始K线返回空，摘除缓存客户端",
+                                    freq,
+                                )
+                                _invalidate_mootdx_client(client)
+                        break
+                    frames.append(klines)
+                    n = len(klines)
+                    collected += n
+                    offset += n
+                    if n < page_size:
+                        break
 
             if not frames:
                 return None
@@ -649,32 +689,47 @@ class AStockDataProvider(MarketDataProvider):
             return DailyDataResult(df=df, provenance=provenance)
 
         # 2. Fallback: Eastmoney → Tushare
-        fqt = fqt_code(adjust)
-        for attempt in range(1, max_retries + 2):
-            try:
-                df = eastmoney_kline(
-                    code=stock_code,
-                    klt="101",
-                    beg=start_date or "",
-                    end=end_date or "",
-                    fqt=fqt,
-                )
-                if df is not None and not df.empty:
-                    provenance.source = "eastmoney"
-                    served = str(df.attrs.get("adjust_served", adjust))
-                    provenance.adjustment = served
-                    provenance.degraded = bool(adjust) and served != adjust
-                    self._fill_provenance(provenance, df, req_start, req_end, served)
-                    return DailyDataResult(df=df, provenance=provenance)
-            except Exception as e:
+        #
+        # 东财失败快速熔断（VEW-60）：source_monitor 的探针已经能把东财判为 down，
+        # 但取数链此前不消费该信号，逐标的仍撞 max_retries+1 次重试（退避
+        # _RETRY_SLEEP×attempt ≈ 1.8s 纯等待），实测单标的 2.96s 里约 2/3 耗在注定
+        # 失败的重试上。已知 down 时直接跳过东财、落到 Tushare。恢复由源级探针负责
+        # （每轮真实请求一次，成功即翻回 up），不是永久摘除。
+        if source_monitor.is_down("eastmoney"):
+            logger.info(
+                f"股票 {stock_code} 东财已知不可用(source_monitor=down), 跳过重试"
+            )
+        else:
+            fqt = fqt_code(adjust)
+            for attempt in range(1, max_retries + 2):
+                try:
+                    df = eastmoney_kline(
+                        code=stock_code,
+                        klt="101",
+                        beg=start_date or "",
+                        end=end_date or "",
+                        fqt=fqt,
+                    )
+                    if df is not None and not df.empty:
+                        provenance.source = "eastmoney"
+                        served = str(df.attrs.get("adjust_served", adjust))
+                        provenance.adjustment = served
+                        provenance.degraded = bool(adjust) and served != adjust
+                        self._fill_provenance(
+                            provenance, df, req_start, req_end, served
+                        )
+                        return DailyDataResult(df=df, provenance=provenance)
+                except Exception as e:
+                    logger.warning(
+                        f"获取股票 {stock_code} 日线数据失败(第{attempt}次): {e}"
+                    )
+                if attempt <= max_retries:
+                    time.sleep(_RETRY_SLEEP * attempt)
+                    continue
                 logger.warning(
-                    f"获取股票 {stock_code} 日线数据失败(第{attempt}次): {e}"
+                    f"股票 {stock_code} Eastmoney 日线重试耗尽，回退 Tushare"
                 )
-            if attempt <= max_retries:
-                time.sleep(_RETRY_SLEEP * attempt)
-                continue
-            logger.warning(f"股票 {stock_code} Eastmoney 日线重试耗尽，回退 Tushare")
-            break
+                break
 
         # 3. Tushare
         df = self._fetch_daily_tushare(

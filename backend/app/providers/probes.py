@@ -155,6 +155,7 @@ def probe_mootdx() -> ProbeResult:
         from app.providers.astock_provider import (
             _get_mootdx_client,
             _invalidate_mootdx_client,
+            _mootdx_fetch_lock,
         )
     except Exception:
         source_monitor.record_skipped("mootdx", detail="mootdx 依赖或客户端初始化失败")
@@ -176,7 +177,10 @@ def probe_mootdx() -> ProbeResult:
         )
 
     try:
-        df = client.bars(symbol=_probe_symbol(), frequency=4, start=0, offset=3)
+        # 探针与取数路径共用同一 client：TDX 一问一答，不持锁并发调用会让响应错位、
+        # 静默返回空，进而误判镜像故障并摘除客户端（VEW-60）。
+        with _mootdx_fetch_lock:
+            df = client.bars(symbol=_probe_symbol(), frequency=4, start=0, offset=3)
         ok = df is not None and not df.empty
         if not ok:
             _invalidate_mootdx_client(client)
