@@ -9,7 +9,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Optional
+from contextlib import contextmanager
+from typing import Any, Iterator, Optional
 
 import pandas as pd
 
@@ -51,6 +52,32 @@ _mootdx_client_lock = threading.Lock()
 # 加锁后 20/20，且因省掉每线程建连开销反而快于每线程独立 client（12.0s vs 23.8s）
 # —— 这不是性能与正确性的取舍（VEW-60）。所有共享 client 的 bars() 调用都必须持锁。
 _mootdx_fetch_lock = threading.Lock()
+
+
+@contextmanager
+def _mootdx_fetch_guard(timeout: Optional[float] = None) -> Iterator[bool]:
+    """有界获取取数锁的上下文管理器，``yield`` 出是否拿到锁（VEW-60 评审 M3/M4）。
+
+    取数锁是全局串行点：探针、日线、分钟线共用同一把锁。无界等待会让「等锁」把
+    调用方自己的墙钟预算架空 —— 分钟链路等满锁再取数，合计仍可能超过前端 15s
+    超时；探针等满锁则会把串行的 ``run_all_probes()`` 整轮拖住，排在后面的
+    eastmoney 探针（熔断恢复的主路径）随之延后。
+
+    ``timeout`` 为 ``None`` 时无限期等待（日线 / CYQ 路径的既有取舍，它们没有
+    墙钟预算，也不允许静默截断分页）；给定秒数时最多等这么久，超时后
+    ``yield False`` 且**不持锁**，调用方须放弃本次取数、交给备源。
+    """
+    if timeout is None:
+        acquired = _mootdx_fetch_lock.acquire()
+    else:
+        acquired = _mootdx_fetch_lock.acquire(timeout=max(float(timeout), 0.0))
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            _mootdx_fetch_lock.release()
+
+
 _mootdx_init_failed_at: Optional[float] = None
 # 是否有请求正在执行镜像扫描（_init_mootdx_client）。并发请求在扫描期间直接快速
 # 返回 None 走备源，而不是排队阻塞在锁上等完整扫描（VEW-54）。
@@ -94,6 +121,12 @@ _MOOTDX_SCAN_BUDGET = 6.0
 # 分钟链路整体预算（秒）：mootdx 探测/取数 + 东财回退合计计入，须小于前端 15s
 # 超时。超时放弃本次取数，返回空而非让请求挂起（VEW-54）。
 _MOOTDX_MINUTE_BUDGET = 12.0
+
+# 源级探针等待取数锁的上限（秒）。探针与取数共用同一 client 与同一把锁：取数正在
+# 翻页时探针若无限期等待，会把串行的 run_all_probes() 整轮拖住，排在后面的
+# eastmoney 探针（熔断恢复的主路径）随之延后。超时按 skipped 上报 —— 既不算源故障
+# （不摘除健康镜像），也不阻塞后续探针（VEW-60 评审 M3）。
+_MOOTDX_PROBE_LOCK_TIMEOUT = 5.0
 
 # 探针校验的取数周期：深度图默认 5 分钟（frequency=0），日线（frequency=4）作
 # 备用。两者都必须能取到才认为镜像可用 —— 只握手、部分周期空回来的镜像不能选。
@@ -500,7 +533,9 @@ class AStockDataProvider(MarketDataProvider):
                       the daily/CYQ paths stay unbounded and are never silently
                       truncated mid-pagination (VEW-54, 评审 F1). Budget
                       exhaustion returns whatever was collected (or ``None``), it
-                      does NOT invalidate a healthy cached client.
+                      does NOT invalidate a healthy cached client. Waiting for the
+                      shared-client fetch lock also counts against the budget
+                      (VEW-60 评审 M4).
         """
         client = _get_mootdx_client(deadline=deadline)
         if client is None:
@@ -525,7 +560,19 @@ class AStockDataProvider(MarketDataProvider):
             # 共享 client 的整段翻页都持取数锁：TDX 一问一答，并发调用会让响应错位、
             # 静默返回空（见 _mootdx_fetch_lock 注释）。锁只覆盖网络取数，随后的
             # 本地清洗/排序在锁外进行。
-            with _mootdx_fetch_lock:
+            # 等锁按调用方剩余预算设上限（VEW-60 评审 M4）：分钟链路给了 deadline，
+            # 若在这里无界等待，「等锁 + 取数」合计会把 _MOOTDX_MINUTE_BUDGET 架空，
+            # 请求仍可能挂到前端 15s 超时。等不到锁即放弃本次取数、交给备源。
+            # 无 deadline 的日线 / CYQ 路径保持无限期等待（VEW-54 的既有取舍）。
+            lock_timeout = (
+                None if deadline is None else max(deadline - time.monotonic(), 0.0)
+            )
+            with _mootdx_fetch_guard(lock_timeout) as acquired:
+                if not acquired:
+                    logger.warning(
+                        f"mootdx K线取数 {stock_code} 等待取数锁超预算, 放弃本次取数"
+                    )
+                    return None
                 while collected < wanted:
                     if deadline is not None and time.monotonic() >= deadline:
                         logger.warning(
@@ -599,7 +646,18 @@ class AStockDataProvider(MarketDataProvider):
             if start_date:
                 df = df[df["datetime"] >= pd.Timestamp(start_date)]
             if end_date:
-                df = df[df["datetime"] <= pd.Timestamp(end_date)]
+                # 上界是**裸日期**（无时间分量）时放宽到当日结束再比较：日线 bar 的
+                # 时间戳是当日 15:00:00，直接用 ``<= 当日 00:00`` 会把结束日整根截掉，
+                # 既少一根 bar，也让 _coverage_gap 把「其实覆盖到了」误判成 gap=True
+                # （VEW-60）。带时间的上界（分钟链路传 "YYYY-MM-DD 16:00:00"）保持
+                # 精确比较 —— 不做对称 normalize，否则会把分钟路径的时间边界悄悄放宽。
+                upper = pd.Timestamp(end_date)
+                if upper == upper.normalize():
+                    # 用 ``Timedelta(1, unit="D")`` 而非 ``Timedelta(days=1)``：后者在
+                    # numpy>=2 下走裸整数转换，会触发 'generic' unit 弃用告警。
+                    df = df[df["datetime"] < upper + pd.Timedelta(1, unit="D")]
+                else:
+                    df = df[df["datetime"] <= upper]
 
             if df.empty:
                 return None

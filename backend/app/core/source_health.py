@@ -307,16 +307,28 @@ class SourceHealthMonitor:
     # ------------------------------------------------------------------
 
     def is_down(self, source: str) -> bool:
-        """数据源当前是否处于 ``down``（取数链用它做快速熔断）。
+        """数据源是否**连续失败达到阈值**（取数链用它做快速熔断）。
+
+        判定口径是 ``consecutive_failures >= fail_threshold``，与 ``record_attempt``
+        里决定告警级别的口径保持一致：单次失败只是 WARNING（可能只是该标的无数据、
+        或一次网络抖动），不足以让取数链放弃整个源。``status`` 仍在首次失败即置
+        ``down``（供 ``overall_status`` / 健康接口反映「最近一次请求失败」），所以
+        ``is_down`` 是比 ``status == down`` 更严格的判据。
 
         取数链消费该信号可以跳过已知不可用源的重试等待，而不是逐标的重复撞墙
         （VEW-60）。未注册的数据源返回 ``False``（未知不等于不可用，不熔断）。
-        恢复由源级探针负责：探针每轮都会真实请求一次并 ``record_attempt``，
-        成功即把状态翻回 ``up``，熔断随之自动解除。
+        恢复由源级探针负责：探针每轮都会真实请求一次并 ``record_attempt``，成功即
+        把连续失败计数清零、状态翻回 ``up``，熔断随之自动解除。
+
+        消费方仅限日线链路（``fetch_daily_data_with_meta`` 跳过东财重试）；分钟链路
+        刻意不消费该信号 —— 它走不同的东财接口（``eastmoney_trends2`` / 不同 klt），
+        且自带 ``_MOOTDX_MINUTE_BUDGET`` 墙钟预算，多一次失败重试不突破前端超时约束。
         """
         with self._lock:
             st = self._states.get(source)
-            return st is not None and st.status == STATUS_DOWN
+            if st is None:
+                return False
+            return st.consecutive_failures >= self._fail_threshold
 
     def snapshot(self) -> dict[str, Any]:
         """返回全部数据源健康快照（含总体状态）。"""
