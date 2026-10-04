@@ -3,7 +3,7 @@
 覆盖的契约：
 - 分钟库：规范化 / 幂等重写 / 新数据胜出 / 原子落盘 / 分区与标的裁剪 / 坏分区拒绝覆盖；
 - 采集器：断点续采跳过已确认标的、失败可重试、跨日 bar 被裁掉、并发取数结果完整、
-  源故障与非交易日下的空结果分类；
+  空结果三分类（源故障 → failed / 疑似休市 → no_session / 停牌 → empty，前两者可重试）；
 - 在线表：批量 upsert 幂等（sqlite 走非 PG 退化路径），唯一键含 period。
 """
 
@@ -403,17 +403,80 @@ def test_collect_source_down_keeps_empty_retryable(tmp_path: Path):
     assert second.requested == 2 and second.fetched == 2
 
 
-def test_collect_holiday_records_empty_as_terminal(tmp_path: Path):
-    """非交易日（源可用但当天全市场无行情）应记终态，否则每个假期都重取全市场。"""
+def test_collect_holiday_keeps_no_session_retryable(tmp_path: Path):
+    """非交易日单独一桶且**可重试**：不打 ERROR、不污染 failed，但也不写成终态。
+
+    记终态看似「省掉节假日重取」，实际成本为零：没有自动重跑机制、调度只针对
+    date.today()，所以节假日那天的记录永远不会被自动重取；反过来源滞后一天时
+    （镜像缓存滞后 + 备源被限流，同样命中 NO_SESSION）记终态就是永久丢一天。
+    """
     lib = MinuteLibrary(tmp_path)
     collector = MinuteCollector(db=None, provider=HolidayProvider(), library=lib)
 
     first = collector.collect("1", TRADE_DATE, symbols=["000001", "000002"])
     assert first.source_probe == PROBE_NO_SESSION
-    assert first.empty == 2 and first.failed == 0
+    assert first.no_session == 2
+    assert first.empty == 0 and first.failed == 0
+    assert first.errors == []  # 不是源故障，不打 ERROR / 不写 errors
 
+    # 可重试：不会被 done() 跳过（这是与 empty 的关键区别）
     second = collector.collect("1", TRADE_DATE, symbols=["000001", "000002"])
-    assert second.skipped == 2 and second.requested == 0
+    assert second.skipped == 0 and second.requested == 2
+
+
+def test_collect_source_lag_day_is_recoverable(tmp_path: Path):
+    """M3 场景：源只能给历史、给不了今天 —— 疑似休市但其实是交易日，必须能补回。
+
+    镜像缓存滞后一天 + 备源被限流 → 目标日探针失败、回看成功 → NO_SESSION；
+    此时批量取数遇到同一个源状态，全市场几乎全空。若这一支是终态，这一天在回测
+    事实源里永久缺失且日志讲的是可信的故事（「判定为非交易日」）。
+    """
+    lib = MinuteLibrary(tmp_path)
+    provider = HolidayProvider()
+    collector = MinuteCollector(db=None, provider=provider, library=lib)
+    symbols = [f"{i:06d}" for i in range(1, 11)]
+
+    lagged = collector.collect("1", TRADE_DATE, symbols=symbols)
+    assert lagged.source_probe == PROBE_NO_SESSION
+    assert lagged.no_session == 10 and lagged.empty == 0
+
+    # 镜像追上（当天数据上架）后重跑：10 个标的全部补齐，没有被终态挡住
+    provider.calls.clear()
+
+    class CaughtUpProvider(FakeProvider):
+        def fetch_minute_data(self, stock_code, start_datetime, end_datetime, **kw):
+            self.calls.append((stock_code, "1", str(start_datetime)[:10]))
+            return _bars(stock_code)
+
+    recovered = MinuteCollector(
+        db=None, provider=CaughtUpProvider(), library=lib
+    ).collect("1", TRADE_DATE, symbols=symbols)
+    assert recovered.requested == 10 and recovered.fetched == 10
+    assert len(lib.covered_symbols("1", TRADE_DATE)) == 10
+
+
+def test_collect_lookback_covers_long_holiday(tmp_path: Path):
+    """回看窗口要覆盖含相邻周末的长假（国庆 8 天 / 春节 8–9 天）。"""
+    lib = MinuteLibrary(tmp_path)
+    long_holiday = date(2026, 10, 9)  # 目标日
+
+    class LongHolidayProvider(FakeProvider):
+        """只有 9 天前那个交易日有行情（模拟长假尾部）。"""
+
+        def fetch_minute_data(self, stock_code, start_datetime, end_datetime, **kw):
+            day = date.fromisoformat(str(start_datetime)[:10])
+            self.calls.append((stock_code, "1", day.isoformat()))
+            if (long_holiday - day).days >= 9:
+                return _bars(stock_code, day=day)
+            return None
+
+    collector = MinuteCollector(db=None, provider=LongHolidayProvider(), library=lib)
+    result = collector.collect("1", long_holiday, symbols=["000001", "000002"])
+
+    # 9 天前有 bar → 仍判 NO_SESSION（若窗口是 7 天会误判成 PROBE_DOWN 并打假 ERROR）
+    assert result.source_probe == PROBE_NO_SESSION
+    assert result.no_session == 2 and result.failed == 0
+    assert result.errors == []
 
 
 def test_collect_flags_anomaly_when_most_symbols_empty(tmp_path: Path):

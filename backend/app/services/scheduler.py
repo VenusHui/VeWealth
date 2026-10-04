@@ -73,14 +73,19 @@ def collect_minute_data(trade_date: date = None):
             logger.info(
                 f"分钟采集结果: period={item.period} date={item.trade_date} "
                 f"探针={item.source_probe} 成功={item.fetched} 空={item.empty} "
-                f"失败={item.failed} 跳过={item.skipped} 写入={item.bars_written} "
-                f"分区行数={item.partition_rows} 耗时={item.elapsed_sec:.1f}s"
+                f"疑似休市={item.no_session} 失败={item.failed} 跳过={item.skipped} "
+                f"写入={item.bars_written} 分区行数={item.partition_rows} "
+                f"耗时={item.elapsed_sec:.1f}s"
             )
-            if item.failed:
-                # 失败是可重试的（取数异常 / 源异常时被判可疑的空结果），重跑同一天即可补齐
+            if item.failed or item.no_session:
+                # 两者都是可重试的（failed = 取数异常或源异常时被判可疑的空结果；
+                # no_session = 疑似非交易日，源滞后时也会命中）。重跑同一天即可补齐，
+                # 所以这里只提示、不告警。
                 logger.warning(
-                    f"分钟采集 {item.trade_date} period={item.period} 有 {item.failed} "
-                    f"个标的需要重跑: {item.errors[:3]}"
+                    f"分钟采集 {item.trade_date} period={item.period} 有 "
+                    f"{item.failed + item.no_session} 个标的可重跑补齐"
+                    f"（failed={item.failed} no_session={item.no_session}）: "
+                    f"{item.errors[:3]}"
                 )
         return [r.as_dict() for r in results]
     except Exception as e:

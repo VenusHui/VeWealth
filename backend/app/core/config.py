@@ -128,9 +128,11 @@ class Settings(BaseSettings):
     # 分钟库根目录。容器内 /app/data 是持久卷（vewealth-backend-data），重部署不丢；
     # 本地开发相对 backend/ 解析。
     MINUTE_LIBRARY_DIR: str = "data/minute_bars"
-    # 首次上线默认关闭：单轮全市场 1min 采集会长时间持有取数锁（见下方 workers 说明），
-    # 且尚未验证真实耗时与磁盘余量。先手工跑一轮确认（force=True）再打开。
-    MINUTE_COLLECT_ENABLED: bool = False
+    # 默认开启：分钟库是「现在不采、以后补不回来」的数据，每个交易日漏采即永久缺失，
+    # 所以交付物必须默认生效。首轮请有人看日志确认 elapsed_sec（夜间窗口余量）与磁盘
+    # 余量（≈13 GB/年/周期）；写入幂等可重入、断点续采、source_probe / failed /
+    # elapsed_sec 均已进日志。若要改成「首次上线先关着」，置 False 并指定谁在何时打开。
+    MINUTE_COLLECT_ENABLED: bool = True
     # 收盘后采集：晚于日线采集（20:00）与 universe 快照（20:40），
     # 保证当日股票池快照已落盘，采集按点状态选池。
     MINUTE_COLLECT_CRON: str = "0 21 * * 1-5"
