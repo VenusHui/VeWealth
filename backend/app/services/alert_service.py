@@ -12,7 +12,7 @@ from app.providers import get_data_provider
 from app.providers.astock_data import tencent_quote
 from app.models.user import User
 from app.models.watchlist import WatchList
-from app.models.stock_data import StockMinuteData
+from app.models.stock_data import DEFAULT_MINUTE_PERIOD, StockMinuteData
 from app.models.alert_history import AlertHistory
 from app.utils.data_processor import DataProcessor
 from app.services.wechat_service import wechat_service
@@ -70,6 +70,8 @@ class AlertService:
             .filter(
                 and_(
                     StockMinuteData.stock_code == watchlist_item.stock_code,
+                    # 表内可存多周期，读路径限定 1 分钟，避免不同粒度混入同一序列
+                    StockMinuteData.period == DEFAULT_MINUTE_PERIOD,
                     StockMinuteData.trade_date >= start_date,
                     StockMinuteData.trade_date <= end_date,
                 )
@@ -318,7 +320,10 @@ class AlertService:
             # 先尝试从数据库获取最新数据
             latest_data = (
                 self.db.query(StockMinuteData)
-                .filter(StockMinuteData.stock_code == stock_code)
+                .filter(
+                    StockMinuteData.stock_code == stock_code,
+                    StockMinuteData.period == DEFAULT_MINUTE_PERIOD,
+                )
                 .order_by(StockMinuteData.trade_time.desc())
                 .first()
             )

@@ -13,7 +13,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_active_user
 from app.models.user import User
 from app.models.watchlist import WatchList
-from app.models.stock_data import StockMinuteData
+from app.models.stock_data import DEFAULT_MINUTE_PERIOD, StockMinuteData
 from app.schemas.watchlist import (
     AddWatchListRequest,
     UpdateWatchListRequest,
@@ -50,6 +50,8 @@ def _compute_gmm_signal(
             .filter(
                 and_(
                     StockMinuteData.stock_code == stock_code,
+                    # 表内可存多周期，读路径限定 1 分钟，避免不同粒度混入同一序列
+                    StockMinuteData.period == DEFAULT_MINUTE_PERIOD,
                     StockMinuteData.trade_date >= start_date,
                     StockMinuteData.trade_date <= end_date,
                 )

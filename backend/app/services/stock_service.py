@@ -17,7 +17,7 @@ from app.providers.provenance import DailyDataResult, DataProvenance
 from app.providers.astock_data import tencent_quote, eastmoney_stock_info
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.models.stock_data import StockMinuteData
+from app.models.stock_data import DEFAULT_MINUTE_PERIOD, StockMinuteData
 from app.models.security_universe import SecurityUniverse
 
 #: 空 DataFrame 的标准列（与历史行为保持一致）
@@ -403,6 +403,9 @@ class StockService:
                     db.query(StockMinuteData)
                     .filter(
                         StockMinuteData.stock_code == symbol,
+                        # 表内可存多周期，读路径必须限定周期，否则不同粒度的 bar 会
+                        # 混进同一条时间序列（VEW-64）
+                        StockMinuteData.period == DEFAULT_MINUTE_PERIOD,
                         StockMinuteData.trade_date >= start_dt.date(),
                         StockMinuteData.trade_date <= end_dt.date(),
                     )

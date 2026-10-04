@@ -124,6 +124,25 @@ class Settings(BaseSettings):
     # 两次公开镜像扫描之间的最小间隔（秒），避免镜像全挂时每次请求都做全量扫描。
     MOOTDX_SCAN_COOLDOWN: int = 1800
 
+    # 分钟级回测 P0：本地分钟库 + 每日增量采集（VEW-64）
+    # 分钟库根目录。容器内 /app/data 是持久卷（vewealth-backend-data），重部署不丢；
+    # 本地开发相对 backend/ 解析。
+    MINUTE_LIBRARY_DIR: str = "data/minute_bars"
+    MINUTE_COLLECT_ENABLED: bool = True
+    # 收盘后采集：晚于日线采集（20:00）与 universe 快照（20:40），
+    # 保证当日股票池快照已落盘，采集按点状态选池。
+    MINUTE_COLLECT_CRON: str = "0 21 * * 1-5"
+    # 采集周期（分钟，逗号分隔），如 "1" 或 "1,5"。全市场 1min 单日 ≈ 1.4M 根。
+    MINUTE_COLLECT_PERIODS: str = "1"
+    # 并发取数线程数。共享 mootdx client 的取数由取数锁串行化（VEW-60），并发主要
+    # 摊薄建连与解析开销，不改变网络串行事实。
+    MINUTE_COLLECT_WORKERS: int = 20
+    # 单标的取数墙钟预算（秒）。批量任务无前端 15s 约束，比分钟链路的 12s 宽松，
+    # 给镜像慢但可用的标的留余量。
+    MINUTE_COLLECT_FETCH_BUDGET: float = 20.0
+    # 每采集 N 个标的落盘一次并推进断点（限制内存峰值与重跑代价）。
+    MINUTE_COLLECT_FLUSH_EVERY: int = 500
+
     # 预警配置
     DEFAULT_ALERT_THRESHOLD: float = 0.7
 
