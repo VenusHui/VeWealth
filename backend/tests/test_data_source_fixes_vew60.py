@@ -193,6 +193,104 @@ class SetupHandshakeTests(unittest.TestCase):
         self.assertGreater(api.bars_calls, 0)
 
 
+class HandshakeAwareTdxApi:
+    """按真实时序模拟 tdxpy：响应错位是**连接**的属性，不是标志位的属性。
+
+    - ``connect()`` 时若 ``need_setup`` 仍为真，就发出 setup 握手包，这条连接从此
+      响应错位（``bars()`` 恒返回空）；
+    - 重连时 ``need_setup`` 已被置 False，新连接不再发握手，取数恢复正常。
+
+    这正是真实 tdxpy 的形状：``need_setup`` 只在 ``connect()`` 内部被读取，错位状态
+    挂在已经建好的那条连接上。于是「只置标志位、不重连」会稳定判负 —— 本假 client
+    因此能区分「修好了」和「没修」，而上面基于标志位的 ``FakeTdxApi`` 两种都绿。
+    """
+
+    def __init__(self):
+        self.need_setup = True
+        self.ip = None
+        self.port = None
+        self.closed = True
+        self.connect_calls = 0
+        self.disconnect_calls = 0
+        self._desynced = False
+
+    def connect(self, ip, port, time_out=None):
+        self.connect_calls += 1
+        self.ip, self.port = ip, int(port)
+        self.closed = False
+        # 握手只在 need_setup 为真时发出；发出过的那条连接从此响应错位。
+        self._desynced = bool(self.need_setup)
+
+    def disconnect(self):
+        self.disconnect_calls += 1
+        self.closed = True
+
+    def bars(self, symbol, frequency, start, offset):
+        if self._desynced:
+            return pd.DataFrame()
+        return _kline_df(min(offset, 3))
+
+
+class HandshakeQuotes:
+    """``Quotes.factory`` 的替身：构造即建连，与 ``StdQuotes.__init__`` 一致。"""
+
+    def __init__(self, api: HandshakeAwareTdxApi):
+        self._api = api
+
+    def factory(self, **kwargs):
+        server = kwargs.get("server")
+        if server is not None:
+            self._api.connect(server[0], server[1], kwargs.get("timeout"))
+        return FakeQuotesClient(self._api)
+
+
+class HandshakeReconnectTests(unittest.TestCase):
+    """修复 1 的时序：置位后必须重连，否则错位的那条连接照旧取不到 K 线（评审 ②）。"""
+
+    def test_reconnect_clears_desynced_session(self):
+        api = HandshakeAwareTdxApi()
+        got = ap._try_mootdx_server(HandshakeQuotes(api), ("1.2.3.4", 7709))
+        self.assertIsNotNone(got, "重连后应从干净会话取到 K 线")
+        self.assertFalse(api.need_setup)
+        self.assertEqual(api.connect_calls, 2, "构造建连 1 次 + 关闭握手后重连 1 次")
+        self.assertEqual(api.disconnect_calls, 1)
+
+    def test_flag_only_without_reconnect_stays_rejected(self):
+        """反向对照：只置标志位、不重连（修复前的形状）必须仍然判负。
+
+        这条用例是上面那条的证伪对照：实现若退化成「只置位」，两条一起红，所以
+        「修复」与 VEW-60 的失败模式在测试层面是可区分的。
+        """
+        api = HandshakeAwareTdxApi()
+        quotes = HandshakeQuotes(api)
+
+        def flag_only(client, server, timeout=None):
+            client.client.need_setup = False
+
+        with mock.patch.object(ap, "_disable_tdx_setup_handshake", flag_only):
+            got = ap._try_mootdx_server(quotes, ("1.2.3.4", 7709))
+        self.assertIsNone(got, "错位的连接不重连就取不到 K 线，必须判负")
+        self.assertEqual(api.connect_calls, 1)
+
+    def test_reconnect_honors_caller_timeout(self):
+        """重连的建连超时由调用方给：探测期传探测超时，默认才是取数用的 5s（评审 ③）。"""
+        for expected, kwargs in (
+            (ap._MOOTDX_PROBE_TIMEOUT, {"timeout": ap._MOOTDX_PROBE_TIMEOUT}),
+            (ap._MOOTDX_CONNECT_TIMEOUT, {}),
+        ):
+            with self.subTest(expected=expected):
+                api = HandshakeAwareTdxApi()
+                api.connect("1.1.1.1", 7709)  # 模拟 StdQuotes.__init__ 的构造期建连
+                api.connect = mock.Mock(wraps=api.connect)
+                ap._disable_tdx_setup_handshake(
+                    FakeQuotesClient(api), ("1.2.3.4", 7709), **kwargs
+                )
+                self.assertEqual(api.connect.call_count, 1)
+                self.assertEqual(api.connect.call_args.kwargs["time_out"], expected)
+                # 重连用的是 api 自己记着的 ip/port，不是传进来的 server
+                self.assertEqual(api.connect.call_args.args[:2], ("1.1.1.1", 7709))
+
+
 class FetchSerializationTests(_SharedClientTestCase):
     """修复 2：共享 client 取数串行化。"""
 

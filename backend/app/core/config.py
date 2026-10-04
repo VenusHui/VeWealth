@@ -112,17 +112,26 @@ class Settings(BaseSettings):
     SOURCE_HEALTH_FAIL_THRESHOLD: int = 3  # 连续失败升级为 ERROR 告警的阈值
     SOURCE_HEALTH_PROBE_SYMBOL: str = "000001"  # 探针使用的样本股票代码
 
-    # mootdx 镜像候选机制（VEW-55）
-    # 逗号分隔的 "ip:port"（或裸 ip，默认 7709 端口）。非空时覆盖内置 curated 列表，
-    # 便于运维在镜像失效时无需改代码即可换源。内置列表失效时会触发有界的
-    # 公开镜像扫描（见 astock_provider._mootdx_scan_candidates）。
+    # mootdx 镜像候选机制（VEW-55 / VEW-62）
+    # 逗号分隔的 "ip:port"（或裸 ip，默认 7709 端口）。非空时**完整覆盖**内置
+    # curated 列表：用于镜像池整体失效时的应急止血，代价是把主源收敛到配置的
+    # 这几个镜像（单点）。要在保留内置列表的前提下追加镜像，用
+    # MOOTDX_EXTRA_SERVERS。内置列表失效时会触发有界的公开镜像扫描
+    # （见 astock_provider._mootdx_scan_candidates）。
     MOOTDX_SERVERS: str = ""
+    # 逗号分隔的 "ip:port"，**追加**在内置 curated 列表之前（不覆盖）。用于把实测
+    # 可用的外部镜像纳入候选池，同时保留 curated 作为回退（VEW-62）。镜像池是
+    # 公开资源、会整体漂移，这条配置让运维能扩充池子而不必收敛到单点。
+    MOOTDX_EXTRA_SERVERS: str = ""
     # 每次公开镜像扫描最多探测的镜像数；0 表示禁用扫描。
-    # 扫描在 init 热路径内同步执行（每个镜像约 2 个周期 + 5s 建连超时），
-    # 默认限 5 个以控制最坏延迟；镜像恢复后 curated/discovered 会优先命中。
-    MOOTDX_SCAN_LIMIT: int = 5
+    # 候选先经一次并发 TCP 可达性预筛（VEW-62），死镜像在预筛阶段被剪掉，不再
+    # 逐个吃满建连超时；因此默认放开到覆盖整个内置池（38 个），一轮扫描即可扫完
+    # 全部候选，而不是像以前那样每轮只推进 5 个。
+    MOOTDX_SCAN_LIMIT: int = 40
     # 两次公开镜像扫描之间的最小间隔（秒），避免镜像全挂时每次请求都做全量扫描。
-    MOOTDX_SCAN_COOLDOWN: int = 1800
+    # 配合上面的快速失败，一轮扫描成本已从「数十秒」降到秒级，故由 1800s 收紧到
+    # 300s，使镜像池的变化能在分钟级被感知。
+    MOOTDX_SCAN_COOLDOWN: int = 300
 
     # 预警配置
     DEFAULT_ALERT_THRESHOLD: float = 0.7

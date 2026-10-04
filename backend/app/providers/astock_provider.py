@@ -7,8 +7,14 @@ Fallback chain: Eastmoney HTTP → Tushare (daily only).
 from __future__ import annotations
 
 import logging
+import socket
 import threading
 import time
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    TimeoutError as FuturesTimeoutError,
+    as_completed,
+)
 from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
@@ -102,6 +108,10 @@ _mootdx_scan_cursor = 0
 # return empty, _init_mootdx_client falls back to a bounded scan over the full
 # mirror list bundled with mootdx (VEW-55).
 _MOOTDX_SERVERS: list[tuple[str, int]] = [
+    # 实测可用的外部镜像（VEW-59/VEW-62 逐个探测确认可返回 K 线）。公开镜像池会
+    # 整体漂移 —— VEW-60 复测时上面这批「主站」全部失效，而该镜像不在 mootdx
+    # 内置的 38 个候选里，扫描永远找不到它，只能硬编码进 curated（VEW-62）。
+    ("115.238.90.165", 7709),  # 外部镜像（VEW-59 实测可用）
     ("110.41.147.114", 7709),  # 深圳双线主站1
     ("110.41.154.219", 7709),  # 深圳双线主站6
     ("124.70.176.52", 7709),  # 上海双线主站1
@@ -113,14 +123,48 @@ _MOOTDX_SERVERS: list[tuple[str, int]] = [
 # 建连超时（秒）。选中的客户端沿用该超时用于后续取数，故定成常量便于调整。
 _MOOTDX_CONNECT_TIMEOUT = 5
 
-# 镜像探测墙钟预算（秒）。镜像池全挂时 _init_mootdx_client 会串行探测 curated +
-# 扫描候选 + 配置默认，每个镜像含建连 + 2 次探针取数（各自受 _MOOTDX_CONNECT_TIMEOUT
-# 兜底），最坏可把请求挂起数十秒、超过前端 15s 超时。探测循环按该预算放弃后续
-# 镜像（VEW-54）；调用方给了整体 deadline 时扫描仍不超过该预算（评审 F3）。
-_MOOTDX_SCAN_BUDGET = 6.0
+# 探测前的 TCP 可达性预筛（VEW-62）。死镜像的成本几乎全在建连等待上（黑洞 IP 要
+# 等满 socket 超时），串行探测下 _MOOTDX_SCAN_BUDGET 只够覆盖约 1 个候选，公开镜像
+# 扫描因此永远走不完；同时 curated 列表会先把预算吃光，扫描阶段一次都进不去。
+# 预筛把所有候选并发连一遍（只做 TCP 建连，不做 TDX 协议交互），连不上的直接剪掉，
+# 可达的才交给 _probe_mirrors_concurrently 做完整的 K 线校验 —— 「连着通不算数、必须
+# 真能取到 K 线」的判定没有被放宽。
+#
+# 注意口径：预筛是**建连超时判定**，不是「一定连不上」。建连慢于该阈值的镜像会被
+# 剪掉且不再进入 K 线校验，等于在原有的「必须真能取到 K 线」之前多了一道 TCP 时限
+# （VEW-62 评审 ④）。阈值取 1.5s 是因为实测可达镜像都在毫秒级建连、黑洞 IP 才吃满
+# 超时，1.5s 足以区分两者。
+_MOOTDX_REACHABILITY_TIMEOUT = 1.5
+# 预筛超时的下限（秒）。调用方按剩余预算夹紧预筛超时，预算快耗尽时会被压到几百
+# 毫秒 —— 那会把「慢但可用」的镜像大面积误杀，而整池判死会写 _mootdx_init_failed_at、
+# 进入 _MOOTDX_RETRY_COOLDOWN 的冷却，把一次误判放大成半分钟不可用（VEW-62 评审 ④）。
+# 故设下限，宁可多花这点时间也不误判整池。
+_MOOTDX_REACHABILITY_MIN_TIMEOUT = 0.5
+# 预筛并发度。取足够大以便一轮覆盖整个内置池（38 个），避免多批排队把超时叠加
+# 成数秒；预筛本身受冷却期约束，不会每次请求都触发。
+_MOOTDX_REACHABILITY_WORKERS = 64
+
+# 镜像探测墙钟预算（秒）。镜像池全挂时 _init_mootdx_client 会并发竞速可达候选，再
+# 兜底试一次配置默认，每个镜像含建连 + 2 次探针取数（探测期受 _MOOTDX_PROBE_TIMEOUT
+# 与单次重试兜底），最坏可把请求挂起数十秒、超过前端 15s 超时。竞速与兜底路径都按
+# 该预算放弃（VEW-54）；调用方给了整体 deadline 时扫描仍不超过该预算（评审 F3）。
+#
+# 定 8s 而不是原值 6s（VEW-62 实测）：单个候选最坏成本是「一次 socket 超时 + 一次
+# 重连重试」= 2.5+0.2+2.5 ≈ 5.2s，而预筛已经先花掉 1.5s，6s 预算只剩 4.5s 窗口 ——
+# 恰好比重试所需的 5.2s 短，可用镜像只要丢了首包就必定被切掉（实测端到端 init
+# 8 次只成功 6 次，两次失败都卡在 6.0s 预算上）。8s 留出 6.5s 窗口，重试跑得完。
+_MOOTDX_SCAN_BUDGET = 8.0
 # 分钟链路整体预算（秒）：mootdx 探测/取数 + 东财回退合计计入，须小于前端 15s
 # 超时。超时放弃本次取数，返回空而非让请求挂起（VEW-54）。
+#
+# 该预算是**整条链路**的硬边界，不只管 mootdx 阶段：东财回退的单次 HTTP 超时按剩余
+# 预算夹紧（见 _bounded_eastmoney_timeout），重试退避也在预算内才 sleep。否则
+# 「8s 扫描 + 15s 首次回退 = 23s」会让预算形同虚设（VEW-62 评审 ①）。
 _MOOTDX_MINUTE_BUDGET = 12.0
+# 东财回退单次请求的默认超时（秒），与 eastmoney_* 的默认值一致。
+_EASTMONEY_FALLBACK_TIMEOUT = 15.0
+# 夹紧后的下限（秒）：剩余预算再少也至少给一次请求这点时间，否则回退等于直接放弃。
+_EASTMONEY_FALLBACK_MIN_TIMEOUT = 1.0
 
 # 源级探针等待取数锁的上限（秒）。探针与取数共用同一 client 与同一把锁：取数正在
 # 翻页时探针若无限期等待，会把串行的 run_all_probes() 整轮拖住，排在后面的
@@ -132,6 +176,38 @@ _MOOTDX_PROBE_LOCK_TIMEOUT = 5.0
 # 备用。两者都必须能取到才认为镜像可用 —— 只握手、部分周期空回来的镜像不能选。
 _MOOTDX_PROBE_FREQUENCIES: tuple[int, ...] = (4, 0)
 
+# 探测期的 socket 超时（秒），只作用于探测，镜像被采用后会恢复
+# _MOOTDX_CONNECT_TIMEOUT。公开镜像里「TCP 连得上但从不回包」的占多数（VEW-62 实测
+# 15 个可达候选中 14 个如此），每个候选的成本就是一次 socket 超时；收紧到 2.5s 后
+# 单个死镜像实测 5.3s（2.5 超时 + 0.2 退避 + 2.5 重试），一轮并发探测装得进预算。
+# 试过收到 1.5s，反而更差：可用镜像在重连后要约 2s 才回包，1.5s 会把重试那次也切掉
+# （成功率 8/12 vs 2.5s 下的 11/12），所以超时不能再压。
+_MOOTDX_PROBE_TIMEOUT = 2.5
+# 探测期的重试退避（秒）。tdxpy 默认策略 [0.1,0.5,1,2] 会在不回包的镜像上重连重试
+# 4 次，单个候选实测 52.3s，必须换掉；但完全不重试又会误杀可用镜像 —— 实测
+# 115.238.90.165 每次新建连接约半数丢首个请求，一次重连重试能把成功率拉回 17/20。
+# 再加一次退避会把死镜像成本推到 8.3s，超出 _MOOTDX_SCAN_BUDGET，故只保留一次。
+_MOOTDX_PROBE_BACKOFFS: tuple[float, ...] = (0.2,)
+# 并发探测宽度：一轮扫描同时探测的候选数上限。串行探测下 6s 预算只够覆盖 1 个候选
+# （VEW-62 实测），并发后整池可达候选在一个探测窗口内出结果，可用的那个 0.1s 即返回。
+_MOOTDX_PROBE_WORKERS = 16
+# 探测期建连超时的下限（秒）。建连在竞速里是**串行**的（mootdx 的 config 是模块级
+# 单例，见 _probe_mirrors_concurrently），所以它必须有上界；但也不能压到 0，否则预算
+# 快耗尽时连正常镜像都建不上（VEW-62 评审 ③）。
+_MOOTDX_PROBE_MIN_TIMEOUT = 0.5
+
+
+class _ProbeRetryStrategy:
+    """探测期重试策略：按 ``_MOOTDX_PROBE_BACKOFFS`` 重连重试（见其取舍说明）。
+
+    只替换 ``retry_strategy``，仍复用 tdxpy 的重连重试机制 —— 正是它能把「丢首包」
+    的可用镜像救回来，所以探测期不能简单地把 ``auto_retry`` 关掉。
+    """
+
+    @classmethod
+    def generate(cls):
+        yield from _MOOTDX_PROBE_BACKOFFS
+
 
 def _mootdx_probe_symbol() -> str:
     """Return the known-liquid symbol used to distinguish mirror vs symbol gaps."""
@@ -140,17 +216,41 @@ def _mootdx_probe_symbol() -> str:
 
 
 def _disable_tdx_setup_handshake(
-    client: Any, server: Optional[tuple[str, int]]
+    client: Any,
+    server: Optional[tuple[str, int]],
+    timeout: float = _MOOTDX_CONNECT_TIMEOUT,
 ) -> None:
-    """关闭 pytdx/tdxpy 客户端的 setup 握手包（VEW-60）。
+    """关闭 pytdx/tdxpy 客户端的 setup 握手包，并重连使其生效（VEW-60 / VEW-62）。
 
-    底层 ``TdxHq_API`` 默认 ``need_setup=True``：连接后先发 3 个 setup 包（取服务器
-    信息），之后才发首个业务请求。公开通达信镜像普遍不实现该握手，其响应与后续
-    ``get_security_bars`` 的响应**错位**，导致每次取数都解析失败、恒返回 ``None``。
-    而 ``_try_mootdx_server`` 把「取数为空」判定为镜像不可用，于是 curated 6 个
-    镜像被逐个跳过、mootdx 整体 ``skipped``——主源其实可用，只是被库的握手挡在门外
-    （实测：裸 TDX 协议直连同一镜像取数正常，置 ``need_setup=False`` 后同一调用
-    立即返回 K 线）。
+    底层 ``TdxHq_API`` 默认 ``need_setup=True``：``connect()`` 里先发 3 个 setup 包
+    （取服务器信息），之后才发首个业务请求。公开通达信镜像普遍不实现该握手，其响应
+    与后续 ``get_security_bars`` 的响应**错位**，导致每次取数都解析失败、恒返回
+    ``None``，于是镜像被逐个判定不可用——主源其实可用，只是被库的握手挡在门外。
+
+    **必须重连才生效**：``need_setup`` 只在 ``connect()`` 内部被读取，而
+    ``StdQuotes.__init__`` 在构造时就调用了 ``connect()``；等 ``Quotes.factory``
+    返回时 setup 包已经发出去、响应流已经错位，此时再置标志位对这条连接没有任何
+    补救作用（VEW-62 实测，同一镜像 ``115.238.90.165``，同一 ``Quotes.factory``）：
+
+    ==============================  ==================
+    置位时机                        取数结果
+    ==============================  ==================
+    ``connect()`` 之前（理想）       OK，3 根日线
+    ``factory`` 返回后（仅置位）     空，恒 None
+    ``factory`` 返回后 + 重连        OK，3 根日线
+    ==============================  ==================
+
+    时序由 ``tests/test_data_source_fixes_vew60.py`` 的 ``HandshakeReconnectTests``
+    固定：那里的假 client 把「错位」建模成**连接**的属性（握手发出即错位，重连后
+    因 ``need_setup`` 已为 False 而干净），因此只置标志位不重连会稳定判负 —— 该用例
+    能区分「修好了」和「没修」，而不是两种情况都绿。
+
+    因此置位后重连一次，让会话从干净状态开始。建连本就失败的 client（``closed``
+    仍为 True）跳过重连，避免死镜像白白多付一次建连超时。
+
+    ``timeout`` 是重连用的建连超时：探测期传 ``_MOOTDX_PROBE_TIMEOUT``，否则建连会
+    回到取数用的 5s —— 而建连在竞速里是串行的，一个卡在 TDX 层的候选能串行吃掉 5s
+    （VEW-62 评审 ③）。
 
     属性不存在时静默跳过，不因 mootdx/tdxpy 版本差异中断初始化。
     """
@@ -161,41 +261,220 @@ def _disable_tdx_setup_handshake(
         api.need_setup = False
     except Exception as e:  # pragma: no cover - 防御性
         logger.warning(f"mootdx 关闭 setup 握手失败({server or '配置默认'}): {e}")
+        return
+    if getattr(api, "closed", True):
+        # 建连就没成功，没有需要重建的会话；重连只会再等一次建连超时。
+        return
+    ip, port = getattr(api, "ip", None), getattr(api, "port", None)
+    if not ip or not port:
+        return
+    try:
+        api.disconnect()
+        api.connect(ip, int(port), time_out=timeout)
+    except Exception as e:  # pragma: no cover - 防御性
+        logger.warning(f"mootdx 关闭握手后重连失败({server or '配置默认'}): {e}")
 
 
-def _try_mootdx_server(
-    Quotes, server: Optional[tuple[str, int]], deadline: Optional[float] = None
-):
-    """Build a client for one TDX mirror and confirm it returns K-lines.
+def _tcp_reachable(server: tuple[str, int], timeout: float) -> bool:
+    """TCP 建连探测：能建连的镜像才可能取到 K 线（VEW-62）。"""
+    try:
+        with socket.create_connection(
+            (server[0], int(server[1])), timeout=max(float(timeout), 0.05)
+        ):
+            return True
+    except Exception:
+        return False
 
-    ``server`` of ``None`` means "let mootdx use its configured default" (a bare
-    ``Quotes.factory``). We probe the two periods the depth chart actually uses —
-    daily (frequency=4) and 5-minute (frequency=0) — and accept the mirror only if
-    both return bars, otherwise ``None``. A mirror that handshakes but serves one
-    period empty can still leave part of the UI blank (VEW-36).
 
-    ``deadline`` is an absolute ``time.monotonic()`` timestamp bounding this probe;
-    once reached the probe gives up (``None``) so a slow mirror cannot eat the whole
-    request budget (VEW-54).
+def _filter_reachable_servers(
+    servers: list[tuple[str, int]],
+    timeout: float,
+    workers: int = _MOOTDX_REACHABILITY_WORKERS,
+) -> list[tuple[str, int]]:
+    """并发 TCP 预筛，按入参顺序返回可达的候选（VEW-62）。
+
+    死镜像的成本几乎全在建连等待上，串行探测会把扫描预算耗在少数几个候选上。
+    并发预筛把「整池可达性」压缩到一个超时窗口内，让一轮扫描能覆盖整个镜像池；
+    TDX 协议交互与 K 线校验仍由 ``_try_mootdx_server`` 逐个完成。
+
+    判定口径是**建连超时**：建连慢于 ``timeout`` 的候选按不可达剪掉，不会进入 K 线
+    校验。也就是说预筛在「必须真能取到 K 线」之前多加了一道 TCP 时限，对「慢但可用」
+    的镜像是会误杀的 —— 所以调用方给 ``timeout`` 设了下限（见
+    ``_MOOTDX_REACHABILITY_MIN_TIMEOUT``），不随剩余预算一路压到几百毫秒。
     """
-    if deadline is not None and time.monotonic() >= deadline:
-        return None
+    if not servers:
+        return []
+    if len(servers) == 1:
+        return [servers[0]] if _tcp_reachable(servers[0], timeout) else []
+    reachable: set[tuple[str, int]] = set()
+    pool_size = max(min(len(servers), int(workers)), 1)
+    # 成本口径（VEW-62 评审 ⑤）：预筛的墙钟上限就是 ``timeout`` —— 每个 worker 都被
+    # ``socket.create_connection(timeout=...)`` 守着，且所有候选一次性提交，所以
+    # 「有黑洞 IP 就等满 1.5s」是有意为之的固定开销，不是无界等待。这里**不**做
+    # 「够 N 个可达就提前收敛」：实测池形是「14 个秒回 TCP 但从不回 K 线 + 1 个可用」，
+    # 按完成先后提前收敛恰好会优先丢掉那个可用的（它和死镜像一样快），代价是整池判死
+    # 后进 30s 冷却。宁可固定多花 1.5s。
+    with ThreadPoolExecutor(max_workers=pool_size) as pool:
+        futures = {pool.submit(_tcp_reachable, s, timeout): s for s in servers}
+        for future in as_completed(futures):
+            try:
+                if future.result():
+                    reachable.add(futures[future])
+            except Exception:  # pragma: no cover - 防御性
+                continue
+    return [s for s in servers if s in reachable]
+
+
+def _apply_probe_tuning(client: Any) -> dict:
+    """把 client 切到「探测模式」，返回原值供 :func:`_restore_client_tuning` 恢复。
+
+    探测模式 = 短 socket 超时（``_MOOTDX_PROBE_TIMEOUT``）+ 只重试一次
+    （``_ProbeRetryStrategy``）。镜像被采用后必须恢复，取数路径要保留原来的 5s
+    超时与 tdxpy 默认的 4 次重连重试（VEW-62）。
+
+    短超时同时要盖到**重连新建的 socket** 上：tdxpy 的 ``last_ack_time`` 重试时会
+    ``disconnect()`` + ``connect(ip, port)``，而这次 connect 用的是 ``CONNECT_TIMEOUT``
+    默认值，新建的 socket 于是又变回 5s —— 实测死镜像因此要 7.8s 而不是 5.2s。故把
+    ``api.connect`` 包一层，重连后重新套上探测超时。
+    """
+    saved: dict = {}
+    api = getattr(client, "client", None)
+    if api is None:
+        return saved
+
+    def _set_probe_timeout() -> bool:
+        sock = getattr(api, "client", None)
+        if sock is None or not hasattr(sock, "settimeout"):
+            return False
+        try:
+            sock.settimeout(_MOOTDX_PROBE_TIMEOUT)
+            return True
+        except Exception:  # pragma: no cover - 防御性
+            return False
+
+    # 存的是**取数模式**该有的超时，而不是当前 socket 上的值：探测期的 client 是带着
+    # _MOOTDX_PROBE_TIMEOUT 建起来的（见 _build_mootdx_client 的 timeout 入参），照抄
+    # 现值会把 2.5s 当成"原值"恢复回去。另外 gettimeout() 可能返回 None（无超时），
+    # 用它当恢复条件会静默跳过恢复，让被采用的镜像永久停在探测超时上（VEW-62 评审 ⑦）。
+    saved["timeout"] = _MOOTDX_CONNECT_TIMEOUT
+    _set_probe_timeout()
+    if hasattr(api, "connect"):
+        try:
+            original_connect = api.connect
+
+            def _probe_connect(
+                ip: Any = None,
+                port: int = 7709,
+                time_out: float = _MOOTDX_PROBE_TIMEOUT,
+                **kw,
+            ):
+                result = original_connect(ip, port, time_out=time_out, **kw)
+                _set_probe_timeout()
+                return result
+
+            saved["connect"] = original_connect
+            api.connect = _probe_connect
+        except Exception:  # pragma: no cover - 防御性
+            saved.pop("connect", None)
+    if hasattr(api, "retry_strategy"):
+        try:
+            saved["retry_strategy"] = api.retry_strategy
+            api.retry_strategy = _ProbeRetryStrategy
+        except Exception:  # pragma: no cover - 防御性
+            saved.pop("retry_strategy", None)
+    if hasattr(api, "auto_retry"):
+        try:
+            saved["auto_retry"] = api.auto_retry
+            api.auto_retry = True
+        except Exception:  # pragma: no cover - 防御性
+            saved.pop("auto_retry", None)
+    return saved
+
+
+def _restore_client_tuning(client: Any, saved: dict) -> None:
+    """把探测模式改动的 client 设置恢复成取数模式的原值。"""
+    api = getattr(client, "client", None)
+    if api is None or not saved:
+        return
+    sock = getattr(api, "client", None)
+    if "timeout" in saved and sock is not None:
+        try:
+            sock.settimeout(saved["timeout"])
+        except Exception:  # pragma: no cover - 防御性
+            pass
+    for attr in ("connect", "retry_strategy", "auto_retry"):
+        if attr in saved:
+            try:
+                setattr(api, attr, saved[attr])
+            except Exception:  # pragma: no cover - 防御性
+                pass
+
+
+def _bounded_probe_timeout(deadline: Optional[float]) -> float:
+    """探测期建连超时：默认 ``_MOOTDX_PROBE_TIMEOUT``，按剩余预算夹紧并保底。
+
+    建连在竞速里是串行的（见 :func:`_probe_mirrors_concurrently`），所以它必须有
+    上界；预算快耗尽时也不能压成 0，否则正常镜像也建不上（VEW-62 评审 ③）。
+    """
+    if deadline is None:
+        return _MOOTDX_PROBE_TIMEOUT
+    remaining = deadline - time.monotonic()
+    return max(_MOOTDX_PROBE_MIN_TIMEOUT, min(_MOOTDX_PROBE_TIMEOUT, remaining))
+
+
+def _bounded_eastmoney_timeout(deadline: Optional[float]) -> float:
+    """东财回退单次请求的超时：默认 15s，按剩余预算夹紧并保底（VEW-62 评审 ①）。
+
+    回退阶段原来只在两次尝试之间检查 deadline，而单次 HTTP 超时恒为 15s，于是
+    「8s 扫描 + 15s 首次回退」能冲到 23s，分钟链路的 12s 预算形同虚设。夹紧之后
+    单次回退装得进剩余预算，预算才真的是整条链路的边界。
+    """
+    if deadline is None:
+        return _EASTMONEY_FALLBACK_TIMEOUT
+    remaining = deadline - time.monotonic()
+    return max(
+        _EASTMONEY_FALLBACK_MIN_TIMEOUT,
+        min(_EASTMONEY_FALLBACK_TIMEOUT, remaining),
+    )
+
+
+def _build_mootdx_client(
+    Quotes,
+    server: Optional[tuple[str, int]],
+    timeout: float = _MOOTDX_CONNECT_TIMEOUT,
+) -> Optional[Any]:
+    """建一个连上 ``server`` 的 mootdx client 并修好 setup 握手（VEW-62）。
+
+    只负责「建连 + 修握手」，不做 K 线校验 —— 校验由
+    :func:`_mirror_serves_bars` 单独完成，以便并发探测时把建连串行、取数并行。
+
+    ``timeout`` 同时管住建连与握手重连两次 connect（``StdQuotes.__init__`` 会把
+    它透传给 ``connect(time_out=...)``）。探测路径传 ``_MOOTDX_PROBE_TIMEOUT``，
+    否则这段串行的建连会按取数用的 5s 走，成为竞速里没有上界的一段。
+    """
     try:
         if server is None:
-            client = Quotes.factory(market="std")
+            client = Quotes.factory(market="std", timeout=timeout)
         else:
-            client = Quotes.factory(
-                market="std", server=server, timeout=_MOOTDX_CONNECT_TIMEOUT
-            )
+            client = Quotes.factory(market="std", server=server, timeout=timeout)
     except Exception as e:
         logger.warning(f"mootdx 连接 {server or '配置默认'} 失败: {e}")
         return None
+    _disable_tdx_setup_handshake(client, server, timeout=timeout)
+    return client
 
-    _disable_tdx_setup_handshake(client, server)
 
+def _mirror_serves_bars(
+    client: Any, server: Optional[tuple[str, int]], deadline: Optional[float] = None
+) -> bool:
+    """校验 client 的两个周期都能取到 K 线；探测期设置由调用方负责。
+
+    只握手、部分周期空回来的镜像不能选：深度图默认取 5 分钟线（frequency=0），
+    日线（frequency=4）是备用周期，任一为空都会让对应视图留白（VEW-36）。
+    """
     for freq in _MOOTDX_PROBE_FREQUENCIES:
         if deadline is not None and time.monotonic() >= deadline:
-            return None
+            return False
         try:
             probe = client.bars(
                 symbol=_mootdx_probe_symbol(), frequency=freq, start=0, offset=3
@@ -204,15 +483,173 @@ def _try_mootdx_server(
             logger.warning(
                 f"mootdx 通过 {server or '配置默认'} 拉取 freq={freq} K线失败: {e}"
             )
-            return None
+            return False
         if probe is None or probe.empty:
             logger.warning(
                 f"mootdx 镜像 {server or '配置默认'} freq={freq} 未返回有效K线, 跳过"
             )
-            return None
+            return False
+    return True
 
+
+def _close_mootdx_client(client: Any) -> None:
+    """关闭探测失败的 client，避免并发探测时攒下没人回收的连接。"""
+    try:
+        client.close()
+    except Exception:  # pragma: no cover - 防御性
+        pass
+
+
+def _try_mootdx_server(
+    Quotes, server: Optional[tuple[str, int]], deadline: Optional[float] = None
+):
+    """Build a client for one TDX mirror and confirm it returns K-lines.
+
+    ``server`` of ``None`` means "let mootdx use its configured default" (a bare
+    ``Quotes.factory``). The mirror is accepted only if both probe periods return
+    bars (see :func:`_mirror_serves_bars`).
+
+    ``deadline`` is an absolute ``time.monotonic()`` timestamp bounding this probe;
+    once reached the probe gives up (``None``) so a slow mirror cannot eat the whole
+    request budget (VEW-54).
+
+    The probe runs in "probe mode" (short socket timeout, single retry — VEW-62) and
+    the client is restored to fetch mode before being handed back, so the long-lived
+    fetch client keeps the original 5s timeout and tdxpy's default retry behaviour.
+    """
+    if deadline is not None and time.monotonic() >= deadline:
+        return None
+    client = _build_mootdx_client(
+        Quotes, server, timeout=_bounded_probe_timeout(deadline)
+    )
+    if client is None:
+        return None
+    saved = _apply_probe_tuning(client)
+    try:
+        if not _mirror_serves_bars(client, server, deadline):
+            _close_mootdx_client(client)
+            return None
+    finally:
+        _restore_client_tuning(client, saved)
     logger.info(f"mootdx 通过 {server or '配置默认'} 取得K线(日线+5分钟), 使用该镜像")
     return client
+
+
+def _probe_candidate(
+    Quotes,
+    server: tuple[str, int],
+    deadline: Optional[float],
+    build_lock: threading.Lock,
+) -> Optional[tuple[tuple[str, int], Any]]:
+    """并发探测一个候选：建连串行（见 :func:`_probe_mirrors_concurrently`），取数并行。
+
+    建连超时按剩余预算夹紧到探测超时 —— 这段是串行的，用取数用的 5s 会给整轮竞速
+    留一个没有上界的口子（VEW-62 评审 ③）。
+    """
+    with build_lock:
+        client = _build_mootdx_client(
+            Quotes, server, timeout=_bounded_probe_timeout(deadline)
+        )
+    if client is None:
+        return None
+    saved = _apply_probe_tuning(client)
+    try:
+        if not _mirror_serves_bars(client, server, deadline):
+            _close_mootdx_client(client)
+            return None
+    finally:
+        _restore_client_tuning(client, saved)
+    return server, client
+
+
+def _probe_mirrors_concurrently(
+    Quotes, servers: list[tuple[str, int]], deadline: Optional[float] = None
+) -> Optional[tuple[tuple[str, int], Any]]:
+    """并发探测候选镜像，返回第一个能取到 K 线的 ``(server, client)``；全失败返回 ``None``。
+
+    为什么必须并发（VEW-62 实测）：公开镜像池里「TCP 连得上但从不回包」的占多数，
+    单个候选的探测成本就是一次 socket 超时（39 个候选里 24 个拒绝连接、15 个接受
+    连接、只有 1 个真能取到 K 线）。串行探测下 6s 预算只够覆盖 1 个候选，扫描永远
+    走不完；并发后整池可达候选在一个探测窗口内出结果，可用的那个 0.03s 就返回。
+
+    建 client 仍然串行：mootdx 的 config 是**模块级单例**，``StdQuotes.__init__``
+    会先 ``config.set('BESTIP', {'HQ': server})`` 再读回来决定连哪个 IP，并发构造会
+    让客户端连到别人的镜像。取数校验则并发安全：每个 client 是独立 TCP 连接，
+    ``bars()`` 之间没有共享状态。
+
+    ``deadline`` 是硬边界：等待用 ``as_completed(timeout=剩余预算)`` 截断，整池全挂时
+    也在预算内返回 ``None``，而不是让 15 个候选各跑满自己的 socket 超时（实测未截断
+    时会超出 6s 预算 ~4s）。
+
+    拿到第一个可用 client 后立即返回，未完成的探测线程由 ``shutdown(wait=False)``
+    放行，不阻塞调用方。落选 / 超时仍在跑的候选，其 client 由 :func:`_discard_losers`
+    兜底回收。
+    """
+    if not servers:
+        return None
+    if len(servers) == 1:
+        return _probe_candidate(Quotes, servers[0], deadline, threading.Lock())
+    build_lock = threading.Lock()
+    pool = ThreadPoolExecutor(max_workers=min(len(servers), _MOOTDX_PROBE_WORKERS))
+    try:
+        futures = [
+            pool.submit(_probe_candidate, Quotes, s, deadline, build_lock)
+            for s in servers
+        ]
+        timeout = None
+        if deadline is not None:
+            timeout = max(0.0, deadline - time.monotonic())
+        try:
+            for future in as_completed(futures, timeout=timeout):
+                try:
+                    winner = future.result()
+                except Exception:  # pragma: no cover - 防御性
+                    continue
+                if winner is not None:
+                    _discard_losers(futures, future)
+                    logger.info(
+                        f"mootdx 并发探测 {len(servers)} 个可达镜像, "
+                        f"选中 {winner[0][0]}:{winner[0][1]}"
+                    )
+                    return winner
+        except FuturesTimeoutError:
+            logger.warning(
+                f"mootdx 并发探测 {len(servers)} 个镜像超出探测预算, 放弃本轮"
+            )
+            _discard_losers(futures, None)
+            return None
+        return None
+    finally:
+        # 拿到结果即返回，不等落选候选把 socket 超时跑完。
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _discard_losers(futures: list, winner: Any) -> None:
+    """回收竞速落选者的 client：已完成的直接关，还在跑的挂回调等它跑完再关。
+
+    ``winner`` 传 ``None`` 表示没有胜出者（整轮超预算放弃），此时所有候选都按落选
+    处理。
+
+    不加这一步会漏连接：一个候选探测成功后返回的 client 没人接手，而它的 TCP 连接
+    会一直挂到进程退出。挂回调而不是等待，是为了不把落选者剩下的 socket 超时算进
+    请求延迟。
+    """
+
+    def _close_if_won(fut: Any) -> None:
+        try:
+            result = fut.result()
+        except Exception:  # pragma: no cover - 防御性
+            return
+        if result is not None:
+            _close_mootdx_client(result[1])
+
+    for future in futures:
+        if future is winner:
+            continue
+        if future.done():
+            _close_if_won(future)
+        else:
+            future.add_done_callback(_close_if_won)
 
 
 def _init_mootdx_client(deadline: Optional[float] = None):
@@ -223,11 +660,23 @@ def _init_mootdx_client(deadline: Optional[float] = None):
     no K-line body. Here we probe candidates in order and keep the first one that
     returns bars (VEW-36):
 
-    1. ``settings.MOOTDX_SERVERS`` override, else the curated default list;
+    1. ``settings.MOOTDX_SERVERS`` override, else ``MOOTDX_EXTRA_SERVERS`` + the
+       curated default list;
     2. the mirror discovered by the last public scan (fast reuse);
     3. a bounded scan over the mirror list bundled with mootdx when the curated
        set has gone stale (VEW-55);
     4. mootdx's configured default.
+
+    All candidates are first passed through a concurrent TCP reachability filter
+    (VEW-62). Dead mirrors cost a full connect timeout each, so probing them
+    serially let the curated list exhaust ``_MOOTDX_SCAN_BUDGET`` before the scan
+    phase was ever reached — the scan effectively never ran. The filter prunes
+    unreachable candidates in one parallel pass, and the survivors are then raced
+    in parallel (:func:`_probe_mirrors_concurrently`); only reachable ones get the
+    full K-line validation, so the scan covers the whole pool inside one request.
+
+    Because the race takes the first mirror to answer, the curated order is a
+    preference, not a guarantee: when several mirrors work, the quickest wins.
 
     Returns ``None`` only if no mirror yields data. Isolated into its own function
     so tests can inject a failing/succeeding factory without reaching the live TDX
@@ -250,31 +699,55 @@ def _init_mootdx_client(deadline: Optional[float] = None):
     if deadline is None:
         deadline = time.monotonic() + _MOOTDX_SCAN_BUDGET
 
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return None
+
     # Fast candidates first: settings override / curated list, then the last
-    # mirror a scan discovered.  Each is probed with a real K-line fetch.
-    candidates: list[Optional[tuple[str, int]]] = _curated_mootdx_servers()
+    # mirror a scan discovered, then this round's scan window. Each is probed
+    # with a real K-line fetch.
+    candidates: list[tuple[str, int]] = _curated_mootdx_servers()
     if _mootdx_discovered_server and _mootdx_discovered_server not in candidates:
         candidates.append(_mootdx_discovered_server)
 
-    for server in candidates:
-        if time.monotonic() >= deadline:
-            break
-        client = _try_mootdx_server(Quotes, server, deadline=deadline)
-        if client is not None:
-            _mootdx_discovered_server = server
+    # Bounded scan over the public HQ list, gated by a cooldown so a dead mirror
+    # pool isn't re-scanned on every request (VEW-55). The window is appended to
+    # the candidate list rather than probed in a second pass, so the reachability
+    # filter below covers curated and scan candidates in the same parallel pass.
+    scan_window: list[tuple[str, int]] = []
+    if _mootdx_scan_due():
+        scan_window = _mootdx_scan_candidates()
+        for server in scan_window:
+            if server not in candidates:
+                candidates.append(server)
+
+    # 并发 TCP 预筛：剪掉黑洞/拒绝的候选，剩下的才值得花一次完整 K 线校验。
+    # 预筛自身也受剩余预算约束，不会把整体预算吃光。
+    reachable = _filter_reachable_servers(
+        candidates,
+        max(
+            _MOOTDX_REACHABILITY_MIN_TIMEOUT,
+            min(_MOOTDX_REACHABILITY_TIMEOUT, remaining),
+        ),
+    )
+
+    # 并发竞速探测可达候选，第一个返回 K 线的镜像胜出（VEW-62）。串行探测在 6s
+    # 预算内只够覆盖 1 个候选，扫描窗口永远轮不到；并发后整池可达候选在同一个探测
+    # 窗口内出结果，可用的那个通常零点几秒就返回。
+    if reachable and time.monotonic() < deadline:
+        winner = _probe_mirrors_concurrently(Quotes, reachable, deadline=deadline)
+        if winner is not None:
+            server, client = winner
+            # 只在胜出者确实来自本轮扫描窗口时才记「扫描发现的镜像」：这个全局的
+            # 语义是「上一轮扫描发现的镜像」，curated 命中就写会把真正由扫描发现、
+            # 又不在 curated 里的那个镜像记录覆盖掉（VEW-62 评审 ⑥）。
+            if server in scan_window:
+                _mootdx_discovered_server = server
+            if scan_window:
+                _mootdx_last_scan_at = time.monotonic()
             return client
 
-    # Curated set exhausted: run a bounded scan over the public HQ list. Gated by
-    # a cooldown so a dead mirror pool isn't re-scanned on every request (VEW-55).
-    if _mootdx_scan_due():
-        for server in _mootdx_scan_candidates():
-            if time.monotonic() >= deadline:
-                break
-            client = _try_mootdx_server(Quotes, server, deadline=deadline)
-            if client is not None:
-                _mootdx_discovered_server = server
-                _mootdx_last_scan_at = time.monotonic()
-                return client
+    if scan_window:
         _mootdx_last_scan_at = time.monotonic()
 
     # Last resort: mootdx configured default.
@@ -288,31 +761,49 @@ def _init_mootdx_client(deadline: Optional[float] = None):
     return None
 
 
-def _curated_mootdx_servers() -> list[tuple[str, int]]:
-    """候选镜像列表：``settings.MOOTDX_SERVERS`` 优先，否则内置 curated 列表。
+def _parse_mootdx_server_list(raw: str, source: str) -> list[tuple[str, int]]:
+    """解析逗号分隔的 ``ip:port`` 配置（裸 ip 默认 7709 端口）。
 
-    运维可把失效镜像替换为逗号分隔的 ``ip:port``（裸 ip 默认 7709 端口），
-    避免每次镜像失效都要改代码发版。非空配置会完整覆盖内置列表。
+    非法端口项跳过并告警，不因一条脏配置丢掉整张列表。
+    """
+    servers: list[tuple[str, int]] = []
+    for item in (raw or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if ":" in item:
+            ip, _, port = item.rpartition(":")
+            try:
+                servers.append((ip.strip(), int(port)))
+            except ValueError:
+                logger.warning(f"{source} 非法端口项: {item!r}")
+        else:
+            servers.append((item, 7709))
+    return servers
+
+
+def _curated_mootdx_servers() -> list[tuple[str, int]]:
+    """候选镜像列表，按优先级排列（VEW-55 / VEW-62）。
+
+    - ``settings.MOOTDX_SERVERS`` 非空时**完整覆盖**内置列表：应急止血用，代价是
+      把主源收敛到配置的这几个镜像（单点），镜像再失效就没有备选。
+    - 否则返回 ``MOOTDX_EXTRA_SERVERS`` + 内置 curated 列表：**追加**语义，运维可
+      把实测可用的外部镜像补进池子，同时保留 curated 作为回退。公开镜像池会整体
+      漂移（VEW-60 复测时 6 个 curated 全挂），追加路径让池子能持续扩充而不必
+      收敛到单点。
     """
     raw = getattr(settings, "MOOTDX_SERVERS", "")
     if raw:
-        servers: list[tuple[str, int]] = []
-        for item in raw.split(","):
-            item = item.strip()
-            if not item:
-                continue
-            if ":" in item:
-                ip, _, port = item.rpartition(":")
-                try:
-                    servers.append((ip.strip(), int(port)))
-                except ValueError:
-                    logger.warning(f"MOOTDX_SERVERS 非法端口项: {item!r}")
-            else:
-                servers.append((item, 7709))
+        servers = _parse_mootdx_server_list(raw, source="MOOTDX_SERVERS")
         if servers:
             return servers
         logger.warning("MOOTDX_SERVERS 配置为空结果，回退内置 curated 列表")
-    return list(_MOOTDX_SERVERS)
+    servers = _parse_mootdx_server_list(
+        getattr(settings, "MOOTDX_EXTRA_SERVERS", ""),
+        source="MOOTDX_EXTRA_SERVERS",
+    )
+    servers.extend(_MOOTDX_SERVERS)
+    return servers
 
 
 def _mootdx_scan_candidates(
@@ -322,9 +813,10 @@ def _mootdx_scan_candidates(
 
     ``hosts`` 缺省时从 ``mootdx.consts.HQ_HOSTS``（三元组 ``(name, ip, port)``）
     加载；测试可传入固定样例列表，无需依赖 mootdx 安装。扫描规模受
-    ``settings.MOOTDX_SCAN_LIMIT`` 限制（0 表示禁用扫描），避免死镜像池拖慢 init。
-    游标每次推进 limit，多轮扫描（间隔冷却期）能覆盖完整列表；真正的「能取到
-    K 线」校验仍在 _try_mootdx_server 中完成。
+    ``settings.MOOTDX_SCAN_LIMIT`` 限制（0 表示禁用扫描）。默认值已放开到覆盖
+    整个内置池（VEW-62）：候选先经并发 TCP 可达性预筛，死镜像不再逐个吃满建连
+    超时，一轮扫描的成本已降到秒级，游标轮转只是兜底。真正的「能取到 K 线」
+    校验仍在 _try_mootdx_server 中完成。
     """
     global _mootdx_scan_cursor
     limit = int(getattr(settings, "MOOTDX_SCAN_LIMIT", 10))
@@ -408,7 +900,7 @@ def _get_mootdx_client(deadline: Optional[float] = None):
             return None
         _mootdx_scan_in_progress = True
 
-    # 扫描阶段单独兜底：整体 deadline 再宽，镜像探测自身也不超过 6s。
+    # 扫描阶段单独兜底：整体 deadline 再宽，镜像探测自身也不超过 _MOOTDX_SCAN_BUDGET。
     scan_deadline = time.monotonic() + _MOOTDX_SCAN_BUDGET
     if deadline is not None:
         scan_deadline = min(scan_deadline, deadline)
@@ -1002,15 +1494,19 @@ class AStockDataProvider(MarketDataProvider):
             return df
 
         # 2. Fallback: Eastmoney HTTP
+        # 单次回退的超时按剩余预算夹紧：回退阶段原来只在两次尝试之间检查 deadline，
+        # 而 eastmoney_* 的单次 HTTP 超时恒为 15s，mootdx 全挂时最坏是「8s 扫描 +
+        # 15s 首次回退 ≈ 23s」，12s 预算与前端 15s 超时都拦不住（VEW-62 评审 ①）。
         for attempt in range(1, max_retries + 2):
             if time.monotonic() >= deadline:
                 logger.warning(
                     f"分钟数据请求 {stock_code} 在回退阶段超预算, 放弃本次取数"
                 )
                 return None
+            http_timeout = _bounded_eastmoney_timeout(deadline)
             try:
                 if period == "1":
-                    df = eastmoney_trends2(code=stock_code)
+                    df = eastmoney_trends2(code=stock_code, timeout=http_timeout)
                 else:
                     fqt = fqt_code(adjust)
                     df = eastmoney_kline(
@@ -1019,6 +1515,7 @@ class AStockDataProvider(MarketDataProvider):
                         beg="",
                         end="20500101",
                         fqt=fqt,
+                        timeout=http_timeout,
                     )
 
                 if df is not None and not df.empty:
@@ -1044,6 +1541,12 @@ class AStockDataProvider(MarketDataProvider):
                 )
 
             if attempt <= max_retries:
+                # 退避也要留在预算内，否则 sleep 会把总耗时顶出 12s 预算。
+                if time.monotonic() + _RETRY_SLEEP * attempt >= deadline:
+                    logger.warning(
+                        f"分钟数据请求 {stock_code} 回退退避将超出预算, 放弃本次取数"
+                    )
+                    return None
                 time.sleep(_RETRY_SLEEP * attempt)
                 continue
             logger.warning(

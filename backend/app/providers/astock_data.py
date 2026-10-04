@@ -22,7 +22,7 @@ from app.core.source_health import source_monitor
 logger = logging.getLogger(__name__)
 
 
-def _http_get_json(url: str, timeout: int = 15, record: bool = True) -> Any:
+def _http_get_json(url: str, timeout: float = 15, record: bool = True) -> Any:
     """Fetch JSON from an HTTP endpoint using urllib (a-stock-data pattern).
 
     Uses urllib instead of the requests library to avoid proxy interference
@@ -298,6 +298,7 @@ def eastmoney_kline(
     beg: str = "",
     end: str = "",
     fqt: str = "0",
+    timeout: float = 15,
 ) -> Optional[pd.DataFrame]:
     """Fetch K-line data (daily or minute) from Eastmoney push2his.
 
@@ -307,6 +308,8 @@ def eastmoney_kline(
         beg: Start date YYYYMMDD (empty = earliest).
         end: End date YYYYMMDD (empty = latest).
         fqt: Adjust. "0"=none, "1"=qfq, "2"=hfq.
+        timeout: 单次 HTTP 超时（秒）。调用方有整体预算时应按剩余预算传入，否则
+            固定的 15s 会让上层预算失效（VEW-62 评审 ①）。
 
     Returns:
         DataFrame with columns [datetime, open, close, high, low, volume, amount]
@@ -324,7 +327,7 @@ def eastmoney_kline(
     }
     try:
         url = _build_url(KLINE_URL, params)
-        d = _http_get_json(url, timeout=15)
+        d = _http_get_json(url, timeout=timeout)
         klines = (d.get("data") or {}).get("klines") or []
         if not klines:
             logger.warning(f"股票 {code} K线数据为空 (klt={klt})")
@@ -387,7 +390,9 @@ def eastmoney_ping(code: str = "000001", timeout: int = 10) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def eastmoney_trends2(code: str, ndays: int = 5) -> Optional[pd.DataFrame]:
+def eastmoney_trends2(
+    code: str, ndays: int = 5, timeout: float = 15
+) -> Optional[pd.DataFrame]:
     """Fetch 1-minute trend data from Eastmoney trends2 endpoint.
 
     This endpoint returns higher-granularity intraday data than the kline
@@ -396,6 +401,8 @@ def eastmoney_trends2(code: str, ndays: int = 5) -> Optional[pd.DataFrame]:
     Args:
         code: 6-digit stock code.
         ndays: Number of recent trading days to fetch (max ~5).
+        timeout: 单次 HTTP 超时（秒）。调用方有整体预算时应按剩余预算传入，否则
+            固定的 15s 会让上层预算失效（VEW-62 评审 ①）。
 
     Returns:
         DataFrame with columns [datetime, open, close, high, low, volume, amount]
@@ -411,7 +418,7 @@ def eastmoney_trends2(code: str, ndays: int = 5) -> Optional[pd.DataFrame]:
     }
     try:
         url = _build_url(TRENDS2_URL, params)
-        d = _http_get_json(url, timeout=15)
+        d = _http_get_json(url, timeout=timeout)
         trends = (d.get("data") or {}).get("trends") or []
         if not trends:
             logger.warning(f"股票 {code} 分时数据为空")
