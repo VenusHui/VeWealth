@@ -103,7 +103,29 @@ class MootdxServerSelectionTests(unittest.TestCase):
         # 候选一次性全交给竞速（并发），而不是逐个串行探测
         self.assertEqual(race.call_count, 1)
         self.assertEqual(race.call_args[0][1], curated)
-        self.assertEqual(ap._mootdx_discovered_server, second)
+        # curated 命中不算「扫描发现的镜像」，不写这条记录（评审 ⑥）
+        self.assertIsNone(ap._mootdx_discovered_server)
+
+    def test_curated_winner_does_not_overwrite_discovered_server(self):
+        """curated 命中时不覆盖「上一轮扫描发现的镜像」这条记录（评审 ⑥）。
+
+        该全局的语义是「扫描发现的镜像」，之前任何胜出者都会写它 —— curated 命中就
+        把真正由扫描发现、又不在 curated 里的那个镜像记录冲掉了，下次 init 的快速
+        复用路径随之失效。
+        """
+        discovered = ("203.0.113.30", 7709)
+        ap._mootdx_discovered_server = discovered
+        ap._mootdx_last_scan_at = 1e9  # 冷却期内，本轮没有扫描窗口
+        client = FakeClient(_nonempty_df())
+        curated_first = ap._curated_mootdx_servers()[0]
+        with mock.patch.object(
+            ap, "_mootdx_scan_due", return_value=False
+        ), mock.patch.object(
+            ap, "_probe_mirrors_concurrently", return_value=(curated_first, client)
+        ):
+            got = ap._init_mootdx_client()
+        self.assertIs(got, client)
+        self.assertEqual(ap._mootdx_discovered_server, discovered)
 
     def test_settings_override_replaces_curated_list(self):
         """MOOTDX_SERVERS 配置优先于内置 curated 列表。"""
@@ -200,7 +222,11 @@ class MootdxServerSelectionTests(unittest.TestCase):
             scan.assert_not_called()
 
     def test_try_server_returns_client_on_real_data(self):
-        """能取到非空 K 线的 client 被返回。"""
+        """能取到非空 K 线的 client 被返回。
+
+        建连超时用探测超时而不是取数用的 5s：建连在竞速里是串行的，必须更紧
+        （VEW-62 评审 ③）。
+        """
         client = FakeClient(_nonempty_df())
         quotes = FakeQuotes(client)
         got = ap._try_mootdx_server(quotes, ("1.1.1.1", 7709))
@@ -208,7 +234,7 @@ class MootdxServerSelectionTests(unittest.TestCase):
         quotes.factory.assert_called_with(
             market="std",
             server=("1.1.1.1", 7709),
-            timeout=ap._MOOTDX_CONNECT_TIMEOUT,
+            timeout=ap._MOOTDX_PROBE_TIMEOUT,
         )
 
     def test_try_server_skips_empty_klines(self):
@@ -224,12 +250,28 @@ class MootdxServerSelectionTests(unittest.TestCase):
         self.assertIsNone(ap._try_mootdx_server(quotes, ("1.1.1.1", 7709)))
 
     def test_try_server_builds_default_when_no_server(self):
-        """server=None 时退化为不带 server 参数的默认工厂调用。"""
+        """server=None 时退化为不带 server 参数的默认工厂调用。
+
+        配置默认这条兜底路径同样受探测超时约束 —— 原来交给 mootdx 自己的 15s 默认值，
+        预算快耗尽时也能把整条链路顶出前端超时（VEW-62 评审 ③）。
+        """
         client = FakeClient(_nonempty_df())
         quotes = FakeQuotes(client)
         got = ap._try_mootdx_server(quotes, None)
         self.assertIs(got, client)
-        quotes.factory.assert_called_once_with(market="std")
+        quotes.factory.assert_called_once_with(
+            market="std", timeout=ap._MOOTDX_PROBE_TIMEOUT
+        )
+
+    def test_try_server_build_timeout_clamped_by_deadline(self):
+        """兜底路径的建连超时也按剩余预算夹紧并保底（评审 ③）。"""
+        client = FakeClient(_nonempty_df())
+        quotes = FakeQuotes(client)
+        clock = mock.Mock(return_value=100.0)
+        with mock.patch.object(ap.time, "monotonic", clock):
+            got = ap._try_mootdx_server(quotes, ("1.1.1.1", 7709), deadline=101.0)
+        self.assertIs(got, client)
+        self.assertEqual(quotes.factory.call_args.kwargs["timeout"], 1.0)
 
     # ------------------------------------------------------------------
     # 镜像池扩充路径（VEW-62）
@@ -505,7 +547,7 @@ class MootdxConcurrentProbeTests(unittest.TestCase):
         state = {"active": 0, "peak": 0}
         guard = threading.Lock()
 
-        def build(Quotes, server):
+        def build(Quotes, server, **kwargs):
             with guard:
                 state["active"] += 1
                 state["peak"] = max(state["peak"], state["active"])

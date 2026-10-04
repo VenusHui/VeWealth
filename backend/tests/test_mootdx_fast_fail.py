@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import threading
 import unittest
 from unittest import mock
 
@@ -270,6 +271,67 @@ class MootdxFastFailTests(unittest.TestCase):
         quotes.factory = mock.Mock(return_value=client)
         self.assertIs(ap._try_mootdx_server(quotes, ("1.1.1.1", 7709)), client)
 
+    def test_probe_restores_fetch_timeout_when_socket_reports_none(self):
+        """socket 报 None（无超时）时也要恢复成取数超时，不能静默停在探测超时上。
+
+        原来的恢复条件是 ``saved.get("timeout") is not None``，而探测期建连用的是
+        探测超时，照抄现值 + 用 None 当哨兵会让被采用的镜像永久停在 2.5s（评审 ⑦）。
+        """
+
+        class Sock:
+            def __init__(self):
+                self.timeout = None
+                self.seen = []
+
+            def gettimeout(self):
+                return self.timeout
+
+            def settimeout(self, value):
+                self.seen.append(value)
+                self.timeout = value
+
+        class Client:
+            def __init__(self):
+                self.client = mock.Mock(client=Sock())
+
+            def bars(self, *args, **kwargs):
+                return _kline_df()
+
+        client = Client()
+        quotes = mock.Mock()
+        quotes.factory = mock.Mock(return_value=client)
+        self.assertIs(ap._try_mootdx_server(quotes, ("1.1.1.1", 7709)), client)
+        self.assertEqual(
+            client.client.client.seen,
+            [ap._MOOTDX_PROBE_TIMEOUT, ap._MOOTDX_CONNECT_TIMEOUT],
+        )
+
+    def test_probe_build_timeout_is_bounded_and_clamped(self):
+        """竞速里串行的建连也受探测超时约束，并按剩余预算夹紧、保底（评审 ③）。"""
+        client = FakeQuotes()
+        clock = FakeClock(now=100.0)
+        with mock.patch.object(
+            ap.time, "monotonic", side_effect=clock
+        ), mock.patch.object(
+            ap, "_build_mootdx_client", return_value=client
+        ) as build, mock.patch.object(
+            ap, "_mirror_serves_bars", return_value=True
+        ):
+            ap._probe_candidate(mock.Mock(), ("1.1.1.1", 7709), None, threading.Lock())
+            self.assertEqual(
+                build.call_args.kwargs["timeout"],
+                ap._MOOTDX_PROBE_TIMEOUT,
+                "无 deadline 时用探测超时，而不是取数用的 5s",
+            )
+            ap._probe_candidate(mock.Mock(), ("1.1.1.1", 7709), 101.0, threading.Lock())
+            self.assertEqual(build.call_args.kwargs["timeout"], 1.0)
+            ap._probe_candidate(
+                mock.Mock(), ("1.1.1.1", 7709), 100.05, threading.Lock()
+            )
+            self.assertEqual(
+                build.call_args.kwargs["timeout"], ap._MOOTDX_PROBE_MIN_TIMEOUT
+            )
+
     # ------------------------------------------------------------------
     # 并发快速失败（扫描期间不阻塞锁）
     # ------------------------------------------------------------------
@@ -389,6 +451,69 @@ class MootdxFastFailTests(unittest.TestCase):
             mootdx.call_args.kwargs["deadline"],
             100.0 + ap._MOOTDX_MINUTE_BUDGET,
         )
+
+    def test_minute_fallback_http_timeout_clamped_to_remaining_budget(self):
+        """回退的单次 HTTP 超时按剩余预算夹紧，而不是恒为 15s（评审 ①）。
+
+        不夹紧时最坏是「8s 扫描 + 15s 首次回退 ≈ 23s」，12s 预算与前端 15s 超时都
+        拦不住 —— 这正是 VEW-54 要防的形状。
+        """
+        provider = object.__new__(ap.AStockDataProvider)
+        clock = FakeClock(now=100.0)
+        with mock.patch.object(
+            ap.time, "monotonic", side_effect=clock
+        ), mock.patch.object(ap.time, "sleep"), mock.patch.object(
+            ap, "eastmoney_kline", return_value=None
+        ) as em, mock.patch.object(
+            provider, "_fetch_kline_mootdx", return_value=None
+        ):
+            result = provider.fetch_minute_data(
+                "600519", "", "", period="5", deadline=106.0
+            )
+        self.assertIsNone(result)
+        self.assertEqual(em.call_args.kwargs["timeout"], 6.0)
+
+    def test_minute_fallback_http_timeout_capped_at_default(self):
+        """预算充裕时不放大超时：仍以默认 15s 为上限。"""
+        provider = object.__new__(ap.AStockDataProvider)
+        clock = FakeClock(now=100.0)
+        with mock.patch.object(
+            ap.time, "monotonic", side_effect=clock
+        ), mock.patch.object(ap.time, "sleep"), mock.patch.object(
+            ap, "eastmoney_kline", return_value=None
+        ) as em, mock.patch.object(
+            provider, "_fetch_kline_mootdx", return_value=None
+        ):
+            result = provider.fetch_minute_data(
+                "600519", "", "", period="5", deadline=1000.0
+            )
+        self.assertIsNone(result)
+        self.assertEqual(em.call_args.kwargs["timeout"], ap._EASTMONEY_FALLBACK_TIMEOUT)
+
+    def test_minute_fallback_hanging_http_stays_within_budget(self):
+        """回退卡满自己的超时也不越预算：夹紧后一次就用完，退避不再发生（评审 ①）。"""
+        provider = object.__new__(ap.AStockDataProvider)
+        clock = FakeClock(now=100.0)
+
+        def hanging(**kwargs):
+            # 模拟东财把这次请求挂满它拿到的超时
+            clock.set(clock._now + kwargs["timeout"])
+            return None
+
+        with mock.patch.object(
+            ap.time, "monotonic", side_effect=clock
+        ), mock.patch.object(ap.time, "sleep") as sleeper, mock.patch.object(
+            ap, "eastmoney_kline", side_effect=hanging
+        ), mock.patch.object(
+            provider, "_fetch_kline_mootdx", return_value=None
+        ):
+            result = provider.fetch_minute_data(
+                "600519", "", "", period="5", deadline=112.0
+            )
+        self.assertIsNone(result)
+        # 首次回退被夹到 12s，正好用完预算；退避会把总耗时顶出预算，故不再 sleep
+        self.assertEqual(clock._now, 112.0)
+        sleeper.assert_not_called()
 
     def test_minute_data_fallback_honors_deadline(self):
         """mootdx 返回空且预算在回退前耗尽时，放弃东财回退直接返回空。"""
