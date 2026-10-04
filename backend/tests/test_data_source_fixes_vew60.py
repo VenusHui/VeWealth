@@ -7,7 +7,8 @@
 - 取数链消费 source_monitor 的 eastmoney ``down`` 状态做快速熔断，跳过注定失败
   的重试等待；``is_down`` 以「连续失败达阈值」为口径（评审 M2）；
 - 日线裸 ``end_date`` 上界含结束日当根、带时间的上界保持精确（评审 M1）；
-- 探针 / 分钟取数等取数锁有上限，不会把整轮探针或前端超时预算架空（评审 M3/M4）。
+- 探针 / 分钟取数等取数锁有上限，不会把整轮探针或前端超时预算架空；探针等锁超时
+  只顺延本轮、不改写源状态（评审 M3/M4）。
 """
 
 from __future__ import annotations
@@ -20,8 +21,9 @@ from unittest import mock
 import pandas as pd
 
 from app.core.source_health import (
+    EVENT_DEFERRED,
     SourceHealthMonitor,
-    STATUS_SKIPPED,
+    STATUS_UNKNOWN,
     source_monitor,
 )
 from app.providers import astock_provider as ap
@@ -443,10 +445,15 @@ class FetchLockBudgetTests(_SharedClientTestCase):
         source_monitor.reset()
         super().tearDown()
 
-    def test_probe_reports_skipped_when_lock_is_busy(self):
+    def test_probe_defers_on_lock_timeout_without_touching_source_status(self):
+        """等锁超时只是「本轮没测到」，不得改写成 skipped（VEW-60 复审）。"""
         client = StaticBarsClient(_bars_df(["2026-09-30 15:00:00"]))
         client.bars = mock.Mock(return_value=_bars_df(["2026-09-30 15:00:00"]))
         ap._mootdx_client = client
+
+        # 上一轮探针成功 → 已知状态为 up
+        source_monitor.record_attempt("mootdx", ok=True, duration_ms=12.0)
+        before = source_monitor.metrics()["sources"]["mootdx"]
 
         start = time.monotonic()
         with mock.patch.object(ap, "_MOOTDX_PROBE_LOCK_TIMEOUT", 0.2):
@@ -454,14 +461,43 @@ class FetchLockBudgetTests(_SharedClientTestCase):
                 result = probe_mootdx()
         elapsed = time.monotonic() - start
 
-        self.assertEqual(result.status, STATUS_SKIPPED)
+        self.assertEqual(result.status, STATUS_UNKNOWN)
         self.assertEqual(result.duration_ms, 0)
         client.bars.assert_not_called()
         # 超时即返回，而不是无限期等锁
         self.assertLess(elapsed, 3.0)
-        self.assertEqual(
-            source_monitor.metrics()["sources"]["mootdx"]["status"], "skipped"
+
+        after = source_monitor.metrics()["sources"]["mootdx"]
+        self.assertEqual(after["status"], "up", "顺延不得改写源状态")
+        self.assertEqual(after["total_requests"], before["total_requests"])
+        self.assertEqual(after["total_skipped"], before["total_skipped"])
+        # 仍然留痕：事件流里能看到本轮顺延，且不是 skipped 事件
+        events = source_monitor.events_recent(5)
+        self.assertTrue(
+            any(
+                e["event_type"] == EVENT_DEFERRED and e["source"] == "mootdx"
+                for e in events
+            )
         )
+        self.assertFalse(any(e["event_type"] == "skipped" for e in events))
+
+    def test_deferred_probe_keeps_source_in_overall_status(self):
+        """唯一异常源顺延后，总体健康度不得从 unhealthy 翻成 ok。"""
+        ap._mootdx_client = StaticBarsClient(_bars_df(["2026-09-30 15:00:00"]))
+
+        for _ in range(3):
+            source_monitor.record_attempt("mootdx", ok=False, error="mirror down")
+        self.assertEqual(source_monitor.overall_status(), "unhealthy")
+
+        with mock.patch.object(ap, "_MOOTDX_PROBE_LOCK_TIMEOUT", 0.2):
+            with ap._mootdx_fetch_lock:
+                result = probe_mootdx()
+
+        self.assertEqual(result.status, STATUS_UNKNOWN)
+        self.assertEqual(
+            source_monitor.metrics()["sources"]["mootdx"]["status"], "down"
+        )
+        self.assertEqual(source_monitor.overall_status(), "unhealthy")
 
     def test_minute_fetch_gives_up_when_lock_exceeds_budget(self):
         client = StaticBarsClient(_bars_df(["2026-09-30 15:00:00"]))

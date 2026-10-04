@@ -32,6 +32,7 @@ EVENT_FAILURE = "failure"  # 单次请求失败
 EVENT_FALLBACK = "fallback"  # 主动降级到备源
 EVENT_RECOVERY = "recovery"  # 数据源恢复
 EVENT_SKIPPED = "skipped"  # 未配置 / 依赖缺失，未纳入健康判断
+EVENT_DEFERRED = "deferred"  # 本轮探针顺延（未测到），源状态保持不变
 
 # 状态值
 STATUS_UP = "up"
@@ -298,6 +299,35 @@ class SourceHealthMonitor:
                 event_type=EVENT_SKIPPED,
                 level="INFO",
                 message=f"数据源 {source} 未参与健康检查",
+                detail=detail,
+            )
+        )
+
+    def record_deferred(
+        self,
+        source: str,
+        detail: Optional[str] = None,
+    ) -> None:
+        """记录一次「本轮未测到」的探针顺延（只留痕，**不改源状态**）。
+
+        与 ``record_skipped`` 的区别在于语义：skipped 是「未配置 / 依赖缺失，未纳入
+        健康判断」，会把 ``status`` 置为 ``skipped``，而 ``overall_status()`` 又把
+        skipped 源从 active 集合里剔除；顺延只是这一轮没测到（如探针等取数锁超时），
+        源本身是好的，必须保留上次已知状态。否则繁忙扫描期间 mootdx 会间歇性显示为
+        ``skipped``，与「依赖缺失 / 握手失败」在快照里无法区分，且若它是唯一异常源，
+        总体健康度还会被误报成 ``ok``（VEW-60 评审）。
+
+        因此这里既不写 ``status``，也不动 ``total_skipped`` / ``last_checked_at``
+        （该源本轮确实没被检查），只往降级事件流里记一条 INFO。
+        """
+        self.register_source(source)
+        self._emit(
+            DegradationEvent(
+                ts=_now_iso(),
+                source=source,
+                event_type=EVENT_DEFERRED,
+                level="INFO",
+                message=f"数据源 {source} 本轮探针顺延（未测到，保留上次状态）",
                 detail=detail,
             )
         )

@@ -124,8 +124,8 @@ _MOOTDX_MINUTE_BUDGET = 12.0
 
 # 源级探针等待取数锁的上限（秒）。探针与取数共用同一 client 与同一把锁：取数正在
 # 翻页时探针若无限期等待，会把串行的 run_all_probes() 整轮拖住，排在后面的
-# eastmoney 探针（熔断恢复的主路径）随之延后。超时按 skipped 上报 —— 既不算源故障
-# （不摘除健康镜像），也不阻塞后续探针（VEW-60 评审 M3）。
+# eastmoney 探针（熔断恢复的主路径）随之延后。超时即顺延本轮：不写源状态（只记一条
+# deferred 事件），也不阻塞后续探针（VEW-60 评审 M3）。
 _MOOTDX_PROBE_LOCK_TIMEOUT = 5.0
 
 # 探针校验的取数周期：深度图默认 5 分钟（frequency=0），日线（frequency=4）作
