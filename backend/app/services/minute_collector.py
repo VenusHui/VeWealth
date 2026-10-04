@@ -24,6 +24,28 @@ mootdx 的 TDX 协议是一条 TCP 连接上一问一答，共享 client 被多�
 ``completed`` / ``empty`` / ``failed``。重跑时 completed 与 empty 直接跳过（两者都
 代表「已确认无需再取」），failed 重试。日志之外还会合并分钟库里已落盘的标的集合，
 这样即使日志写失败也不会重复采集已入库的标的。``force=True`` 忽略上述判据全量重采。
+
+「取数返回空」为什么不能直接记为终态
+------------------------------------
+空有两种成因，后果完全相反：
+
+- **源故障 / 镜像静默返回空**（VEW-60 描述的现象）：必须可重试。若记成终态，
+  ``done() = completed | empty`` 会让这些标的在重跑时被永久跳过，整天数据静默缺失。
+- **该标的当日确实无数据**（停牌 / 退市 / 非交易日）：终态，重试没有意义。
+
+因此本轮结束前用**源级探针**判定（``_probe_source``，走同一条 provider 路径、含取数
+锁）：探针在目标日取到样本 bar → 源可用，空即「该标的当日无数据」；目标日取不到但
+回看窗口内更早的交易日取到 → 源可用但当天无行情（非交易日），同样是终态；两者都取
+不到 → 源故障，本轮全部空结果按**可重试失败**记录并打 ERROR 日志。
+
+探针同时充当**交易日历的替代物**：仓库内没有交易日历（``grep is_trading_day`` 无
+命中），而 cron ``0 21 * * 1-5`` 会在节假日照常触发；若没有这层判定，每个节假日都会
+把全市场 5900 个标的记成失败并反复重取。用样本股的实际 bar 判断不需要维护假期表。
+
+兜底：探针健康但空结果占**全市场**过半（``MINUTE_COLLECT_EMPTY_RATIO_LIMIT``）时，
+说明源只坏了一部分（探针恰好落在好的那部分），同样按可重试失败处理。正常日空结果
+只有个位数百分比（停牌），不会误触发；分母用全市场规模而非本轮待采规模，避免续采轮
+（待采集合可能只剩少量停牌股）被误判成源故障。
 """
 
 from __future__ import annotations
@@ -36,7 +58,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
@@ -61,6 +83,15 @@ ALL_BOARDS = ["main", "gem", "star", "bse"]
 _SESSION_START = "09:00:00"
 _SESSION_END = "16:00:00"
 
+# 源探针判定值（见模块 docstring「取数返回空为什么不能直接记为终态」）。
+PROBE_OK = "ok"  # 样本股在目标日取到 bar：源可用
+PROBE_NO_SESSION = "no_session"  # 目标日无 bar 但更早有：源可用，当天无行情（非交易日）
+PROBE_DOWN = "down"  # 目标日与回看窗口都无 bar：源故障
+# 回看窗口（日历日）：覆盖周末 + 连续假期，足以找到最近一个有行情的交易日。
+_PROBE_LOOKBACK_DAYS = 7
+# 回看探针的单次取数预算（秒）。比批量取数更紧：源故障时最多多花 7 次探针。
+_PROBE_BUDGET_SEC = 5.0
+
 
 def _coerce_trade_date(value: date | datetime | str) -> date:
     if isinstance(value, datetime):
@@ -79,7 +110,9 @@ class MinuteCollectResult:
     universe_size: int = 0
     requested: int = 0
     fetched: int = 0
+    # 确认为「该标的当日无数据」的标的数（终态，重跑跳过）
     empty: int = 0
+    # 可重试的失败数（取数异常 + 源异常时被判为可疑的空结果），重跑会重试
     failed: int = 0
     skipped: int = 0
     # 本次实际合并进库的 bar 数（各次 flush 的输入行数之和）
@@ -90,6 +123,8 @@ class MinuteCollectResult:
     avg_fetch_sec: float = 0.0
     p95_fetch_sec: float = 0.0
     universe_source: str = ""
+    # 源探针判定值（PROBE_OK / PROBE_NO_SESSION / PROBE_DOWN），观测用
+    source_probe: str = ""
     errors: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -108,6 +143,7 @@ class MinuteCollectResult:
             "avg_fetch_sec": round(self.avg_fetch_sec, 4),
             "p95_fetch_sec": round(self.p95_fetch_sec, 4),
             "universe_source": self.universe_source,
+            "source_probe": self.source_probe,
             "errors": self.errors[:10],
         }
 
@@ -294,9 +330,23 @@ class MinuteCollector:
             journal.flush()
             return result
 
+        # 取数前先探源：空结果能否记为终态取决于源是否可用（见模块 docstring）。
+        # 探针走同一条 provider 路径，因此它反映的正是批量取数会遇到的状态。
+        probe = self._probe_source(period, day)
+        result.source_probe = probe
+        if probe == PROBE_DOWN:
+            logger.error(
+                "分钟采集：源探针在 %s 及之前 %d 天均未取到样本 bar，本轮空结果将按"
+                "可重试失败记录（源恢复后重跑即可补齐）",
+                day,
+                _PROBE_LOOKBACK_DAYS,
+            )
+
         buffer: list[pd.DataFrame] = []
         buffer_symbols = 0
         fetch_seconds: list[float] = []
+        # 空结果先攒着，等本轮结束、拿到完整的源健康判定后再决定记 empty 还是 failed
+        empty_candidates: list[str] = []
 
         def flush_buffer() -> None:
             nonlocal buffer, buffer_symbols
@@ -331,8 +381,7 @@ class MinuteCollector:
                     continue
 
                 if frame is None or frame.empty:
-                    result.empty += 1
-                    journal.mark(symbol, "empty")
+                    empty_candidates.append(symbol)
                     continue
 
                 result.fetched += 1
@@ -343,6 +392,7 @@ class MinuteCollector:
                     flush_buffer()
 
         flush_buffer()
+        self._classify_empty(journal, empty_candidates, result, probe)
         journal.flush()
 
         result.elapsed_sec = time.monotonic() - started
@@ -353,10 +403,11 @@ class MinuteCollector:
             result.p95_fetch_sec = ordered[idx]
 
         logger.info(
-            "分钟采集完成: period=%s date=%s 成功=%d 空=%d 失败=%d 跳过=%d "
+            "分钟采集完成: period=%s date=%s 探针=%s 成功=%d 空=%d 失败=%d 跳过=%d "
             "写入=%d 分区行数=%d 耗时=%.1fs 单标的均值=%.3fs p95=%.3fs",
             period,
             day,
+            result.source_probe,
             result.fetched,
             result.empty,
             result.failed,
@@ -381,19 +432,126 @@ class MinuteCollector:
         ]
 
     # ------------------------------------------------------------------
+    # 空结果分类（源健康判定）
+    # ------------------------------------------------------------------
+
+    def _classify_empty(
+        self,
+        journal: _ResumeJournal,
+        candidates: Sequence[str],
+        result: MinuteCollectResult,
+        probe: str,
+    ) -> None:
+        """决定本轮「取数返回空」的标的记 ``empty``（终态）还是 ``failed``（可重试）。
+
+        记错方向的代价是不对称的：把源故障记成终态 = 整天数据静默缺失且重跑也补不回
+        （``done() = completed | empty``）；把确实无数据记成可重试 = 多花一轮取数。
+        因此判据偏向「可疑就重试」，只在拿到源可用的证据时才认终态。
+        """
+        if not candidates:
+            return
+
+        limit = float(settings.MINUTE_COLLECT_EMPTY_RATIO_LIMIT)
+        ratio = len(candidates) / max(1, result.universe_size)
+
+        # 终态的两种情形：
+        # 1. 源探针健康且空结果占比正常 —— 空 = 该标的停牌 / 退市；
+        # 2. 探针判定当天无行情（非交易日）—— 源可用，但全市场都没有数据，
+        #    重试不可能成功，故直接终态，避免每个节假日都把全市场记成失败。
+        if probe == PROBE_NO_SESSION:
+            result.empty += len(candidates)
+            for symbol in candidates:
+                journal.mark(symbol, "empty")
+            logger.warning(
+                "分钟采集：%s 判定为非交易日（源探针在更早的交易日取到 bar），"
+                "%d 个空结果记为终态",
+                result.trade_date,
+                len(candidates),
+            )
+            return
+
+        if probe == PROBE_OK and ratio <= limit:
+            result.empty += len(candidates)
+            for symbol in candidates:
+                journal.mark(symbol, "empty")
+            return
+
+        # 其余一律可重试：源故障，或探针健康但空结果占比异常（源只坏了一部分，
+        # 探针恰好落在好的那部分）。
+        if probe == PROBE_DOWN:
+            reason = (
+                f"源探针在 {result.trade_date} 及之前 {_PROBE_LOOKBACK_DAYS} 天"
+                "均未取到样本 bar"
+            )
+        else:
+            reason = (
+                f"空结果占比 {ratio:.0%} 超过阈值 {limit:.0%}"
+                f"（{len(candidates)}/{result.universe_size}）"
+            )
+        message = f"{reason}，{len(candidates)} 个空结果按可重试失败记录，重跑会重试"
+        logger.error("分钟采集源异常: %s", message)
+        result.failed += len(candidates)
+        for symbol in candidates:
+            journal.mark(symbol, "failed")
+        if len(result.errors) < 10:
+            result.errors.append(message)
+
+    def _probe_source(self, period: str, trade_date: date) -> str:
+        """判定数据源与目标交易日的状态（见模块 docstring 的三态说明）。
+
+        这是**交易日历的替代物**：仓库内没有交易日历，cron ``0 21 * * 1-5`` 会在
+        节假日照常触发；回看窗口用样本股的真实 bar 判断「源可用但当天无行情」，
+        不需要维护假期表。代价是源故障时最多多花 ``_PROBE_LOOKBACK_DAYS`` 次探针。
+        """
+        symbol = str(getattr(settings, "SOURCE_HEALTH_PROBE_SYMBOL", "000001")).zfill(6)
+        if self._probe_day(symbol, period, trade_date):
+            return PROBE_OK
+        for back in range(1, _PROBE_LOOKBACK_DAYS + 1):
+            earlier = trade_date - timedelta(days=back)
+            if self._probe_day(symbol, period, earlier):
+                logger.warning(
+                    "源探针：%s 在 %s 无 bar、在 %s 有 bar —— 判定为 %s 非交易日",
+                    symbol,
+                    trade_date,
+                    earlier,
+                    trade_date,
+                )
+                return PROBE_NO_SESSION
+        return PROBE_DOWN
+
+    def _probe_day(self, symbol: str, period: str, day: date) -> bool:
+        """样本股在 ``day`` 是否取到 bar（任何异常一律按「未取到」）。"""
+        try:
+            frame, _ = self._fetch_symbol(symbol, period, day, budget=_PROBE_BUDGET_SEC)
+        except Exception as e:
+            logger.warning("源探针取数异常(%s %s): %s", symbol, day, e)
+            return False
+        return frame is not None and not frame.empty
+
+    # ------------------------------------------------------------------
     # 单标的取数
     # ------------------------------------------------------------------
 
     def _fetch_symbol(
-        self, symbol: str, period: str, trade_date: date
+        self,
+        symbol: str,
+        period: str,
+        trade_date: date,
+        budget: Optional[float] = None,
     ) -> tuple[Optional[pd.DataFrame], float]:
         """取单标的当日分钟 bar，返回 ``(规范化后的 DataFrame, 耗时秒)``。
 
         只保留落在 ``trade_date`` 当天的 bar：备源（东财 trends2）会返回跨日窗口，
         不裁剪会把别的日期的 bar 标成今天写进分区。
+
+        ``budget`` 覆盖单标的取数墙钟预算（秒）；源探针用更紧的预算，避免源故障时
+        探针自己把启动阶段拖长。
         """
         started = time.monotonic()
-        deadline = started + float(settings.MINUTE_COLLECT_FETCH_BUDGET)
+        seconds = float(
+            settings.MINUTE_COLLECT_FETCH_BUDGET if budget is None else budget
+        )
+        deadline = started + seconds
         df = self.provider.fetch_minute_data(
             stock_code=symbol,
             start_datetime=f"{trade_date.isoformat()} {_SESSION_START}",

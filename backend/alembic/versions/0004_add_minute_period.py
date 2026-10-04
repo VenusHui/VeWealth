@@ -45,8 +45,11 @@ def upgrade() -> None:
         ["period", "trade_date"],
         unique=False,
     )
-    # 先删旧唯一键再建新键：两列键是旧键的超集，顺序反了会因数据不满足新键而失败
-    # （存量数据 period 全为 '1'，实际不会冲突，但保持顺序不依赖该事实）。
+    # 顺序说明：新键 (stock_code, period, trade_time) 是旧键 (stock_code, trade_time) 的
+    # **更细划分** —— period 有 server_default '1' 回填，旧键的每一行都唯一映射到一个
+    # 新键，所以先建新键也不会冲突。这里按「先删后建」写只是让语义读起来是替换。
+    # 真正对顺序敏感的是 downgrade：从细键退回粗键时，若表内已存在同一 trade_time 的
+    # 多周期数据，建旧唯一键会失败（故 downgrade 前必须先清理多周期数据）。
     op.drop_index("idx_unique_data", table_name="stock_minute_data")
     op.create_index(
         "idx_unique_data",

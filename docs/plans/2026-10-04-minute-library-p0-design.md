@@ -35,7 +35,7 @@
 | 项 | 实测 | 立项估算 | 说明 |
 |---|---|---|---|
 | 单分区文件 | **53.4 MB**（zstd，≈39 B/row） | — | snappy 57.0 / brotli 51.1 / 不压缩 58.3 |
-| 年容量（1min 全市场） | **≈12.7 GB/年** | 4–6 GB/年 | 估算按 15–20 B/row，实际 float64 OHLCV ≈39 B/row |
+| 年容量（1min 全市场） | **≈12.7 GB/年/周期** | 4–6 GB/年 | 估算按 15–20 B/row，实际 float64 OHLCV ≈39 B/row |
 | 写盘（整天，12 次 flush） | **4–6 s** | — | 相对取数可忽略 |
 | 读回（整天） | **0.1–0.3 s** | — | |
 | 取数（全市场单日 1min） | **≈40–60 min**（推算） | 2.6 min（串行） | 见下 |
@@ -48,7 +48,7 @@
 结论：40–60 min 仍完全落在夜间窗口内（15:00 收盘 → 21:00 采集 → 次日开盘前），
 P0 设计成立；但容量与耗时规划应按修正后的数字，而不是 2.6 min。采集器已把
 `elapsed_sec` / `avg_fetch_sec` / `p95_fetch_sec` 写进每次运行结果，首次生产运行即可
-确认真实值。
+确认真实值（**待办**：拿到真实值后回填本节并复核夜间窗口余量）。
 
 > 本次无法给出真实取数耗时：沙箱到 TDX 镜像的网络不通（curated 6 个镜像仅 1 个
 > 接受 TCP，且不回 K 线 body），东财被拦截，故取数侧只有推算值。写盘/读回为实测。
@@ -67,8 +67,15 @@ P0 设计成立；但容量与耗时规划应按修正后的数字，而不是 2
 
 ### 2. 本地分钟库 `app/services/minute_store.py`
 
-- 写入契约：`(stock_code, period, trade_time)` 为幂等键，重复写入**新数据胜出**；
-  写盘原子（同目录临时文件 + `os.replace`），读者看不到半个文件。
+- 写入契约：`(stock_code, period, trade_time)` 为幂等键，重复写入**新数据胜出**
+  （先去重再排序，不依赖排序稳定性）；写盘原子（同目录临时文件 + `os.replace`），
+  读者看不到半个文件。
+- **坏分区不按空分区处理**（评审 M2）：分区存在但读不出来时抛
+  `MinutePartitionError`。写路径拒绝覆盖 —— 覆盖会把该分区里其它标的的 bar 静默抹掉，
+  而断点日志里它们已是 `completed`，重跑补不回，属不可恢复丢失；读路径拒绝静默跳过
+  —— 那等于把缺了一整天的结果当完整结果交给回测。`covered_symbols` 同理（返回空集
+  会让整天被当成未采、白跑一轮 40–60 min）。恢复方式：人工移走坏文件后该日
+  `force=True` 重采；`stats()` 会列出损坏分区。
 - `trade_date` 存 date32（常量列，timestamp64 白付 4 B/row），`read_bars` 读出来转
   回 datetime64，消费方不必处理 object dtype。
 - flush 是「读旧分区 + 去重合并 + 整文件重写」，因此按 500 标的 flush 12 次时累计
@@ -78,6 +85,8 @@ P0 设计成立；但容量与耗时规划应按修正后的数字，而不是 2
   单一调度任务，P1 回填同理）。
 - `read_bars` 只用于单日 / 短区间：跨年区间不能一次读（3.5 亿行），P2 引擎应按
   `available_dates` + `partition_path` 逐分区迭代。
+- `stats()` 是**预留接口，尚未接入任何端点**：`/api/health` 是 docker healthcheck 每
+  30s 打一次的路径，而统计行数要读全部分区，不适合放进健康检查。
 
 ### 3. 全市场采集器 `app/services/minute_collector.py`
 
@@ -85,13 +94,29 @@ P0 设计成立；但容量与耗时规划应按修正后的数字，而不是 2
   as_of 过滤，采集侧提前过滤会留下补不回的空洞）；无快照降级到当前维表，维表为空
   落到静态清单。
 - 并发：线程池取数，**依赖 VEW-60 的取数锁**，不得绕过它开裸并发（TDX 共享 client
-  并发会静默返回空）。
+  并发会静默返回空）。线程数默认 **4**（原 20）：取数本身被锁串行化，加线程只是在锁上
+  排队，而源级探针等锁超时是 5s（`_MOOTDX_PROBE_LOCK_TIMEOUT`）——20 个线程排队时
+  探针平均要等 ~12s，会在整个采集窗口内一直拿不到锁，使镜像熔断/恢复（VEW-62）失去
+  健康信号；4 个线程的排队期望 ~2.4s，探针可用。这是已知盲区，故不调高。
 - 断点续采：每个 `(period, trade_date)` 一份 JSON 日志记 `completed` / `empty` /
   `failed`；重跑跳过前两者、重试 failed，并与库内已落盘标的取并集（日志写失败也不
   重复采）。`force=True` 全量重采。
+- **空结果分类**（评审 M1）：取数返回空有两种成因，后果相反 —— 源故障（镜像静默返回
+  空）记成终态会让整天数据在重跑时被永久跳过；标的停牌则重试无意义。因此每轮取数前先
+  跑**源级探针**（同一条 provider 路径、含取数锁），三态判定：
+  - 样本股在目标日取到 bar → 源可用，空 = 该标的当日无数据，记 `empty`（终态）；
+  - 目标日取不到、回看 7 个日历日内更早的交易日取到 → 源可用但当天无行情（非交易日），
+    同样记终态。**这是交易日历的替代物**：仓库内没有交易日历，cron `0 21 * * 1-5` 会在
+    节假日照常触发，没有这层判定则每个假期都会把全市场 5900 个标的记成失败并反复重取；
+  - 两者都取不到 → 源故障，本轮空结果全部记 `failed`（可重试）并打 ERROR 日志。
+  - 兜底：探针健康但空结果占**全市场**过半（`MINUTE_COLLECT_EMPTY_RATIO_LIMIT`）时，
+    认为源只坏了一部分（探针恰好落在好的那部分），同样记可重试失败。分母用全市场规模
+    而非本轮待采规模，避免续采轮（待采集合可能只剩少量停牌股）被误判成源故障。
+  - 判据偏向「可疑就重试」：记错方向的代价不对称（静默丢一天 vs 多跑一轮取数）。
 - 只保留落在目标交易日的 bar：备源（东财 trends2）返回跨日窗口，不裁剪会把别的日期
   的数据标成今天。
-- 耗时统计：`elapsed_sec` / `avg_fetch_sec` / `p95_fetch_sec` 随结果返回，供容量校准。
+- 耗时统计：`elapsed_sec` / `avg_fetch_sec` / `p95_fetch_sec` 随结果返回，供容量校准；
+  源探针判定值 `source_probe` 一并返回并在调度日志里打印。
 
 ### 4. 调度：第 5 个 job
 
@@ -109,18 +134,44 @@ PG 走 `ON CONFLICT DO UPDATE`，其它方言退化为「一次查出已存在 k
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `MINUTE_LIBRARY_DIR` | `data/minute_bars` | 容器内 `/app/data` 是持久卷 `vewealth-backend-data`，重部署不丢 |
-| `MINUTE_COLLECT_ENABLED` | `True` | 独立开关 |
+| `MINUTE_COLLECT_ENABLED` | `False` | **首次上线默认关闭**，见下方「上线步骤」 |
 | `MINUTE_COLLECT_CRON` | `0 21 * * 1-5` | 收盘后 |
 | `MINUTE_COLLECT_PERIODS` | `1` | 逗号分隔，如 `1,5` |
-| `MINUTE_COLLECT_WORKERS` | `20` | 并发取数线程 |
+| `MINUTE_COLLECT_WORKERS` | `4` | 并发取数线程（**不要调高**，见上文探针盲区） |
 | `MINUTE_COLLECT_FETCH_BUDGET` | `20.0` | 单标的取数墙钟预算（秒） |
 | `MINUTE_COLLECT_FLUSH_EVERY` | `500` | 每 N 标的落盘一次并推进断点 |
+| `MINUTE_COLLECT_EMPTY_RATIO_LIMIT` | `0.5` | 单轮空结果占全市场比例上限，超过即按源异常处理（可重试） |
+
+## 上线步骤（发布动作）
+
+1. **先迁移、后起容器**：`0004_add_minute_period` 给 `stock_minute_data` 加 `period`
+   列并重建唯一键。应用启动路径本身会跑 `alembic upgrade head`（`init_db()`，见
+   `backend/app/core/database.py`），迁移失败会直接阻止启动，所以容器化部署不会出现
+   「新代码 + 旧 schema」；手工/裸机部署则必须先执行 `alembic upgrade head`。
+2. **采集任务默认关闭**（`MINUTE_COLLECT_ENABLED=False`）。打开前先手工跑一轮确认真实
+   耗时与磁盘余量：
+
+   ```bash
+   docker exec vewealth-backend python -c "
+   from app.services.minute_collector import MinuteCollector
+   from app.core.database import SessionLocal
+   from datetime import date
+   db = SessionLocal()
+   print(MinuteCollector(db).collect('1', date(2026,10,2)).as_dict())
+   db.close()"
+   ```
+
+   确认 `elapsed_sec` 落在夜间窗口内、`source_probe=ok`、`failed` 为 0 或只有停牌标的，
+   再把 `MINUTE_COLLECT_ENABLED=True` 写进 `backend/settings/.prod.env`（并在 `Settings`
+   里已有对应字段，见 CLAUDE.md 的 env 约定）后重启后端。
 
 ## 验证
 
-- `pytest tests/test_minute_library.py`（21 例）：幂等重写、新数据胜出、原子落盘、
-  周期隔离、断点续采、失败重试、跨日裁剪、并发完整性、唯一键含 period、迁移链。
-- `pytest tests` 全量 308 通过；`black --check .` 通过。
+- `pytest tests/test_minute_library.py`（30 例）：幂等重写、新数据胜出、原子落盘、
+  周期隔离、断点续采、失败重试、跨日裁剪、并发完整性、唯一键含 period、迁移链、
+  坏分区拒绝覆盖 / 拒绝静默跳过、源故障下空结果可重试、非交易日空结果终态、
+  空结果占比异常的兜底判定。
+- `pytest tests` 全量通过；`black --check .` 通过。
 - 迁移离线渲染确认：`alembic upgrade 0003:0004 --sql` 产出
   `ADD COLUMN period ... DEFAULT '1' NOT NULL` + 唯一键重建 + 新复合索引。
 
@@ -129,7 +180,9 @@ PG 走 `ON CONFLICT DO UPDATE`，其它方言退化为「一次查出已存在 k
 - **P1（VEW-65）**：历史回填。复用本库的写入契约与幂等键；注意腾讯 volume 是「手」、
   mootdx 是「股」，回填前必须统一（差 100 倍）。
 - **P2（VEW-66）**：引擎按分区迭代读取，不要把跨年区间一次读进内存。
-- 容量：按 **13 GB/年/周期** 规划磁盘；`float32` 价格列可再省 ~30%，但会引入精度
-  误差、破坏跨源严格比对，暂不采用。
+- 容量：按 **13 GB/年/周期** 规划磁盘（多周期线性叠加）；`float32` 价格列可再省 ~30%，
+  但会引入精度误差、破坏跨源严格比对，暂不采用。
 - 备份：`data/minute_bars/` 目前只靠 Docker 命名卷，**未纳入备份策略**；建议后续加
-  快照/异地副本（与日线数据同级）。
+  快照/异地副本（与日线数据同级）。这也是采集任务首次上线默认关闭的原因之一。
+- 交易日历：目前用「源探针 + 回看 7 天」间接判断非交易日。若后续引入正式交易日历
+  （含临时休市），应改为直接查日历，省掉回看探针并能在节假日整轮跳过。

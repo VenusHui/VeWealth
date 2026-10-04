@@ -69,6 +69,19 @@ def collect_minute_data(trade_date: date = None):
     try:
         collector = MinuteCollector(db)
         results = collector.collect_periods(periods, trade_date)
+        for item in results:
+            logger.info(
+                f"分钟采集结果: period={item.period} date={item.trade_date} "
+                f"探针={item.source_probe} 成功={item.fetched} 空={item.empty} "
+                f"失败={item.failed} 跳过={item.skipped} 写入={item.bars_written} "
+                f"分区行数={item.partition_rows} 耗时={item.elapsed_sec:.1f}s"
+            )
+            if item.failed:
+                # 失败是可重试的（取数异常 / 源异常时被判可疑的空结果），重跑同一天即可补齐
+                logger.warning(
+                    f"分钟采集 {item.trade_date} period={item.period} 有 {item.failed} "
+                    f"个标的需要重跑: {item.errors[:3]}"
+                )
         return [r.as_dict() for r in results]
     except Exception as e:
         logger.error(f"分钟行情采集失败: {str(e)}", exc_info=True)

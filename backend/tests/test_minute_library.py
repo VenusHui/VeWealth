@@ -1,8 +1,9 @@
 """本地分钟库（Parquet 分区）+ 全市场采集器 + 在线表批量 upsert 的单元测试（VEW-64）。
 
 覆盖的契约：
-- 分钟库：规范化 / 幂等重写 / 新数据胜出 / 原子落盘 / 分区与标的裁剪；
-- 采集器：断点续采跳过已确认标的、失败可重试、跨日 bar 被裁掉、并发取数结果完整；
+- 分钟库：规范化 / 幂等重写 / 新数据胜出 / 原子落盘 / 分区与标的裁剪 / 坏分区拒绝覆盖；
+- 采集器：断点续采跳过已确认标的、失败可重试、跨日 bar 被裁掉、并发取数结果完整、
+  源故障与非交易日下的空结果分类；
 - 在线表：批量 upsert 幂等（sqlite 走非 PG 退化路径），唯一键含 period。
 """
 
@@ -19,8 +20,17 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models.stock_data import StockMinuteData
 from app.services.data_collector import DataCollector
-from app.services.minute_collector import MinuteCollector
-from app.services.minute_store import ALL_COLUMNS, MinuteLibrary
+from app.services.minute_collector import (
+    PROBE_DOWN,
+    PROBE_NO_SESSION,
+    PROBE_OK,
+    MinuteCollector,
+)
+from app.services.minute_store import (
+    ALL_COLUMNS,
+    MinuteLibrary,
+    MinutePartitionError,
+)
 
 TRADE_DATE = date(2026, 10, 2)
 
@@ -170,6 +180,81 @@ def test_stats_summarizes_partitions(tmp_path: Path):
     assert stats["periods"]["1"]["dates"] == 1
     assert stats["periods"]["1"]["rows"] == 3
     assert stats["periods"]["1"]["bytes"] > 0
+    assert stats["periods"]["1"]["corrupt"] == []
+
+
+# ---------------------------------------------------------------------------
+# 坏分区：拒绝覆盖 / 拒绝静默跳过（M2）
+# ---------------------------------------------------------------------------
+
+
+def _corrupt(lib: MinuteLibrary, period: str = "1", day: date = TRADE_DATE) -> bytes:
+    """把分区文件写成不可解析的内容，返回损坏后的字节。"""
+    path = lib.partition_path(period, day)
+    path.write_bytes(b"this is not a parquet file")
+    return path.read_bytes()
+
+
+def test_write_refuses_to_overwrite_unreadable_partition(tmp_path: Path):
+    """坏分区必须拒绝覆盖：覆盖 = 该分区里其它标的的 bar 被静默抹掉且无法恢复。"""
+    lib = MinuteLibrary(tmp_path)
+    lib.write_bars("1", TRADE_DATE, _bars("000001"))
+    damaged = _corrupt(lib)
+
+    with pytest.raises(MinutePartitionError) as exc:
+        lib.write_bars("1", TRADE_DATE, _bars("600519"))
+
+    assert "不可读" in str(exc.value)
+    assert lib.partition_path("1", TRADE_DATE).read_bytes() == damaged
+
+
+def test_read_bars_raises_on_corrupt_partition(tmp_path: Path):
+    """读路径不能静默跳过坏分区，否则回测会把缺了一天的结果当成完整结果。"""
+    lib = MinuteLibrary(tmp_path)
+    lib.write_bars("1", TRADE_DATE, _bars("000001"))
+    _corrupt(lib)
+
+    with pytest.raises(MinutePartitionError):
+        lib.read_bars("1", TRADE_DATE, TRADE_DATE)
+
+
+def test_covered_symbols_raises_on_corrupt_partition(tmp_path: Path):
+    """坏分区不能被当成「一个标的都没采」，否则会白白重采一轮全市场。"""
+    lib = MinuteLibrary(tmp_path)
+    lib.write_bars("1", TRADE_DATE, _bars("000001"))
+    _corrupt(lib)
+
+    with pytest.raises(MinutePartitionError):
+        lib.covered_symbols("1", TRADE_DATE)
+
+
+def test_stats_lists_corrupt_partitions(tmp_path: Path):
+    """统计不因坏文件中断，但必须把它列出来，不能静默跳过。"""
+    lib = MinuteLibrary(tmp_path)
+    lib.write_bars("1", TRADE_DATE, _bars("000001"))
+    _corrupt(lib)
+
+    stats = lib.stats()
+    assert stats["periods"]["1"]["corrupt"] == [TRADE_DATE.isoformat()]
+    assert stats["periods"]["1"]["rows"] == 0
+
+
+def test_normalize_newest_batch_wins_for_duplicate_key():
+    """契约守卫：同 key 去重必须「新批次胜出」，且不依赖排序是否稳定。
+
+    两批同 key 数据按顺序拼接（第二批 = 新数据），每批内 key 重复多次。当前 pandas 对
+    多列 ``sort_values`` 走稳定的 ``np.lexsort``，所以「先排序再去重」在本例下也正确
+    （已按 1.32M 行验证）——本用例锁的是契约本身：实现换成先去重再排序（或排序不再
+    稳定）时，胜者仍必须是新批次。
+    """
+    from app.services.minute_store import normalize_bars
+
+    old = pd.concat([_bars("000001", close0=1.0) for _ in range(50)], ignore_index=True)
+    new = pd.concat([_bars("000001", close0=9.0) for _ in range(50)], ignore_index=True)
+
+    out = normalize_bars(pd.concat([old, new], ignore_index=True), "1", TRADE_DATE)
+    assert len(out) == 3
+    assert out["close"].tolist() == pytest.approx([9.0, 9.01, 9.02])
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +303,8 @@ def test_collect_force_refetches_everything(tmp_path: Path):
     forced = collector.collect("1", TRADE_DATE, symbols=["000001"], force=True)
 
     assert forced.skipped == 0 and forced.fetched == 1
-    assert len(provider.calls) == 2
+    # 每轮 = 1 次源探针 + 1 次批量取数（探针与批量走同一条 provider 路径）
+    assert len(provider.calls) == 4
     assert len(lib.read_bars("1", TRADE_DATE, TRADE_DATE)) == 3
 
 
@@ -281,6 +367,82 @@ def test_collect_flushes_in_batches(tmp_path: Path):
 
     assert result.bars_written == 30
     assert len(lib.covered_symbols("1", TRADE_DATE)) == 10
+
+
+# ---------------------------------------------------------------------------
+# 空结果分类：源故障可重试 / 非交易日终态（M1）
+# ---------------------------------------------------------------------------
+
+
+class HolidayProvider(FakeProvider):
+    """目标日无行情、更早的交易日有行情（模拟节假日 / 全市场休市）。"""
+
+    def fetch_minute_data(self, stock_code, start_datetime, end_datetime, **kwargs):
+        day = date.fromisoformat(str(start_datetime)[:10])
+        self.calls.append((stock_code, "1", day.isoformat()))
+        if day >= TRADE_DATE:
+            return None
+        return _bars(stock_code, day=day)
+
+
+def test_collect_source_down_keeps_empty_retryable(tmp_path: Path):
+    """源故障时空结果必须是可重试失败，否则重跑会永久跳过、整天数据静默缺失。"""
+    lib = MinuteLibrary(tmp_path)
+    # 连探针样本股都取不到 = 源整体不可用（VEW-60 的镜像静默返回空就是这个形态）
+    provider = FakeProvider(empty={"000001", "000002"})
+    collector = MinuteCollector(db=None, provider=provider, library=lib)
+
+    first = collector.collect("1", TRADE_DATE, symbols=["000001", "000002"])
+    assert first.source_probe == PROBE_DOWN
+    assert first.empty == 0 and first.failed == 2
+    assert any("可重试失败" in e for e in first.errors)
+
+    provider.empty = set()  # 源恢复
+    second = collector.collect("1", TRADE_DATE, symbols=["000001", "000002"])
+    assert second.skipped == 0  # 没有被写成终态，所以两个标的都会被重试
+    assert second.requested == 2 and second.fetched == 2
+
+
+def test_collect_holiday_records_empty_as_terminal(tmp_path: Path):
+    """非交易日（源可用但当天全市场无行情）应记终态，否则每个假期都重取全市场。"""
+    lib = MinuteLibrary(tmp_path)
+    collector = MinuteCollector(db=None, provider=HolidayProvider(), library=lib)
+
+    first = collector.collect("1", TRADE_DATE, symbols=["000001", "000002"])
+    assert first.source_probe == PROBE_NO_SESSION
+    assert first.empty == 2 and first.failed == 0
+
+    second = collector.collect("1", TRADE_DATE, symbols=["000001", "000002"])
+    assert second.skipped == 2 and second.requested == 0
+
+
+def test_collect_flags_anomaly_when_most_symbols_empty(tmp_path: Path):
+    """探针健康但空结果占全市场过半 —— 源只坏了一部分，空结果必须可重试。"""
+    lib = MinuteLibrary(tmp_path)
+    symbols = [f"{i:06d}" for i in range(2, 12)]  # 探针样本股 000001 不在其中
+    provider = FakeProvider(empty=set(symbols))
+    collector = MinuteCollector(db=None, provider=provider, library=lib)
+
+    result = collector.collect("1", TRADE_DATE, symbols=symbols)
+
+    assert result.source_probe == PROBE_OK  # 样本股 000001 正常
+    assert result.empty == 0 and result.failed == 10
+    assert any("占比" in e for e in result.errors)
+
+
+def test_collect_suspended_symbol_stays_terminal(tmp_path: Path):
+    """源健康时的空结果 = 该标的当日确实无数据（停牌），记终态且不反复重取。"""
+    lib = MinuteLibrary(tmp_path)
+    provider = FakeProvider(empty={"600519"})
+    collector = MinuteCollector(db=None, provider=provider, library=lib)
+    symbols = [f"{i:06d}" for i in range(1, 21)] + ["600519"]
+
+    first = collector.collect("1", TRADE_DATE, symbols=symbols)
+    assert first.source_probe == PROBE_OK
+    assert first.empty == 1 and first.failed == 0
+
+    second = collector.collect("1", TRADE_DATE, symbols=symbols)
+    assert second.skipped == 21 and second.requested == 0
 
 
 # ---------------------------------------------------------------------------

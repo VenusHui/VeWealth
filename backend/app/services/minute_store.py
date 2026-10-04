@@ -43,6 +43,10 @@ bar（而不是每标的一个文件 —— 全市场 1min 单日 5921 个小文
 - 幂等键：``(stock_code, period, trade_time)``；重复写入同一 key 时**新数据胜出**
   （``keep="last"``），因此「重采某日」是覆盖而不是追加。
 - 写盘原子：先写同目录临时文件再 ``os.replace``，读者永远看不到半个文件。
+- 分区损坏（存在但读不出来）**一律抛 :class:`MinutePartitionError`**，读写两侧都不
+  按「空分区」糊过去：写路径拒绝覆盖（否则该分区里其它标的的 bar 会被静默抹掉且无法
+  恢复），读路径拒绝静默跳过（否则缺了一整天会被当成完整结果）。恢复方式：人工检查
+  后移走坏文件，再对该日 ``force=True`` 重采。
 - 单写者假设：同一分区的并发写入由模块级锁串行化（同进程内安全）；跨进程并发写
   同一分区不在支持范围内（采集是单一调度任务，P1 回填同理）。
 """
@@ -88,6 +92,26 @@ PARQUET_COMPRESSION = "zstd"
 
 # 同一分区内的写入串行化（同进程）。跨进程单写者由调用方保证（见模块 docstring）。
 _write_lock = threading.Lock()
+
+
+class MinutePartitionError(RuntimeError):
+    """分区文件存在但不可读（损坏 / 截断 / 编解码失败）。
+
+    读写两侧都必须把它当错误抛出，不能按「空分区」糊过去：
+
+    - **写路径**：合并退化成「只用本批数据重建分区」，会把该分区里其它标的的 bar
+      静默抹掉；而断点日志里它们已被标成 ``completed``，重跑也不会再采回来 ——
+      不可恢复的数据丢失。因此宁可失败，也不覆盖。
+    - **读路径**：静默跳过等于把「缺了一整天」的结果当成完整结果交给回测。
+    """
+
+
+def _partition_error(path: Path, exc: Exception) -> MinutePartitionError:
+    """构造带恢复步骤的分区损坏错误（读写两侧共用同一措辞）。"""
+    return MinutePartitionError(
+        f"分钟库分区不可读: {path} ({type(exc).__name__}: {exc})；"
+        "请人工检查后移走该文件再重采该日（force=True），不要直接覆盖"
+    )
 
 
 def _coerce_trade_date(value: date | datetime | str) -> date:
@@ -151,9 +175,12 @@ def normalize_bars(
 
     out = out.loc[:, list(ALL_COLUMNS)]
     out = out.dropna(subset=["open", "high", "low", "close", "volume"])
-    out = out.sort_values(list(DEDUPE_KEYS))
+    # 先去重再排序：把「新数据胜出」写在不依赖排序稳定性的位置上。当前 pandas 对多列
+    # ``sort_values`` 走 ``np.lexsort``（稳定），先排序再去重在本例下结果也正确，但那是
+    # 实现细节（单列排序走 quicksort，不稳定）；先去重则按原始顺序 ``keep="last"`` 取
+    # 最后进来的那批，契约与排序实现无关。
     out = out.drop_duplicates(subset=list(DEDUPE_KEYS), keep="last")
-    return out.reset_index(drop=True)
+    return out.sort_values(list(DEDUPE_KEYS)).reset_index(drop=True)
 
 
 class MinuteLibrary:
@@ -203,6 +230,9 @@ class MinuteLibrary:
 
         与已有分区合并时按 ``(stock_code, period, trade_time)`` 去重且**新数据胜出**，
         因此重跑采集是覆盖而不是追加。写盘原子（临时文件 + ``os.replace``）。
+
+        已有分区不可读时抛 :class:`MinutePartitionError` 而**不覆盖** —— 覆盖会把该
+        分区里其它标的的 bar 静默抹掉且无法恢复（见异常类说明）。
         """
         incoming = normalize_bars(df, period, trade_date)
         path = self.partition_path(period, trade_date)
@@ -224,9 +254,9 @@ class MinuteLibrary:
             if merged.empty:
                 return 0
 
-            merged = merged.sort_values(list(DEDUPE_KEYS))
+            # 先去重再排序，理由同 normalize_bars（不依赖排序稳定性来保证新数据胜出）。
             merged = merged.drop_duplicates(subset=list(DEDUPE_KEYS), keep="last")
-            merged = merged.reset_index(drop=True)
+            merged = merged.sort_values(list(DEDUPE_KEYS)).reset_index(drop=True)
 
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
@@ -242,13 +272,15 @@ class MinuteLibrary:
             return len(merged)
 
     def _read_partition(self, path: Path) -> pd.DataFrame:
-        """读取单个分区文件并补齐 schema（容忍旧分区缺列）。"""
+        """读取单个分区文件并补齐 schema（容忍旧分区缺列）。
+
+        读取失败一律抛 :class:`MinutePartitionError`，绝不按空分区处理：返回空会让
+        写路径把分区重建成本批数据、让读路径静默少一天，两者都是静默数据丢失。
+        """
         try:
             df = pd.read_parquet(path)
-        except Exception:
-            # 分区损坏时按空处理：下一次写入会以新数据重建该分区，而不是让整个采集
-            # 任务因为一个坏文件失败。
-            return pd.DataFrame(columns=list(ALL_COLUMNS))
+        except Exception as e:
+            raise _partition_error(path, e) from e
         for col in ALL_COLUMNS:
             if col not in df.columns:
                 # 按列类型给默认值：字符串列补空串、数值列补 NaN，避免把 NaN 塞进
@@ -263,11 +295,18 @@ class MinuteLibrary:
     def covered_symbols(
         self, period: str, trade_date: date | datetime | str
     ) -> set[str]:
-        """该分区已落盘的标的集合（断点续采的快速判据）。"""
+        """该分区已落盘的标的集合（断点续采的快速判据）。
+
+        分区不可读时抛 :class:`MinutePartitionError`：静默返回空集会让整天的标的
+        被当成「未采」而全量重采（浪费一轮 40–60 min 的取数窗口）。
+        """
         path = self.partition_path(period, trade_date)
         if not path.exists():
             return set()
-        df = pd.read_parquet(path, columns=["stock_code"])
+        try:
+            df = pd.read_parquet(path, columns=["stock_code"])
+        except Exception as e:
+            raise _partition_error(path, e) from e
         return set(df["stock_code"].astype(str).str.zfill(6).unique())
 
     def read_bars(
@@ -279,8 +318,10 @@ class MinuteLibrary:
     ) -> pd.DataFrame:
         """读取 ``[start_date, end_date]`` 闭区间内某周期的全部 bar。
 
-        ``symbols`` 非空时只返回这些标的（列裁剪后再按标的过滤）。分区不存在时返回
-        空 DataFrame（而不是抛错）——回测按日期区间扫描时会自然地跨过无数据的日子。
+        ``symbols`` 非空时只返回这些标的（列裁剪后再按标的过滤）。分区**不存在**时
+        返回空 DataFrame（而不是抛错）——回测按日期区间扫描时会自然地跨过无数据的日子；
+        但分区**存在却读不出来**时抛 :class:`MinutePartitionError`：静默跳过等于把
+        缺了一整天的结果当成完整结果返回。
 
         ⚠️ 本方法把区间内所有分区读进内存（1min 全市场一天 142 万行 ≈ 100 MB）。
         跨年区间（244 天 ≈ 3.5 亿行）不能一次读 —— P2 的引擎应按交易日逐分区迭代
@@ -301,11 +342,7 @@ class MinuteLibrary:
                 continue
             if day < start or day > end:
                 continue
-            path = self.partition_path(period, day)
-            try:
-                frames.append(pd.read_parquet(path))
-            except Exception:
-                continue
+            frames.append(self._read_partition(self.partition_path(period, day)))
 
         if not frames:
             return pd.DataFrame(columns=list(ALL_COLUMNS))
@@ -319,13 +356,19 @@ class MinuteLibrary:
         return out.sort_values(list(DEDUPE_KEYS)).reset_index(drop=True)
 
     def stats(self) -> dict:
-        """库容量概览：分区数、行数、磁盘占用（供 /api/health 与运维观测）。"""
+        """库容量概览：分区数、行数、磁盘占用、损坏分区清单。
+
+        预留接口：**尚未接入任何端点**。``/api/health`` 是 docker healthcheck 每 30s
+        打一次的路径，而本方法要读全部分区才能统计行数，不适合放进健康检查；等后续
+        做运维观测端点或排障脚本时按需调用。
+        """
         periods: dict[str, dict] = {}
         period_dirs = sorted(self.root.glob("period=*")) if self.root.is_dir() else []
         for period_dir in period_dirs:
             period = period_dir.name.split("=", 1)[1]
             rows = 0
             size = 0
+            corrupt: list[str] = []
             dates = self.available_dates(period)
             for value in dates:
                 path = self.partition_path(period, value)
@@ -333,8 +376,14 @@ class MinuteLibrary:
                 try:
                     rows += len(pd.read_parquet(path, columns=["stock_code"]))
                 except Exception:
-                    continue
-            periods[period] = {"dates": len(dates), "rows": rows, "bytes": size}
+                    # 统计不因坏文件中断，但必须把它列出来 —— 静默跳过等于掩盖损坏。
+                    corrupt.append(value)
+            periods[period] = {
+                "dates": len(dates),
+                "rows": rows,
+                "bytes": size,
+                "corrupt": corrupt,
+            }
         return {"root": str(self.root), "periods": periods}
 
 
