@@ -133,6 +133,46 @@ class Settings(BaseSettings):
     # 300s，使镜像池的变化能在分钟级被感知。
     MOOTDX_SCAN_COOLDOWN: int = 300
 
+    # 分钟级回测 P0：本地分钟库 + 每日增量采集（VEW-64）
+    # 分钟库根目录。容器内 /app/data 是持久卷（vewealth-backend-data），重部署不丢；
+    # 本地开发相对 backend/ 解析。
+    MINUTE_LIBRARY_DIR: str = "data/minute_bars"
+    # 默认关闭（VEW-64 裁定）：生产磁盘余量不足，首次上线不得自动开跑。
+    # 实测（2026-10-04，ssh tencent-ollama）：/ 为单块 40 GB 盘、仅剩 5.6 GB，而分钟库
+    # ≈13 GB/年/周期 —— 开跑后约 107 天写满 /，写满的是系统盘，postgres + backend +
+    # frontend 会一起挂，不只是分钟库单独失败。且 PR base 为 dev/**，合并即触发生产部署，
+    # 带着 True 合进去当晚 21:00 就会开跑。
+    #
+    # 打开条件（可机械判定）：生产 / 可用空间 ≥ 20 GB（≈13 GB/年 + ~7 GB 余量）。
+    # 谁在何时打开：由队长 Venus 在容量满足后打开（扩盘 / 挂数据盘，或按裁定先回收
+    # docker build cache、npm cache 等腾出空间），并**手工 force=True 跑首轮**（不走 cron）、
+    # 亲自盯日志确认 elapsed_sec（夜间窗口余量）与盘余量，确认无误后再交由
+    # MINUTE_COLLECT_CRON 自动接管。
+    #
+    # 不要「临时先关着」当默认：本系统没有自动重跑机制、调度只针对 date.today()，
+    # 漏采的交易日不可补回，长期关闭等于 P0 交付物不生效 —— 必须由上述责任人显式打开。
+    MINUTE_COLLECT_ENABLED: bool = False
+    # 收盘后采集：晚于日线采集（20:00）与 universe 快照（20:40），
+    # 保证当日股票池快照已落盘，采集按点状态选池。
+    MINUTE_COLLECT_CRON: str = "0 21 * * 1-5"
+    # 采集周期（分钟，逗号分隔），如 "1" 或 "1,5"。全市场 1min 单日 ≈ 1.4M 根。
+    MINUTE_COLLECT_PERIODS: str = "1"
+    # 并发取数线程数。共享 mootdx client 的取数由取数锁串行化（VEW-60），并发主要
+    # 摊薄建连与解析开销，不改变网络串行事实。**不要调高**：线程只是在锁上排队，
+    # 而源级探针（source_health）等锁的超时是 5s（_MOOTDX_PROBE_LOCK_TIMEOUT）——
+    # 20 个线程排队时探针平均要等 ~12s，会在整个采集窗口内一直拿不到锁，
+    # 使镜像熔断/恢复（VEW-62）失去健康信号。4 个线程的排队期望 ~2.4s，探针可用。
+    MINUTE_COLLECT_WORKERS: int = 4
+    # 单标的取数墙钟预算（秒）。批量任务无前端 15s 约束，比分钟链路的 12s 宽松，
+    # 给镜像慢但可用的标的留余量。
+    MINUTE_COLLECT_FETCH_BUDGET: float = 20.0
+    # 每采集 N 个标的落盘一次并推进断点（限制内存峰值与重跑代价）。
+    MINUTE_COLLECT_FLUSH_EVERY: int = 500
+    # 单轮采集里「空结果」占全市场的比例上限。超过即认为源只坏了一部分（探针恰好
+    # 落在好的那部分），本轮空结果改记可重试失败。正常日空结果只有个位数百分比
+    # （停牌 / 退市），50% 不会误触发。
+    MINUTE_COLLECT_EMPTY_RATIO_LIMIT: float = 0.5
+
     # 预警配置
     DEFAULT_ALERT_THRESHOLD: float = 0.7
 

@@ -38,6 +38,10 @@ backend/logs/
 # Backend data caches (adj_factor CSV/quota, VEW-55) —— a_share_symbols.txt 保留入库
 backend/data/tushare_adj/
 
+# 本地分钟行情库（Parquet 分区 + 断点日志，VEW-64）：数据不入库，容器内走
+# vewealth-backend-data 持久卷
+backend/data/minute_bars/
+
 # For test
 test.py
 .omx/
