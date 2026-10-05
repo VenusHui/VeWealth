@@ -24,6 +24,7 @@ from app.services.minute_backfill import (
     BackfillRefused,
     CrossCheckReport,
     MinuteBackfiller,
+    _BackfillJournal,
     _date_chunks,
     bars_per_day,
     compare_frames,
@@ -663,6 +664,28 @@ def _suspended_provider(resume_day: date) -> ScriptedProvider:
     return ScriptedProvider(script)
 
 
+def _partially_suspended_provider(
+    suspended: set[str], resume_day: date
+) -> ScriptedProvider:
+    """``suspended`` 里的标的停牌到 ``resume_day``，其余标的全区间健康。
+
+    用于「少数标的有永久缺口、多数健康」的市场级场景 —— 续跑时待采集合恰好收缩成
+    那几只缺口标的，这是占比兜底最容易算错分母的形态。
+    """
+
+    def script(symbol, lo, hi):
+        if symbol in suspended and hi < resume_day:
+            return []
+        days, d = [], (max(lo, resume_day) if symbol in suspended else lo)
+        while d <= hi:
+            if d.weekday() < 5:
+                days.append(d)
+            d += timedelta(days=1)
+        return days
+
+    return ScriptedProvider(script)
+
+
 def test_long_suspension_converges_instead_of_failing_forever(
     tmp_path, enabled, monkeypatch
 ):
@@ -888,6 +911,54 @@ def test_explicit_symbols_bypass_market_scale_ratio_guard(
         "1", MULTI_START, MULTI_END, symbols=["000001"], confirm=True
     )
     assert r.gapped == 1, "显式清单下占比没有市场含义，不该被兜底压住"
+
+
+def test_market_guard_denominator_is_universe_so_resume_converges(
+    tmp_path, enabled, monkeypatch
+):
+    """评审四轮回归：占比兜底的分母必须是**全市场**，否则续跑时形成吸收态。
+
+    11 只标的里 3 只停牌（中间块块首缺 19 天 > 容差）、8 只健康。第 1 轮
+    ``3/11 = 27%`` 不过半，正常计次；第 2 轮起待采集合收缩成那 3 只停牌标的 ——
+    分母若取 ``requested``，占比恒为 ``3/3 = 100%``、兜底每轮触发，计数被冻在 1，
+    ``gapped`` 永不出现、``skipped`` 永远填不满。实测过：连跑 4 轮
+    ``attempts`` 全程 ``{000002:1, 000003:1, 000004:1}``、``gapped=0``。
+
+    分母取 ``universe_size`` 后：第 3 轮 ``gapped=3``，第 4 轮 ``skipped=11``。
+    """
+    resume = MULTI_CHUNKS[1][0] + timedelta(days=19)
+    assert (resume - MULTI_CHUNKS[1][0]).days > 12, "前提：块首缺失超出容差"
+    suspended = {"000002", "000003", "000004"}
+    universe = [f"0000{i:02d}" for i in range(1, 12)]
+
+    filler = _backfiller(tmp_path, _partially_suspended_provider(suspended, resume))
+    # 全市场口径才会启用占比兜底（显式清单没有市场含义）
+    monkeypatch.setattr(
+        filler._collector,
+        "resolve_universe",
+        lambda _end: (list(universe), "security_universe"),
+    )
+    monkeypatch.setattr(settings, "MINUTE_BACKFILL_MAX_ATTEMPTS", 3)
+
+    # 第 1 轮：全市场待采，缺口占比 27% 不过半 → 正常计次
+    r1 = filler.run("1", MULTI_START, MULTI_END, confirm=True)
+    assert (r1.requested, r1.skipped, r1.failed, r1.gapped) == (11, 0, 3, 0)
+
+    # 第 2 轮：待采只剩那 3 只（占比按全市场算仍是 27%）→ 计数继续前进到 2
+    r2 = filler.run("1", MULTI_START, MULTI_END, confirm=True)
+    assert (r2.requested, r2.skipped, r2.failed, r2.gapped) == (3, 8, 3, 0)
+    attempts = _BackfillJournal(
+        filler.library.root, "1", MULTI_START, MULTI_END
+    ).attempts
+    assert attempts == {s: 2 for s in suspended}, "计数被兜底冻住了（吸收态）"
+
+    # 第 3 轮：到上限 → 转终态
+    r3 = filler.run("1", MULTI_START, MULTI_END, confirm=True)
+    assert (r3.skipped, r3.failed, r3.gapped) == (8, 0, 3)
+
+    # 第 4 轮：全部收敛，待采为空
+    r4 = filler.run("1", MULTI_START, MULTI_END, confirm=True)
+    assert (r4.requested, r4.skipped, r4.failed, r4.gapped) == (0, 11, 0, 0)
 
 
 def test_probe_fetch_exception_degrades_to_down(tmp_path, enabled):

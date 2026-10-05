@@ -1256,13 +1256,32 @@ class MinuteBackfiller:
 
         市场级兜底（与 ``_classify_empty`` 同一机制、同一门槛）：即便只对逐块判据计次，
         单标的判据仍分不开「这个标的停牌」与「源整体变浅」—— 东财备源降级只给最近几天
-        时，每个标的的最新一块都会块首缺失。因此本轮计次标的占本轮尝试数过半时，视作
+        时，每个标的的最新一块都会块首缺失。因此本轮计次标的占**全市场**过半时，视作
         源侧事件，整轮不计次（全部保持可重试 ``failed``）。
 
         兜底**只在全市场口径下生效**（``universe_source != "explicit"``）：占比要回答的
         是市场级问题，分母必须是全市场。显式给了标的清单（自选池 / 单标的验证）时占比
         没有市场含义 —— 1 只标的报覆盖问题会算出 100%，把「该股停牌」误判成源故障，
         让它永远无法记终态。
+
+        分母是 ``universe_size`` 而**不是** ``requested``（VEW-65 四轮评审）。两者看着
+        只差一个 ``skipped``，语义却相反，且 ``_classify_empty`` 用 ``requested`` 是对的
+        —— 不要「统一」它们：
+
+        - ``_classify_empty`` 的输出是**当轮分类**，误判代价 = 一次重试（``failed`` 会
+          重试），分母偏小只会让它更保守，安全。
+        - 这里的输出喂给**跨轮累加器**（``journal.attempts``）。分母取 ``requested`` 时，
+          续跑场景会「吸收」：待采集合按构造就等于「有缺口的标的」，于是第 2 轮起占比
+          恒为 100%、兜底每轮触发 → 计数不前进 → 状态不变 → 下一轮输入完全相同 →
+          永远出不去。实测 11 只标的（3 只停牌）跑 4 轮：``attempts`` 全程停在 1、
+          ``gapped`` 恒为 0、``skipped`` 永远填不满 —— 正是计次机制当初要修的症状，
+          只是从标的口径换到了市场口径。
+
+        残余风险（已知、可接受）：分母放大到全市场后，若源侧事件只影响**剩下的少数
+        待采标的**（待采本身已经很小），占比不过半、兜底不触发，那几只可能被计次。
+        代价有界 —— 就那几只，且它们本来就是有缺口的标的，``errors`` 里有原因，
+        ``retry_gaps=True`` 可重取。要盖住它得再加绝对数量下限，但会同时挡掉小股票池
+        的兜底用例，不划算。
         """
         countable = [(s, r) for s, r, ok in candidates if ok]
         if not countable:
@@ -1270,12 +1289,15 @@ class MinuteBackfiller:
 
         limit = float(settings.MINUTE_COLLECT_EMPTY_RATIO_LIMIT)
         market_scale = result.universe_source != "explicit"
-        attempted = max(1, result.requested)
+        # 分母是**全市场**：待采集合按构造被「有缺口的标的」选择过，不是市场的随机
+        # 抽样，拿它当分母会让兜底在续跑时每轮都触发、把跨轮计数器冻住。理由详见
+        # ``_apply_gap_attempts`` 的同名段落 —— 那两处的分母刻意不同，别统一。
+        attempted = max(1, result.universe_size)
         ratio = len(countable) / attempted
         if market_scale and ratio > limit:
             message = (
                 f"覆盖问题占比 {ratio:.0%} 超过阈值 {limit:.0%}"
-                f"（本轮尝试 {len(countable)}/{attempted}，全市场 {result.universe_size}）"
+                f"（本轮覆盖问题 {len(countable)}/{attempted}，全市场 {result.universe_size}）"
                 f"，疑似源侧事件，本轮 {len(countable)} 个标的均不计次、保持可重试"
             )
             logger.error("分钟回填源异常: %s", message)
@@ -1331,6 +1353,11 @@ class MinuteBackfiller:
         「本轮待采的标的全部取空」这种最该兜底的情形反而漏过（VEW-65 评审②）。
         方向上也偏安全：续跑批次小、误判成源故障的代价只是一次重试（``failed`` 会重试），
         而漏判的代价是这批标的历史**永久缺失**（``empty`` 是终态）。
+
+        **注意**：``_apply_gap_attempts`` 的市场级兜底用的是 ``universe_size``，与这里
+        刻意不同 —— 那边的输出喂给跨轮累加器，用 ``requested`` 会在续跑时形成吸收态
+        （计数被兜底冻住、永远收敛不了，VEW-65 四轮评审）。判断依据是「误判的代价是
+        一次重试，还是一个被冻住的计数器」，不是「两处长得像不像」。别统一它们。
         """
         if not candidates:
             return
