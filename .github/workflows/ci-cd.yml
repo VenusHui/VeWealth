@@ -238,16 +238,30 @@ jobs:
               exit 1
             fi
             
+            # 部署前先看一眼磁盘，容量异常时日志里能直接看到（VEW-68）
+            echo "📊 部署前磁盘使用："
+            df -h / | tail -1
+
             # 停止旧容器
             echo "🛑 停止旧容器..."
             docker-compose down || true
-            
-            # 清理未使用的镜像
-            echo "🧹 清理旧镜像..."
+
+            # 清理悬空镜像（未打标签、无容器引用）。
+            # ⚠️ 绝不能加 -a：会删掉未被运行中容器引用的镜像，波及 vechart 等其它栈与回滚镜像。
+            echo "🧹 清理悬空镜像..."
             docker image prune -f
-            
+
             bash docker-start.sh
-            
+
+            # 清理构建缓存，防止 40G 单盘被每次部署累积的 BuildKit cache 持续吃满（VEW-68）。
+            # --keep-storage 1GB：给缓存总量封顶，同时保留最近 1GB 使增量构建仍有命中。
+            # ⚠️ 绝不能加 --volumes：会连 postgres 数据卷一起删掉。
+            echo "🧹 清理构建缓存（保留最近 1GB）..."
+            docker builder prune -f --keep-storage 1GB || true
+
+            echo "📊 部署后磁盘使用："
+            df -h / | tail -1
+
             echo "=========================================="
             echo "✅ 部署完成！"
             echo "=========================================="
