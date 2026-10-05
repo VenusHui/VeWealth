@@ -146,14 +146,28 @@ _MOOTDX_REACHABILITY_MIN_TIMEOUT = 0.5
 _MOOTDX_REACHABILITY_WORKERS = 64
 
 # 镜像探测墙钟预算（秒）。镜像池全挂时 _init_mootdx_client 会并发竞速可达候选，再
-# 兜底试一次配置默认，每个镜像含建连 + 2 次探针取数（探测期受 _MOOTDX_PROBE_TIMEOUT
-# 与单次重试兜底），最坏可把请求挂起数十秒、超过前端 15s 超时。竞速与兜底路径都按
-# 该预算放弃（VEW-54）；调用方给了整体 deadline 时扫描仍不超过该预算（评审 F3）。
+# 兜底试一次配置默认，每个镜像含建连 + 各探测周期各一次取数（探测期受
+# _MOOTDX_PROBE_TIMEOUT 约束，重试按成本截断，见 _MOOTDX_PROBE_CANDIDATE_BUDGET），
+# 最坏可把请求挂起数十秒、超过前端 15s 超时。竞速与兜底路径都按该预算放弃
+# （VEW-54）；调用方给了整体 deadline 时扫描仍不超过该预算（评审 F3）。
 #
 # 定 8s 而不是原值 6s（VEW-62 实测）：单个候选最坏成本是「一次 socket 超时 + 一次
 # 重连重试」= 2.5+0.2+2.5 ≈ 5.2s，而预筛已经先花掉 1.5s，6s 预算只剩 4.5s 窗口 ——
 # 恰好比重试所需的 5.2s 短，可用镜像只要丢了首包就必定被切掉（实测端到端 init
 # 8 次只成功 6 次，两次失败都卡在 6.0s 预算上）。8s 留出 6.5s 窗口，重试跑得完。
+#
+# 单候选最坏成本是 5.4s 这件事由 _MOOTDX_PROBE_CANDIDATE_BUDGET 保证（按**成本**截断
+# 尝试，而不是按固定次数），三条不等式必须同时成立：
+#
+#     竞速窗口 = 预算 − 预筛 ≥ 单候选最坏成本      6.5 ≥ 5.4  ✓
+#     整轮 ≤ 预算 + 一次在跑的尝试（不可打断）      8.0 + 2.5 = 10.5 ≤ 12  ✓
+#     东财回退仍拿得到下限                          12 − 10.5 = 1.5 ≥ 1.0  ✓
+#
+# 这三条曾经**同时破掉**（评审必修 ①）：那时尝试次数是固定 3 次，而两次尝试各自
+# 有界、合计无界 —— 单候选最坏 7.9s 装不进 6.5s 的竞速窗口，竞速整轮放弃、
+# `_mootdx_init_failed_at` 落盘、备源被冷却 30s；把预算抬到 10s 则第二条破（实测
+# 生产整轮 12.25s > 12s）。根因是「按次数」而不是「按成本」设上限，见
+# _MOOTDX_PROBE_CANDIDATE_BUDGET。三条关系都由 ProbeTuningInvariantTests 钉住。
 _MOOTDX_SCAN_BUDGET = 8.0
 # 分钟链路整体预算（秒）：mootdx 探测/取数 + 东财回退合计计入，须小于前端 15s
 # 超时。超时放弃本次取数，返回空而非让请求挂起（VEW-54）。
@@ -189,18 +203,17 @@ _MOOTDX_PROBE_FREQUENCIES: tuple[int, ...] = (0, 4)
 # 空返回即否决整个镜像会把「抖动」误判成「结构性不可用」，进而摘除缓存 client、触发
 # 全量重扫。三次重连后仍失败才下结论：单次失败率 50% 时误判率降到 ~12.5%。
 #
-# 次数由预算倒推：单次失败吃满 _MOOTDX_PROBE_TIMEOUT（2.5s），三次 ≈ 7.9s（含退避），
-# 刚好装进 _MOOTDX_SCAN_BUDGET；再加一次就会顶破预算、退化成 issue 里那条
-# `并发探测 15 个镜像超出探测预算, 放弃本轮`。该不变量由
-# tests/test_mirror_jitter_vew70.py 的 ProbeTuningInvariantTests 钉住。
+# 这是**快速失败**路径的尝试上限（也只在快速失败路径上跑得满）：快速空返回一次约
+# 0.02s，三次合计 0.06s，对预算毫无影响。慢失败路径由
+# _MOOTDX_PROBE_CANDIDATE_BUDGET 按成本截断，跑不到这个次数 —— 两者的分工见该常量。
 _MOOTDX_PROBE_ATTEMPTS = 3
 # 重试之间的退避（秒）。抖动来自「新连接丢首包」，退避只为让连接状态稳定，不需要等
 # 网络恢复；该退避同样受调用方 deadline 约束。
 _MOOTDX_PROBE_ATTEMPT_BACKOFF = 0.2
 # 「慢失败」阈值（秒）：单次尝试耗时超过它，就按**超时**而不是**空返回**对待。
 #
-# 这个区分只影响**裁决语义**，不再影响重试次数（重试次数一律由
-# _MOOTDX_PROBE_ATTEMPTS 约束，见 _ProbeRetryStrategy 的成本说明）：
+# 这个区分只影响**裁决语义**，不影响重试次数（次数上限是 _MOOTDX_PROBE_ATTEMPTS，
+# 实际能跑几次由 _MOOTDX_PROBE_CANDIDATE_BUDGET 按成本截断）：
 #
 # - 快速空返回 = 连接是通的、服务器明确回了「没有数据」→ 三次都如此即**结构性不可用**
 #   （VEW-36 的 AND 意图不变，该拒绝还是拒绝）；
@@ -211,11 +224,20 @@ _MOOTDX_PROBE_ATTEMPT_BACKOFF = 0.2
 # 有没有数据的证据。
 _MOOTDX_PROBE_RETRY_MAX_SECONDS = 1.0
 
+# 单次尝试的结果（VEW-70）。异常必须与「服务器回了空」分开记：tdxpy 的
+# ``raise_exception=False`` 会把「连接已断」这类异常吞成 ``None``，mootdx 再把它变成
+# 空 DataFrame —— 从 ``bars()`` 的返回值上看和「服务器明确说没有数据」一模一样，但
+# 前者是**没测到**、后者是**测到了没有**。只有后者能支撑 _PERIOD_DEAD
+# （评审必修 ②：一次连接级失败若被记成快速空返回，会直接判死镜像并触发全量重扫）。
+_ATTEMPT_OK = "ok"  # 取到了 K 线
+_ATTEMPT_EMPTY = "empty"  # 连接是通的，服务器明确回了「没有数据」
+_ATTEMPT_ERROR = "error"  # 异常 / 超时：没测到
+
 # 单周期裁决（VEW-70）。用三态而不是布尔：「慢失败 / 预算耗尽，没测出结论」必须与
 # 「重试后仍空，确认结构性不可用」区分开，否则超时会被当成镜像坏掉。
 _PERIOD_OK = "ok"  # 取到了 K 线
 _PERIOD_DEAD = "dead"  # 用尽允许的尝试次数、全部**快速**空返回：结构性不可用
-_PERIOD_UNPROVEN = "unproven"  # 慢失败或预算耗尽：既未证实也未证伪
+_PERIOD_UNPROVEN = "unproven"  # 慢失败、异常或预算耗尽：既未证实也未证伪
 
 # 镜像校验结论（VEW-70）。
 MIRROR_SERVES = "serves"  # 所有周期都确认可取到 K 线
@@ -228,8 +250,17 @@ MIRROR_UNKNOWN = "unknown"  # 一条正面证据都没有（预算耗尽）：�
 _MIRROR_ACCEPTED: tuple[str, ...] = (MIRROR_SERVES, MIRROR_DEGRADED)
 
 # 源级探针一轮里所有周期的墙钟预算（秒）。探针与取数共用 client、共用取数锁，且
-# run_all_probes() 是串行的，探针不能无限期占着锁。预算只约束「还能不能再起一次
-# 尝试」，不打断已在跑的 bars()（那由 _MOOTDX_PROBE_TIMEOUT 兜底）。
+# run_all_probes() 是串行的，探针不能无限期占着锁。
+#
+# 这是**硬**上界：`probe_mootdx_periods` 对每个周期都要求「一次完整尝试（= 一个
+# _MOOTDX_PROBE_TIMEOUT）还装得下」才起跑，周期内的重试同样受此约束，所以整轮不会
+# 越过 deadline（VEW-70 起如此；此前只在尝试**之间**看 deadline，最坏会跑到
+# 6s + 2.5s ≈ 8.5s）。探针的预算从调用点起算，主用周期总有位置。
+#
+# 这个上界只有在探针把 client 切到**探测模式**时才成立（见 probes.probe_mootdx）：
+# 取数模式下一次 ``bars()`` 是 5s socket 超时 + tdxpy 默认的 4 次重连重试，最坏
+# ~25s，预算与 _MOOTDX_PROBE_LOCK_TIMEOUT 都拦不住，会把串行的 run_all_probes()
+# 连同排在后面的 eastmoney 探针（熔断恢复主路径）一起拖住（评审必修 ③）。
 _MOOTDX_SOURCE_PROBE_BUDGET = 6.0
 
 # 探测期的 socket 超时（秒），只作用于探测，镜像被采用后会恢复
@@ -239,11 +270,6 @@ _MOOTDX_SOURCE_PROBE_BUDGET = 6.0
 # 试过收到 1.5s，反而更差：可用镜像在重连后要约 2s 才回包，1.5s 会把重试那次也切掉
 # （成功率 8/12 vs 2.5s 下的 11/12），所以超时不能再压。
 _MOOTDX_PROBE_TIMEOUT = 2.5
-# 探测期的重试退避（秒）。tdxpy 默认策略 [0.1,0.5,1,2] 会在不回包的镜像上重连重试
-# 4 次，单个候选实测 52.3s，必须换掉；但完全不重试又会误杀可用镜像 —— 实测
-# 115.238.90.165 每次新建连接约半数丢首个请求，一次重连重试能把成功率拉回 17/20。
-# 再加一次退避会把死镜像成本推到 8.3s，超出 _MOOTDX_SCAN_BUDGET，故只保留一次。
-_MOOTDX_PROBE_BACKOFFS: tuple[float, ...] = (0.2,)
 # 并发探测宽度：一轮扫描同时探测的候选数上限。串行探测下 6s 预算只够覆盖 1 个候选
 # （VEW-62 实测），并发后整池可达候选在一个探测窗口内出结果，可用的那个 0.1s 即返回。
 _MOOTDX_PROBE_WORKERS = 16
@@ -251,6 +277,33 @@ _MOOTDX_PROBE_WORKERS = 16
 # 单例，见 _probe_mirrors_concurrently），所以它必须有上界；但也不能压到 0，否则预算
 # 快耗尽时连正常镜像都建不上（VEW-62 评审 ③）。
 _MOOTDX_PROBE_MIN_TIMEOUT = 0.5
+
+# 单个**候选镜像**（= 一轮 _mirror_serves_bars：各探测周期 + 各自的重试）的墙钟预算
+# （秒）。尝试次数按**成本**截断而不是按固定次数 —— 这是评审必修 ① 的正解。
+#
+# 为什么必须按成本：探测成本是双峰的，生产实测「成功调用 0.02s、失败调用吃满整个
+# socket 超时」。于是
+#
+#   快速空返回：一次 ~0.02s，装得下 _MOOTDX_PROBE_ATTEMPTS(3) 次，
+#               结构性不可用的判定仍建立在「三次都快速空返回」上（VEW-36 的 AND
+#               意图不变），单次失败率 50% 时误判率 ~12.5%；
+#   慢失败：    一次吃满 _MOOTDX_PROBE_TIMEOUT(2.5s)，两次（含退避）就是本预算，
+#               第三次装不下就收手 —— 而收手时的结论是 _PERIOD_UNPROVEN（慢失败
+#               本来就不支持 _PERIOD_DEAD），安全的一侧。
+#
+# 这样单候选最坏 = 2 × 2.5 + 2 × 0.2 = 5.4s，装得进 6.5s 的竞速窗口（算式见
+# _MOOTDX_SCAN_BUDGET）。反过来按固定次数设上限就会「两次尝试各自有界、合计无界」：
+# 3 次 × 2.5s = 7.9s，竞速窗口装不下 → 整轮放弃 + 备源冷却 30s。
+#
+# 两份退避：一份是两次尝试之间真要用掉的，一份留给「重试装不装得下」这个判定本身
+# —— 判定写在 _probe_period_with_retry 里，用的是 `now + timeout > deadline`，
+# 正好卡在等号上时浮点误差会让最后一次重试时有时无。宁可多留 0.2s。
+#
+# 它同时是取数路径确认探测（_mootdx_mirror_dead）的上界：那里 deadline 可能为 None
+# （日线路径），此前会让一次确认最多占着全局取数锁 7.9s。
+_MOOTDX_PROBE_CANDIDATE_BUDGET = (
+    2 * _MOOTDX_PROBE_TIMEOUT + 2 * _MOOTDX_PROBE_ATTEMPT_BACKOFF
+)
 
 
 class _ProbeRetryStrategy:
@@ -556,28 +609,43 @@ def _mirror_label(client: Any, server: Optional[tuple[str, int]] = None) -> str:
     return "unknown"
 
 
-def _probe_period_once(client: Any, freq: int, label: str) -> tuple[bool, float]:
+def _probe_period_once(client: Any, freq: int, label: str) -> tuple[str, float]:
     """对探针标的取一次该周期的 K 线，并把样本记入分周期健康档案。
 
-    返回 ``(是否取到, 耗时秒)``。异常在这里被吞掉并记成一次失败样本 —— 调用方需要
-    的是「这次尝试成不成功、花了多久」，而不是异常本身。
+    返回 ``(_ATTEMPT_OK / _ATTEMPT_EMPTY / _ATTEMPT_ERROR, 耗时秒)``。异常在这里被
+    吞掉并记成 ``_ATTEMPT_ERROR`` —— 调用方需要的是「这次尝试测到了什么、花了多久」，
+    而不是异常本身。
+
+    **异常 / 超时不算「空返回」**：tdxpy 的 ``raise_exception=False`` 会把「连接已断」
+    这类异常吞成 ``None``，mootdx 的 ``to_data(None)`` 再把它变成空 DataFrame —— 从
+    返回值上看和「服务器明确回了没有数据」无法区分，但两者对裁决的意义相反（评审
+    必修 ②）。同理，**慢**返回的空也要按超时算：真·空返回是服务器答了话，是快的
+    （生产实测成功调用 0.02s，失败调用吃满整个 socket 超时）。
     """
     start = time.monotonic()
     error: Optional[str] = None
-    ok = False
+    kind = _ATTEMPT_ERROR
     try:
         probe = client.bars(
             symbol=_mootdx_probe_symbol(), frequency=freq, start=0, offset=3
         )
-        ok = probe is not None and not probe.empty
-        if not ok:
+        if probe is not None and not probe.empty:
+            kind = _ATTEMPT_OK
+        else:
+            kind = _ATTEMPT_EMPTY
             error = "返回空"
     except Exception as e:
         error = str(e)
         logger.warning(f"mootdx 通过 {label} 拉取 {period_label(freq)} K线失败: {e}")
     elapsed = time.monotonic() - start
-    mirror_health.record(label, freq, ok, duration_ms=elapsed * 1000, error=error)
-    return ok, elapsed
+    if kind == _ATTEMPT_EMPTY and elapsed > _MOOTDX_PROBE_RETRY_MAX_SECONDS:
+        # 慢返回的空 = socket 超时被库吞成了空，不是「服务器说没有」。
+        kind = _ATTEMPT_ERROR
+        error = f"超时(空返回 {elapsed:.1f}s)"
+    mirror_health.record(
+        label, freq, kind == _ATTEMPT_OK, duration_ms=elapsed * 1000, error=error
+    )
+    return kind, elapsed
 
 
 def _sleep_within_deadline(seconds: float, deadline: Optional[float]) -> None:
@@ -588,8 +656,8 @@ def _sleep_within_deadline(seconds: float, deadline: Optional[float]) -> None:
         time.sleep(seconds)
 
 
-def _reconnect_probe_client(client: Any) -> bool:
-    """重连探测期的 client，返回是否重连成功。
+def _reconnect_probe_client(client: Any, deadline: Optional[float] = None) -> bool:
+    """重连探测期的 client，返回**是否真的连上了**。
 
     这是探测重试的**有效单位**（VEW-70 生产实测）：公开镜像对新连接丢首包是**连接级**
     的，被丢的那条连接**永不恢复**（同连接再试 4/4 仍失败），只有重新建 TCP 才能重新
@@ -598,6 +666,17 @@ def _reconnect_probe_client(client: Any) -> bool:
 
     重连走 ``api.connect``，而 ``_apply_probe_tuning`` 已经把它包了一层以重新套上探测
     超时，所以重连后的 socket 仍是 ``_MOOTDX_PROBE_TIMEOUT`` 而不是取数用的 5s。
+    ``deadline`` 给定时，重连超时按剩余预算夹紧：重连是**在**一轮探测中途发生的，
+    不能让它把这一轮拖过 deadline。
+
+    **必须看 ``connect`` 的返回值**（评审必修 ②）：tdxpy 的 ``BaseSocketClient.connect``
+    在 ``raise_exception=False``（默认）下**返回 False 而不是抛异常**，所以只看异常
+    的话这里会恒返回 True。那会连锁出两个错：一是调用方以为重连成功、继续在一条
+    未连接的 socket 上取数（``disconnect()`` 已把 ``self.client`` 置 None，``connect``
+    失败后留下的也是未连接的新 socket）；二是那次取数会**立刻**抛
+    ``OSError``，被 tdxpy 吞成 ``None``、被 mootdx 变成空 DataFrame —— 于是被记成
+    「快速空返回」，正好落进 ``_PERIOD_DEAD``，一次连接级失败就判死镜像、摘除
+    client、触发全量重扫，即本 issue 要打断的那条级联。
 
     取不到 ``ip`` / ``port``（例如测试替身、或建连就没成功）时返回 ``False``：调用方
     据此结束重试，不做无意义的重连。
@@ -606,13 +685,21 @@ def _reconnect_probe_client(client: Any) -> bool:
     ip, port = getattr(api, "ip", None), getattr(api, "port", None)
     if api is None or not isinstance(ip, str) or not ip or not port:
         return False
+    timeout = _MOOTDX_PROBE_TIMEOUT
+    if deadline is not None:
+        timeout = min(timeout, max(deadline - time.monotonic(), 0.0))
+    if timeout <= 0:
+        return False
     try:
         api.disconnect()
-        api.connect(ip, int(port), time_out=_MOOTDX_PROBE_TIMEOUT)
-        return True
+        connected = api.connect(ip, int(port), time_out=timeout)
     except Exception as e:
         logger.info(f"mootdx 探测重连 {ip}:{port} 失败: {e}")
         return False
+    if not connected:
+        logger.info(f"mootdx 探测重连 {ip}:{port} 未建立连接, 结束本轮重试")
+        return False
+    return True
 
 
 def _probe_period_with_retry(
@@ -626,36 +713,53 @@ def _probe_period_with_retry(
     - 取到 K 线即 ``_PERIOD_OK``，不再重试；
     - 失败后**重连**再试，最多 ``_MOOTDX_PROBE_ATTEMPTS`` 次。重连是有效单位：丢包是
       连接级的，被丢的连接永不恢复，同连接重复调用没有任何信息量（VEW-70 生产实测）；
-    - 用尽尝试后按失败性质下结论：全是**快速空返回** → ``_PERIOD_DEAD``（连接是通的、
-      服务器明确回了「没有数据」，即结构性不可用）；出现过**慢失败** → ``_PERIOD_UNPROVEN``
-      （超时是「没测到」，不能当成「测到没有」），由 :func:`_mirror_serves_bars`
-      结合其它周期的正面证据裁决；
+    - 用尽尝试后按失败性质下结论：**每一次**都是快速空返回 → ``_PERIOD_DEAD``
+      （连接是通的、服务器明确回了「没有数据」，即结构性不可用）；出现过任何一次
+      超时 / 异常 → ``_PERIOD_UNPROVEN``（那是「没测到」，不能当成「测到没有」），
+      由 :func:`_mirror_serves_bars` 结合其它周期的正面证据裁决；
     - 预算耗尽、或连接已经无法重连时同样返回 ``_PERIOD_UNPROVEN``。
+
+    ``deadline`` 对**重试**是硬上界，对**首次**尝试只是「还没到就试」：重试只在「一次
+    完整尝试（= 一个 ``_MOOTDX_PROBE_TIMEOUT``）还装得下」时才起跑，否则它会吃满一个
+    超时才结束，把候选连同整轮扫描拖过 deadline（评审必修 ① 实测：预算 10s 的一轮跑到
+    了 12.25s，越过 _MOOTDX_MINUTE_BUDGET 并挤掉东财回退）。首次尝试不设这条门槛 ——
+    它是「这个镜像到底有没有数据」的唯一来源，预算再紧也得试一次（VEW-62 评审 ③ 的
+    兜底路径正是靠它），它的溢出由调用方的候选预算 / 整轮预算兜住。
     """
-    saw_timeout = False
+    saw_unproven = False
     for attempt in range(_MOOTDX_PROBE_ATTEMPTS):
-        if deadline is not None and time.monotonic() >= deadline:
-            return _PERIOD_UNPROVEN
+        if deadline is not None:
+            now = time.monotonic()
+            if now >= deadline:
+                return _PERIOD_UNPROVEN
+            if attempt and now + _MOOTDX_PROBE_TIMEOUT > deadline:
+                # 重试装不下就收手。结论是「未证实」：慢失败本来就不支持判死，
+                # 少一次重试只是少一次翻盘机会，不会把抖动误判成故障。
+                return _PERIOD_UNPROVEN
         if attempt:
             # 重连是重试的有效单位；连不上就没必要再花预算空转。
-            if not _reconnect_probe_client(client):
+            if not _reconnect_probe_client(client, deadline):
                 return _PERIOD_UNPROVEN
-        ok, elapsed = _probe_period_once(client, freq, label)
-        if ok:
+            # 重连本身可能吃掉剩下的预算，重连后要重新确认（评审必修 ②：重连失败会
+            # 留下一条未连接的 socket，再取数会立刻抛错并被记成「空返回」）。
+            if deadline is not None and time.monotonic() >= deadline:
+                return _PERIOD_UNPROVEN
+        kind, elapsed = _probe_period_once(client, freq, label)
+        if kind == _ATTEMPT_OK:
             return _PERIOD_OK
-        if elapsed > _MOOTDX_PROBE_RETRY_MAX_SECONDS:
-            saw_timeout = True
+        if kind == _ATTEMPT_ERROR:
+            saw_unproven = True
             logger.info(
-                f"mootdx 镜像 {label} {period_label(freq)} 第 {attempt + 1} 次尝试超时"
+                f"mootdx 镜像 {label} {period_label(freq)} 第 {attempt + 1} 次尝试未测到"
                 f"({elapsed:.1f}s), 按「新连接丢首包」重连重试"
             )
         if attempt + 1 < _MOOTDX_PROBE_ATTEMPTS:
             # 只在后面还有尝试时退避：最后一次失败后再睡一觉纯属浪费预算。
             _sleep_within_deadline(_MOOTDX_PROBE_ATTEMPT_BACKOFF, deadline)
-    if saw_timeout:
+    if saw_unproven:
         logger.warning(
             f"mootdx 镜像 {label} {period_label(freq)} 重连 {_MOOTDX_PROBE_ATTEMPTS} 次"
-            "仍未测到结果(含超时), 不据此判死"
+            "仍未测到结果(含超时/异常), 不据此判死"
         )
         return _PERIOD_UNPROVEN
     logger.warning(
@@ -681,11 +785,37 @@ def _mirror_serves_bars(
     ``MIRROR_DEGRADED``（调用方照常采用，只是该周期在健康档案里记为降级）；一条正面
     证据都没有时返回 ``MIRROR_UNKNOWN``，宁可本轮不用它，也不把「没测到」当成结论。
     ``_MOOTDX_PROBE_FREQUENCIES`` 把主用周期排在前面，正是为了让这条证据先落地。
+
+    **周期顺序带来的不对称是有意的**，两个方向都按「手上有没有正面证据」判，不是按
+    周期本身：
+
+    - 主用周期（5min）就 ``_PERIOD_UNPROVEN``：此时一条正面证据都没有，直接返回
+      ``MIRROR_UNKNOWN`` 并**不再往下探日线** —— 后面就算测出来，也改变不了「这个
+      镜像一条数据都没取到」的结论，只是白花预算；
+    - 日线 ``_PERIOD_UNPROVEN``：5min 已经取到过，数据通路是通的，返回
+      ``MIRROR_DEGRADED``（采用，该周期在健康档案里记为降级）。
+
+    代价是同一镜像可能因为「先测哪个周期」落到不同结论：反过来先测日线且日线抖动
+    时会得到 ``MIRROR_UNKNOWN`` 而不是 ``MIRROR_DEGRADED``。把主用周期排在前面把这个
+    窗口压到最小（5min 是深度图默认周期，也是公开镜像上更稳的那个），顺序由
+    ``ProbeTuningInvariantTests.test_primary_period_is_probed_first`` 钉住。
     """
     label = _mirror_label(client, server)
+    # 单候选的墙钟上界（见 _MOOTDX_PROBE_CANDIDATE_BUDGET）：两个周期各自有界、合计
+    # 无界，正是竞速窗口装不下单候选的原因（评审必修 ①），所以在**候选**这一层收口。
+    candidate_deadline = time.monotonic() + _MOOTDX_PROBE_CANDIDATE_BUDGET
+    if deadline is not None:
+        candidate_deadline = min(deadline, candidate_deadline)
     confirmed = False
     for freq in _MOOTDX_PROBE_FREQUENCIES:
-        verdict = _probe_period_with_retry(client, freq, label, deadline)
+        # 已经拿到正面证据时，后面的周期只决定 serves 还是 degraded —— 两个结论都会被
+        # 采用，所以不值得为它越过候选预算。一次完整尝试装不下就按「未证实」收口
+        # （降级采用），否则候选会冲破竞速窗口（评审必修 ①）。主用周期不受这条约束：
+        # 它没测出结果之前一条正面证据都没有，必须试（见 _probe_period_with_retry）。
+        if confirmed and time.monotonic() + _MOOTDX_PROBE_TIMEOUT > candidate_deadline:
+            verdict = _PERIOD_UNPROVEN
+        else:
+            verdict = _probe_period_with_retry(client, freq, label, candidate_deadline)
         if verdict == _PERIOD_OK:
             confirmed = True
             continue
@@ -721,7 +851,11 @@ def probe_mootdx_periods(
     label = _mirror_label(client, None)
     verdicts: dict[int, str] = {}
     for freq in _MOOTDX_PROBE_FREQUENCIES:
-        if deadline is not None and time.monotonic() >= deadline:
+        # 一轮里每个周期都要「一次完整尝试装得下」才起跑，整轮于是不会越过 deadline
+        # （评审必修 ③：探针持着全局取数锁，拖过预算会把串行的 run_all_probes() 连同
+        # 后面的 eastmoney 探针一起拖住）。探针的预算是从调用点起算的整段，所以主用
+        # 周期总有位置。
+        if deadline is not None and time.monotonic() + _MOOTDX_PROBE_TIMEOUT > deadline:
             break
         verdict = _probe_period_with_retry(client, freq, label, deadline)
         verdicts[freq] = verdict

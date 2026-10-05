@@ -59,6 +59,16 @@ def _empty() -> pd.DataFrame:
     return pd.DataFrame()
 
 
+class FakeSocket:
+    """最小 socket 替身：记录探测模式套上去的超时，供恢复断言检查。"""
+
+    def __init__(self):
+        self.timeout = None
+
+    def settimeout(self, value):
+        self.timeout = value
+
+
 class FakeTdxApi:
     """最小 tdxpy API 替身：让 ``_reconnect_probe_client`` 能工作并记录重连次数。
 
@@ -67,17 +77,25 @@ class FakeTdxApi:
     生产上无效的那种。
     """
 
-    def __init__(self, ip: str = "1.1.1.1", port: int = 7709):
+    def __init__(self, ip: str = "1.1.1.1", port: int = 7709, connect_ok: bool = True):
         self.ip = ip
         self.port = port
         self.reconnects = 0
+        # tdxpy 的 ``connect`` 在 ``raise_exception=False``（默认）下**返回 False
+        # 而不抛异常**，所以替身必须能模拟「重连失败」这条路径（评审必修 ②）。
+        self.connect_ok = connect_ok
+        # 底层 socket 与 tdxpy 的库内重试开关：探测模式会改它们，交回取数路径前
+        # 必须恢复（评审必修 ③）。
+        self.client = FakeSocket()
+        self.auto_retry = True
+        self.retry_strategy = "tdxpy-default"
 
     def disconnect(self):
         return None
 
     def connect(self, ip=None, port=7709, time_out=None, **kwargs):
         self.reconnects += 1
-        return True
+        return True if self.connect_ok else False
 
 
 class PeriodScriptedClient:
@@ -87,11 +105,13 @@ class PeriodScriptedClient:
     与真实镜像「该周期没有数据」的表现一致。
     """
 
-    def __init__(self, scripts, delay: float = 0.0, ip: str = "1.1.1.1"):
+    def __init__(
+        self, scripts, delay: float = 0.0, ip: str = "1.1.1.1", connect_ok: bool = True
+    ):
         self._scripts = {freq: list(items) for freq, items in scripts.items()}
         self._delay = delay
         self.calls: list[dict] = []
-        self.client = FakeTdxApi(ip=ip)
+        self.client = FakeTdxApi(ip=ip, connect_ok=connect_ok)
 
     def bars(self, *args, **kwargs):
         freq = kwargs.get("frequency")
@@ -114,6 +134,19 @@ class FakeQuotes:
     def __init__(self, client):
         self._client = client
         self.factory = mock.Mock(return_value=client)
+
+
+class ServerRoutingQuotes:
+    """按 ``server`` 返回不同 client 的假 Quotes：让竞速分支可以逐个候选脚本化。"""
+
+    def __init__(self, clients: dict):
+        self._clients = clients
+        self.servers: list = []
+
+    def factory(self, *args, **kwargs):
+        server = kwargs.get("server")
+        self.servers.append(server)
+        return self._clients[server]
 
 
 class MirrorJitterBase(unittest.TestCase):
@@ -274,6 +307,219 @@ class MirrorVerdictTests(MirrorJitterBase):
         self.assertEqual(client.frequency_calls(FREQ_DAILY), 1)
 
 
+class RaceBranchTests(MirrorJitterBase):
+    """验收场景必须走**竞速分支**也成立（评审必修 ①）。
+
+    上面那些用例直接调 ``_mirror_serves_bars``，不经过预筛与竞速；而生产上预筛后可达
+    候选通常不止 1 个（VEW-62 实测 15 个接受连接），走的是
+    ``_probe_mirrors_concurrently`` —— 它的 ``as_completed`` 有超时截断，窗口是
+    「预算 − 预筛」。只测裁决层会漏掉「窗口装不下候选 → 整轮放弃」这类问题。
+    """
+
+    def test_race_adopts_a_degraded_candidate(self):
+        """5min 正常 + 日线慢失败的候选，在多候选竞速里也要被判 degraded 并胜出。"""
+        jittery = PeriodScriptedClient(
+            {FREQ_5MIN: [_df()], FREQ_DAILY: []}, delay=TEST_SLOW_DELAY
+        )
+        blackhole = PeriodScriptedClient({}, delay=TEST_SLOW_DELAY)
+        quotes = ServerRoutingQuotes(
+            {("1.1.1.1", 7709): jittery, ("2.2.2.2", 7709): blackhole}
+        )
+        deadline = time.monotonic() + ap._MOOTDX_SCAN_BUDGET
+
+        winner = ap._probe_mirrors_concurrently(
+            quotes, [("1.1.1.1", 7709), ("2.2.2.2", 7709)], deadline=deadline
+        )
+
+        self.assertIsNotNone(winner, "竞速不得整轮放弃")
+        self.assertEqual(winner[0], ("1.1.1.1", 7709))
+        self.assertIs(winner[1], jittery)
+        self.assertLess(time.monotonic(), deadline, "必须在竞速窗口内出结论")
+
+    def test_race_truncation_would_drop_the_same_candidate(self):
+        """对照：窗口小于候选实际成本时，同一个候选会被整轮丢掉。
+
+        这条钉住的是**机制**（上面那条不变量钉住的是真实常数）：没有它，前一条用例
+        在窗口被改小之后仍会通过，测不出「截断」这件事。
+
+        真实常数下窗口（6.5s）已经装得下候选预算（5.4s），所以这条只能缩窗口来演示
+        机制：窗口只给半次尝试（0.2s），而候选光跑完 5min 那一发就要 0.4s。候选的
+        future 要跑完整个裁决才出结果，窗口一过 ``as_completed`` 就抛
+        FuturesTimeoutError，整轮放弃。
+        """
+        per_attempt = 0.4
+        jittery = PeriodScriptedClient(
+            {FREQ_5MIN: [_df()], FREQ_DAILY: []}, delay=per_attempt
+        )
+        quotes = ServerRoutingQuotes({("1.1.1.1", 7709): jittery})
+        deadline = time.monotonic() + per_attempt / 2
+
+        winner = ap._probe_mirrors_concurrently(
+            quotes, [("1.1.1.1", 7709), ("2.2.2.2", 7709)], deadline=deadline
+        )
+
+        self.assertIsNone(winner, "窗口不够时必须整轮放弃（这正是要避免的形态）")
+
+
+class CostBoundedRetryTests(MirrorJitterBase):
+    """重试次数由**成本**截断，不由固定次数（评审必修 ①）。
+
+    生产实测探测成本是双峰的：成功调用 0.02s，失败调用吃满整个 socket 超时。按固定
+    「每周期 3 次」设上限的写法会让两次尝试各自有界、合计无界 —— 单候选最坏
+    3 × 2.5s = 7.9s，装不进 6.5s 的竞速窗口，竞速整轮放弃、备源被冷却 30s。这里把
+    timeout 与候选预算按比例缩小，用**真实墙钟**把两条路径都测出来（不变量那条测的是
+    真实常数，这条测的是机制）。
+    """
+
+    def _shrink(self, timeout: float, budget: float) -> None:
+        for name, value in (
+            ("_MOOTDX_PROBE_TIMEOUT", timeout),
+            ("_MOOTDX_PROBE_CANDIDATE_BUDGET", budget),
+        ):
+            patcher = mock.patch.object(ap, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_slow_failures_are_truncated_by_the_candidate_budget(self):
+        """慢失败：装得下几次试几次，候选预算用尽即收手（结论仍是「未证实」）。"""
+        self._shrink(timeout=0.2, budget=0.5)
+        client = PeriodScriptedClient({FREQ_5MIN: [], FREQ_DAILY: [_df()]}, delay=0.2)
+
+        verdict = ap._mirror_serves_bars(client, ("1.1.1.1", 7709))
+
+        # 两次 = 0.4 装得下，第三次要 0.6 > 0.5 —— 按成本停在 2 次，而不是 3 次
+        self.assertEqual(client.frequency_calls(FREQ_5MIN), 2)
+        self.assertEqual(verdict, ap.MIRROR_UNKNOWN, "慢失败只判未证实，不判死")
+
+    def test_fast_empties_still_get_the_full_attempt_count(self):
+        """快速空返回成本近零，仍跑满 ``_MOOTDX_PROBE_ATTEMPTS`` 次。
+
+        结构性不可用是这套裁决里唯一的判死依据（VEW-36 的 AND 意图），不能因为
+        「按成本截断」被一起砍掉 —— 那会把误判率从 p³ 退回 p²。
+        """
+        self._shrink(timeout=0.2, budget=0.5)
+        client = PeriodScriptedClient({FREQ_5MIN: [], FREQ_DAILY: [_df()]})
+
+        verdict = ap._mirror_serves_bars(client, ("1.1.1.1", 7709))
+
+        self.assertEqual(client.frequency_calls(FREQ_5MIN), ap._MOOTDX_PROBE_ATTEMPTS)
+        self.assertEqual(verdict, ap.MIRROR_UNAVAILABLE)
+
+    def test_candidate_never_exceeds_its_budget_once_evidence_is_in(self):
+        """已有正面证据时，装不下的那个周期按「未证实」收口，候选不越过预算。
+
+        这是候选预算真正的收口点：主用周期用掉预算后再给日线起一次完整尝试，候选就
+        会多出一个超时、冲破竞速窗口 —— 正是评审必修 ① 的形态。日线这一发只是把
+        ``serves`` 细化成 ``degraded``，两个结论都采用，不值得为它越界。
+        """
+        self._shrink(timeout=0.2, budget=0.4)
+
+        def _slow(result):
+            def _call():
+                time.sleep(0.15)
+                return result
+
+            return _call
+
+        client = PeriodScriptedClient(
+            {FREQ_5MIN: [_slow(_empty()), _slow(_df())], FREQ_DAILY: [_df()]}
+        )
+
+        started = time.monotonic()
+        verdict = ap._mirror_serves_bars(client, ("1.1.1.1", 7709))
+        elapsed = time.monotonic() - started
+
+        # 5min 第二次尝试（0.3s）才成功；日线要 0.3 + 0.2 > 0.4，装不下 → 不测
+        self.assertEqual(verdict, ap.MIRROR_DEGRADED)
+        self.assertEqual(client.frequency_calls(FREQ_DAILY), 0)
+        self.assertLessEqual(elapsed, 0.4 + TEST_SLOW_SECONDS)
+
+    def test_first_attempt_runs_even_when_a_retry_would_not_fit(self):
+        """只有**重试**受「装得下」约束，首次尝试不受。
+
+        预算快耗尽时试一次配置默认是 VEW-62 评审 ③ 的兜底意图；门槛若设成「一次完整
+        尝试装得下」，预算一紧就一次都不试，兜底路径直接退化到备源。
+        """
+        self._shrink(timeout=0.2, budget=0.5)
+
+        def _slow_empty():
+            time.sleep(0.1)
+            return _empty()
+
+        client = PeriodScriptedClient({FREQ_5MIN: [_slow_empty, _df()]})
+
+        verdict = ap._mirror_serves_bars(
+            client, ("1.1.1.1", 7709), deadline=time.monotonic() + 0.25
+        )
+
+        # 首次尝试跑了（并测出慢失败）；重试要 0.1 + 0.2 > 0.25，装不下 → 收手
+        self.assertEqual(client.frequency_calls(FREQ_5MIN), 1)
+        self.assertEqual(verdict, ap.MIRROR_UNKNOWN)
+
+
+class ReconnectFailureTests(MirrorJitterBase):
+    """重连失败必须被如实上报，且不得被误判成「结构性不可用」（评审必修 ②）。
+
+    tdxpy 的 ``BaseSocketClient.connect`` 在 ``raise_exception=False``（默认）下**返回
+    False 而不抛异常**，所以只 ``try/except`` 的写法会恒返回「重连成功」。那会连锁出
+    两个错：调用方以为连上了，继续在一条未连接的 socket 上取数；那次取数立刻抛
+    ``OSError``，被 tdxpy 吞成 ``None``、被 mootdx 变成空 DataFrame —— 于是记成
+    「快速空返回」，正好落进 ``_PERIOD_DEAD``，一次连接级失败就判死镜像、摘除 client、
+    触发全量重扫，即本 issue 要打断的那条级联。
+    """
+
+    def test_reconnect_reports_connect_returning_false(self):
+        client = PeriodScriptedClient({}, connect_ok=False)
+
+        self.assertFalse(ap._reconnect_probe_client(client))
+        self.assertEqual(client.client.reconnects, 1, "仍然要真的试一次建连")
+
+    def test_reconnect_reports_success(self):
+        client = PeriodScriptedClient({})
+
+        self.assertTrue(ap._reconnect_probe_client(client))
+
+    def test_reconnect_gives_up_when_the_budget_is_gone(self):
+        """预算已尽就不建连：重连是在一轮探测中途发生的，不能把这一轮拖过 deadline。"""
+        client = PeriodScriptedClient({})
+
+        self.assertFalse(
+            ap._reconnect_probe_client(client, deadline=time.monotonic() - 1)
+        )
+        self.assertEqual(client.client.reconnects, 0)
+
+    def test_failed_reconnect_does_not_condemn_the_mirror(self):
+        """重连失败 → 只判「未证实」，**不能**判结构性不可用。"""
+        client = PeriodScriptedClient({}, connect_ok=False)
+
+        verdict = ap._mirror_serves_bars(client, ("1.1.1.1", 7709))
+
+        self.assertEqual(verdict, ap.MIRROR_UNKNOWN)
+        self.assertNotEqual(verdict, ap.MIRROR_UNAVAILABLE)
+        # 首次尝试失败后重连不成功，直接收手，不在死连接上空转满次数
+        self.assertEqual(len(client.calls), 1)
+
+    def test_fast_exception_is_not_a_structural_empty(self):
+        """异常 ≠ 「服务器回了空」：快抛的异常同样只能判「未证实」。
+
+        tdxpy 把异常吞成 ``None``、mootdx 再把它变成空 DataFrame，从 ``bars()`` 的
+        返回值上无法区分 —— 但前者是「没测到」、后者是「测到了没有」，只有后者能
+        支撑结构性不可用的结论。
+        """
+
+        def _boom():
+            raise OSError("Transport endpoint is not connected")
+
+        client = PeriodScriptedClient(
+            {FREQ_5MIN: [_boom, _boom, _boom], FREQ_DAILY: [_df()]}
+        )
+
+        verdict = ap._mirror_serves_bars(client, ("1.1.1.1", 7709))
+
+        self.assertEqual(verdict, ap.MIRROR_UNKNOWN)
+        self.assertEqual(client.frequency_calls(FREQ_5MIN), ap._MOOTDX_PROBE_ATTEMPTS)
+
+
 class FetchPathQuorumTests(MirrorJitterBase):
     """取数路径的空返回确认：单次抖动不再摘除 client、不再触发全量重扫。"""
 
@@ -334,6 +580,44 @@ class SourceProbePeriodTests(MirrorJitterBase):
         self.assertIn("daily=ok", result.detail)
         self.assertIs(ap._mootdx_client, client, "抖动不得摘除 client")
 
+    def test_probe_runs_in_probe_mode_and_restores_fetch_mode(self):
+        """源级探针必须把共享 client 切到探测模式，并在交回前恢复（评审必修 ③）。
+
+        client 平时是取数模式（5s socket 超时 + tdxpy 默认 4 次重连重试），一次
+        ``bars()`` 最坏 ≈ 25s —— 探针持着全局取数锁跑这么久，会把串行的
+        ``run_all_probes()`` 连同排在后面的 eastmoney 探针一起拖住；而且 25s 远大于
+        「慢失败」阈值，源状态永远只能记 deferred，`_PERIOD_DEAD` 那条分支永远走不到。
+        """
+        client = PeriodScriptedClient({FREQ_5MIN: [_df()], FREQ_DAILY: [_df()]})
+        ap._mootdx_client = client
+        seen: list[tuple] = []
+        real_bars = client.bars
+
+        def _spy(*args, **kwargs):
+            seen.append(
+                (
+                    client.client.client.timeout,
+                    client.client.auto_retry,
+                    client.client.retry_strategy,
+                )
+            )
+            return real_bars(*args, **kwargs)
+
+        client.bars = _spy
+
+        result = probe_mootdx()
+
+        self.assertEqual(result.status, "up")
+        self.assertTrue(seen, "探针期间必须真的取过数")
+        for sock_timeout, auto_retry, strategy in seen:
+            self.assertEqual(sock_timeout, ap._MOOTDX_PROBE_TIMEOUT)
+            self.assertFalse(auto_retry)
+            self.assertIs(strategy, ap._ProbeRetryStrategy)
+        # 交回取数路径前必须恢复：漏掉恢复会让被采用的镜像永久停在探测配置上
+        self.assertTrue(client.client.auto_retry)
+        self.assertEqual(client.client.retry_strategy, "tdxpy-default")
+        self.assertEqual(client.client.client.timeout, ap._MOOTDX_CONNECT_TIMEOUT)
+
     def test_structural_empty_marks_source_down_and_invalidates(self):
         client = PeriodScriptedClient({FREQ_5MIN: [_df()], FREQ_DAILY: []})
         ap._mootdx_client = client
@@ -378,24 +662,80 @@ class ProbeTuningInvariantTests(unittest.TestCase):
     def test_retry_actually_retries(self):
         self.assertGreaterEqual(ap._MOOTDX_PROBE_ATTEMPTS, 2)
 
-    def test_worst_case_candidate_cost_stays_within_the_scan_budget(self):
-        """最坏候选成本必须装得进 _MOOTDX_SCAN_BUDGET。
+    def _worst_candidate_seconds(self) -> float:
+        """单候选最坏成本（秒）= 候选预算本身。
 
-        一次尝试 = 重连 + 一次取数，失败成本是 _MOOTDX_PROBE_TIMEOUT（探测期已关掉
-        tdxpy 的库内重试，所以一次 ``bars()`` 就是一次连接尝试，成本可见、可计数）。
-        生产实测失败的调用吃满整个超时（2.5s），成功的 0.02s 返回。
-
-        上界 = 尝试次数 × 超时 + (尝试次数 - 1) × 退避（退避只在两次尝试之间）。
-        超过 _MOOTDX_SCAN_BUDGET 就会退化成 issue 里那条
-        `并发探测 15 个镜像超出探测预算, 放弃本轮` —— 那正是本 issue 要消除的症状，
-        所以这条不变量是「重试次数」这个旋钮的上限。
+        成本按**成本**截断而不是按次数（评审必修 ①）：尝试只在「一次完整尝试
+        （一个 _MOOTDX_PROBE_TIMEOUT）还装得下」时才起跑，所以候选不会越过
+        _MOOTDX_PROBE_CANDIDATE_BUDGET。生产实测失败调用吃满整个超时（2.5s）、成功
+        调用 0.02s 返回 —— 双峰成本正是这个设计的前提。
         """
-        worst = (
-            ap._MOOTDX_PROBE_ATTEMPTS * ap._MOOTDX_PROBE_TIMEOUT
-            + (ap._MOOTDX_PROBE_ATTEMPTS - 1) * ap._MOOTDX_PROBE_ATTEMPT_BACKOFF
+        return ap._MOOTDX_PROBE_CANDIDATE_BUDGET
+
+    def test_candidate_budget_covers_two_slow_attempts(self):
+        """候选预算至少装得下**两次**慢失败尝试（含退避）。
+
+        一次慢失败 = 一个 socket 超时；只装得下一次的话，丢首包这个抖动模式（VEW-70
+        生产实测：失败是连接级的，重连才有新的一次抽签）就完全没有重试机会，等于退回
+        到「一次失败即否决」。
+        """
+        # 判定是 `now + timeout > deadline`，要**严格**装得下就得连退避一起算进去，
+        # 否则浮点误差会让第二次慢尝试时有时无。
+        self.assertGreaterEqual(
+            ap._MOOTDX_PROBE_CANDIDATE_BUDGET,
+            2 * ap._MOOTDX_PROBE_TIMEOUT + 2 * ap._MOOTDX_PROBE_ATTEMPT_BACKOFF,
         )
 
-        self.assertLess(worst, ap._MOOTDX_SCAN_BUDGET)
+    def test_candidate_budget_covers_the_full_fast_failure_path(self):
+        """候选预算也要装得下**快速失败**路径的全部尝试（VEW-36 的 AND 意图）。
+
+        结构性不可用（三次快速空返回）是这套裁决里唯一的「判死」依据，成本却几乎为
+        零（实测快速空返回 ~0.02s）。若预算按最坏成本一刀切成「两次尝试」，快速路径
+        也会被砍到两次，误判率从 p³ 退到 p²。所以这里钉住：快速路径跑得满
+        _MOOTDX_PROBE_ATTEMPTS 次 —— 探测前的那次装不下检查按最坏成本（一个超时）
+        估，所以要算上它。
+        """
+        self.assertGreaterEqual(
+            ap._MOOTDX_PROBE_CANDIDATE_BUDGET,
+            (ap._MOOTDX_PROBE_ATTEMPTS - 1) * ap._MOOTDX_PROBE_ATTEMPT_BACKOFF
+            + ap._MOOTDX_PROBE_TIMEOUT,
+        )
+
+    def test_race_window_fits_a_worst_case_candidate(self):
+        """**竞速窗口**必须 ≥ 单候选最坏成本 —— 这才是「重试次数」真正的上界。
+
+        `_init_mootdx_client` 先跑一次并发 TCP 预筛（最多
+        _MOOTDX_REACHABILITY_TIMEOUT），剩下的候选才交给
+        `_probe_mirrors_concurrently`；竞速的 ``as_completed`` 超时是「预算 − 预筛」，
+        不是整个预算。所以要断言的是**窗口**，不是总预算（评审必修 ①：只断言
+        `worst < _MOOTDX_SCAN_BUDGET` 比 VEW-62 的原口径还弱，拦不住这个）。
+
+        窗口小于候选最坏成本时：候选还没出结论竞速就整轮超时 → 返回 None →
+        `_mootdx_init_failed_at` 落盘 → 30s 冷却内所有请求走备源。`MIRROR_DEGRADED`
+        这种本来能采用的结论被整轮丢掉，正是本 issue 要消除的症状
+        （实测：窗口 6.5s < 候选 7.9s → `并发探测 … 放弃本轮`）。
+        """
+        window = ap._MOOTDX_SCAN_BUDGET - ap._MOOTDX_REACHABILITY_TIMEOUT
+
+        self.assertGreaterEqual(window, self._worst_candidate_seconds())
+
+    def test_scan_round_fits_the_minute_chain_with_room_for_eastmoney(self):
+        """整轮扫描 + 一次在跑的尝试 + 东财回退下限必须装得进分钟链路预算。
+
+        整轮 = 扫描预算 + **一次不可打断的尝试**：deadline 只在两次尝试之间检查，正在
+        跑的 ``bars()`` 拦不住，所以最坏会超出预算一个 _MOOTDX_PROBE_TIMEOUT。漏掉这
+        一项会让「抬预算」看起来免费 —— 实测把预算抬到 10s 后整轮到了 12.25s，已经
+        顶破 _MOOTDX_MINUTE_BUDGET(12s)，东财回退（熔断恢复主路径）被挤掉。
+
+        分钟链路是**整条**的硬边界（< 前端 15s 超时），所以这条和上面那条是一对：
+        上面那条定次数的上限，这条定预算的上限。
+        """
+        self.assertLessEqual(
+            ap._MOOTDX_SCAN_BUDGET
+            + ap._MOOTDX_PROBE_TIMEOUT
+            + ap._EASTMONEY_FALLBACK_MIN_TIMEOUT,
+            ap._MOOTDX_MINUTE_BUDGET,
+        )
 
     def test_primary_period_is_probed_first(self):
         """主用周期（5min）必须排在最前。
@@ -429,14 +769,21 @@ class MirrorHealthRegistryTests(MirrorJitterBase):
         self.assertEqual(snap["periods"]["5min"]["success_rate"], 1.0)
         self.assertEqual(sorted(snap["mirrors"]["1.1.1.1:7709"]), ["5min", "daily"])
 
-    def test_has_recent_success_is_scoped_to_mirror_and_period(self):
+    def test_registry_only_observes_and_never_decides(self):
+        """档案只做观测，不提供任何供裁决消费的跨轮查询（评审必修 ④）。
+
+        裁决只看**本轮**样本。跨轮历史成功不适合当正面证据：一个刚刚结构性失效的
+        镜像会因为几十秒前的成功记录被继续采用。区分「抖动」与「故障」靠的是本轮内的
+        有界重连重试，不是历史窗口 —— 所以这里连 ``has_recent_success`` 都不该有。
+        """
         registry = MirrorHealthRegistry()
         registry.record("1.1.1.1:7709", FREQ_5MIN, ok=True)
 
-        self.assertTrue(registry.has_recent_success("1.1.1.1:7709", FREQ_5MIN, 60))
-        self.assertFalse(registry.has_recent_success("1.1.1.1:7709", FREQ_DAILY, 60))
-        self.assertFalse(registry.has_recent_success("2.2.2.2:7709", FREQ_5MIN, 60))
-        self.assertFalse(registry.has_recent_success("1.1.1.1:7709", FREQ_5MIN, -1))
+        self.assertFalse(hasattr(registry, "has_recent_success"))
+        self.assertEqual(
+            sorted(m for m in dir(registry) if not m.startswith("_")),
+            ["record", "reset", "snapshot"],
+        )
 
     def test_probe_samples_are_written_to_the_shared_registry(self):
         """校验路径的样本进全局档案 —— 判定依据与对外呈现必须是同一批样本。"""

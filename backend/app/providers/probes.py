@@ -157,9 +157,18 @@ def probe_mootdx() -> ProbeResult:
     现在复用取数路径同一套裁决（有界重试 + 三态结论），逐个周期探测并记入分周期
     健康档案；只有**确认结构性不可用**才置 DOWN 并摘除 client，慢失败 / 预算耗尽
     只记一条 deferred、保留上次已知状态。
+
+    探针期间必须把共享 client 切到**探测模式**（评审必修 ③）：client 平时是取数模式
+    （5s socket 超时 + tdxpy 默认 4 次重连重试），一次 ``bars()`` 最坏 ≈ 25s，而
+    ``_MOOTDX_SOURCE_PROBE_BUDGET`` 只在两次尝试之间检查、``_MOOTDX_PROBE_LOCK_TIMEOUT``
+    只管等锁，都拦不住它 —— 探针会持着全局取数锁把串行的 ``run_all_probes()`` 拖住，
+    排在后面的 eastmoney 探针（熔断恢复主路径）随之延后。而且 25s 远大于
+    ``_MOOTDX_PROBE_RETRY_MAX_SECONDS``，每次都是「慢失败」，源状态永远只记 deferred。
+    探测模式下一次尝试的成本降到 ``_MOOTDX_PROBE_TIMEOUT``，本探针的成本模型才成立。
     """
     try:
         from app.providers.astock_provider import (
+            _apply_probe_tuning,
             _get_mootdx_client,
             _invalidate_mootdx_client,
             _mootdx_fetch_guard,
@@ -167,6 +176,7 @@ def probe_mootdx() -> ProbeResult:
             _MOOTDX_SOURCE_PROBE_BUDGET,
             _PERIOD_DEAD,
             _PERIOD_OK,
+            _restore_client_tuning,
             probe_mootdx_periods,
         )
         from app.providers.mirror_health import period_label
@@ -214,6 +224,10 @@ def probe_mootdx() -> ProbeResult:
         # duration_ms 从拿到锁之后开始计：探针与取数共用 client，把等锁时间算进去会
         # 让 /api/health/sources 的源延迟随并发取数虚高（VEW-60 评审 M3）。
         start = time.monotonic()
+        # 探测模式必须在**取数锁内**切换：client 是共享的，锁外切换会被并发取数看见，
+        # 把它拉进 2.5s 超时 + 不重试的探测配置里。恢复同样在锁内完成（finally），
+        # 保证被采用的 client 交回取数路径时是完整的取数模式（评审必修 ③）。
+        saved = _apply_probe_tuning(client)
         try:
             verdicts = probe_mootdx_periods(
                 client, deadline=time.monotonic() + _MOOTDX_SOURCE_PROBE_BUDGET
@@ -289,6 +303,10 @@ def probe_mootdx() -> ProbeResult:
                 duration_ms=duration_ms,
                 error=str(e),
             )
+        finally:
+            # 无论走哪条分支都要把共享 client 交回取数模式：漏掉这条恢复路径会让
+            # 被采用的镜像永久停在 2.5s 超时 + 不重试的探测配置上（评审必修 ③）。
+            _restore_client_tuning(client, saved)
 
 
 def probe_tushare() -> ProbeResult:

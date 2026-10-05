@@ -273,7 +273,9 @@ class HandshakeReconnectTests(unittest.TestCase):
             client.client.need_setup = False
 
         with mock.patch.object(ap, "_disable_tdx_setup_handshake", flag_only):
-            with mock.patch.object(ap, "_reconnect_probe_client", lambda client: False):
+            with mock.patch.object(
+                ap, "_reconnect_probe_client", lambda client, deadline=None: False
+            ):
                 got = ap._try_mootdx_server(quotes, ("1.2.3.4", 7709))
         self.assertIsNone(got, "错位的连接不重连就取不到 K 线，必须判负")
         self.assertEqual(api.connect_calls, 1)

@@ -9,6 +9,11 @@
 本模块按 ``(镜像, 周期)`` 记录尝试数、成功数、成功率、连续失败数与最近成功 / 失败
 时间，并给出按周期的汇总。它**只做观测，不参与裁决** —— 裁决在 astock_provider 里，
 写入点与裁决点重合，保证「判定依据」与「对外呈现」是同一批样本。
+
+「不参与裁决」是刻意的：裁决只看**本轮**的样本（``_mirror_serves_bars`` 里的
+``confirmed``）。跨轮的历史成功不适合当正面证据 —— 一个刚刚结构性失效的镜像会因为
+几十秒前的成功记录被继续采用。要区分「抖动」与「故障」，靠的是本轮内的有界重试
+（重连是有效单位，见 ``_probe_period_with_retry``），不是历史窗口。
 """
 
 from __future__ import annotations
@@ -135,26 +140,6 @@ class MirrorHealthRegistry:
     # ------------------------------------------------------------------
     # 查询
     # ------------------------------------------------------------------
-
-    def has_recent_success(
-        self, server: Optional[str], freq: int, within_seconds: float
-    ) -> bool:
-        """该 ``(镜像, 周期)`` 是否在 ``within_seconds`` 内成功过。
-
-        供「慢失败」裁决消费：一次超时既不能证实也不能证伪结构性不可用，但若同一
-        镜像同一周期刚刚成功过，就有正面证据把它判为抖动而不是故障（VEW-70）。
-        """
-        key = (str(server or "unknown"), int(freq))
-        with self._lock:
-            cell = self._cells.get(key)
-            if cell is None or cell.last_success_at is None:
-                return False
-            try:
-                last = datetime.fromisoformat(cell.last_success_at)
-            except ValueError:  # pragma: no cover - 防御性
-                return False
-        age = (datetime.now(timezone.utc) - last).total_seconds()
-        return age <= max(float(within_seconds), 0.0)
 
     def snapshot(self) -> dict[str, Any]:
         """按周期汇总 + 按镜像明细的健康快照。"""
