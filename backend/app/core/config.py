@@ -173,6 +173,33 @@ class Settings(BaseSettings):
     # （停牌 / 退市），50% 不会误触发。
     MINUTE_COLLECT_EMPTY_RATIO_LIMIT: float = 0.5
 
+    # 历史分钟数据回填（VEW-65 P1）
+    # 与 MINUTE_COLLECT_ENABLED 同一思路：**默认不执行**。回填是一次性大范围跑批，
+    # 写入量远超每日增量（全市场 1min 4 个月 ≈ 1.7 GB、5min 2 年 ≈ 2.8 GB，实测见
+    # docs/plans/2026-10-05-minute-backfill-p1-capacity.md），且会把取数锁长时间占满，
+    # 因此必须同时满足两个条件才会真正执行：本开关为 True **且** 调用方显式传
+    # confirm=True。任何一个缺失都只产出计划、不取数、不落盘。
+    #
+    # 谁在何时打开：容量拍板后由队长 Venus 打开（生产 / 可用空间需先覆盖
+    # 「一次性回填体积 + 至少一年的增量增长」，实测约 4.5 GB + 7.5 GB/年），
+    # 先跑 plan() 核对估算与盘余量，再按标的范围分批执行、盯日志。
+    MINUTE_BACKFILL_ENABLED: bool = False
+    # 单标的单次取数墙钟预算（秒）。回填走「区间取数」，一次调用内部会翻多页，
+    # 比每日采集的 20s 宽松；仍保留上界，避免坏镜像把单个标的拖成分钟级。
+    MINUTE_BACKFILL_FETCH_BUDGET: float = 45.0
+    # 区间取数的分块（日历日）。**不要调大**：取数锁在整段翻页期间一直被持有，
+    # 源级探针等锁超时是 5s（_MOOTDX_PROBE_LOCK_TIMEOUT），块太大（如一次取 2 年
+    # 5min = 30 页）会让探针在整个回填期间拿不到锁，使镜像熔断/恢复失去健康信号。
+    # 30 个日历日 ≈ 21 个交易日 ≈ 5,000 根 1min ≈ 7 页，锁持有约 2–4s。
+    MINUTE_BACKFILL_CHUNK_DAYS: int = 30
+    # 并发取数线程数。与每日采集同理（VEW-60 取数锁），并发只摊薄建连与解析开销，
+    # 不改变网络取数串行的事实；同样不要调高，否则线程都在锁上排队、探针拿不到锁。
+    MINUTE_BACKFILL_WORKERS: int = 4
+    # 每 N 个标的落盘一次（限制内存峰值）。回填一个标的产出的行数远多于每日采集
+    # （1min 4 个月 ≈ 2 万行/标的），因此这里比 MINUTE_COLLECT_FLUSH_EVERY 小得多：
+    # 100 标的 × 2 万行 ≈ 200 万行 ≈ 160 MB，是可控的内存峰值。
+    MINUTE_BACKFILL_FLUSH_SYMBOLS: int = 100
+
     # 预警配置
     DEFAULT_ALERT_THRESHOLD: float = 0.7
 
