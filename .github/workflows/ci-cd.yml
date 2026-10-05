@@ -254,10 +254,30 @@ jobs:
             bash docker-start.sh
 
             # 清理构建缓存，防止 40G 单盘被每次部署累积的 BuildKit cache 持续吃满（VEW-68）。
-            # --keep-storage 1GB：给缓存总量封顶，同时保留最近 1GB 使增量构建仍有命中。
-            # ⚠️ 绝不能加 --volumes：会连 postgres 数据卷一起删掉。
-            echo "🧹 清理构建缓存（保留最近 1GB）..."
-            docker builder prune -f --keep-storage 1GB || true
+            #
+            # ⚠️ 封顶语义随 BuildKit 版本而变，升级 Docker 后会静默反转：
+            #   - buildkit < 0.17（生产 Docker 26.1.3 = buildkit v0.13.2）：--keep-storage N 是「上限」，
+            #     缓存总量超过 N 才削、削到 N 以下为止，按 last-used 最旧优先淘汰。
+            #   - buildkit >= 0.17：--keep-storage 已弃用并改名为 --reserved-space，语义变成「下限」
+            #     （只保证至少保留 N，永远不会收紧），封顶必须改用 --max-used-space N。
+            #   故此处做一次能力探测，优先 --max-used-space、回退 --keep-storage，避免升级后静默失效。
+            #
+            # 不加 -a：VEW-68 压测（buildkit v0.13.2）实测 -f 已能把可回收缓存从 2.2GB 削到 700MB
+            # （低于 1GB 上限），且随后的重建仍命中缓存（0s）；被镜像引用的 cache 层本就记在 Images
+            # 名下、不是缓存膨胀的来源，加 -a 只会丢掉增量构建缓存、拖慢构建（VEW-15 的 30m 超时风险）。
+            # ⚠️ 真正的坑是 `docker system prune --volumes`（会删掉 postgresql_postgres_data 数据卷）；
+            #    `docker builder prune` 本身没有 --volumes 这个 flag。
+            echo "🧹 清理构建缓存（封顶 1GB）..."
+            if docker builder prune --help 2>&1 | grep -q -- '--max-used-space'; then
+              CACHE_CAP="--max-used-space 1GB"
+              echo "   （使用 --max-used-space 1GB，buildkit >= 0.17 语义）"
+            else
+              CACHE_CAP="--keep-storage 1GB"
+              echo "   （使用 --keep-storage 1GB，buildkit < 0.17 语义）"
+            fi
+            if ! docker builder prune -f $CACHE_CAP; then
+              echo "⚠️⚠️⚠️ 构建缓存清理失败：磁盘可能在持续增长，请人工检查（VEW-68）⚠️⚠️⚠️"
+            fi
 
             echo "📊 部署后磁盘使用："
             df -h / | tail -1
