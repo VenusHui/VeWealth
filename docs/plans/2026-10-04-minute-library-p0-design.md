@@ -136,7 +136,7 @@ P0 设计成立；但容量与耗时规划应按修正后的数字，而不是 2
 
 `minute_data_collection`，cron `0 21 * * 1-5`（`MINUTE_COLLECT_CRON`），排在日线
 采集（20:00）与 universe 快照（20:40）之后，保证当日股票池快照已落盘。独立开关
-`MINUTE_COLLECT_ENABLED`。
+`MINUTE_COLLECT_ENABLED`（**默认关闭**，打开条件与责任人见「配置项」与「上线步骤」第 2 条）。
 
 ### 5. 在线表批量 upsert
 
@@ -148,7 +148,7 @@ PG 走 `ON CONFLICT DO UPDATE`，其它方言退化为「一次查出已存在 k
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `MINUTE_LIBRARY_DIR` | `data/minute_bars` | 容器内 `/app/data` 是持久卷 `vewealth-backend-data`，重部署不丢 |
-| `MINUTE_COLLECT_ENABLED` | `True` | 默认开启，理由见「上线步骤」第 2 条 |
+| `MINUTE_COLLECT_ENABLED` | `False` | **默认关闭**：生产磁盘余量不足，首轮不得自动开跑。打开条件（`/` 可用 ≥ 20 GB）与责任人见「上线步骤」第 2 条 |
 | `MINUTE_COLLECT_CRON` | `0 21 * * 1-5` | 收盘后 |
 | `MINUTE_COLLECT_PERIODS` | `1` | 逗号分隔，如 `1,5` |
 | `MINUTE_COLLECT_WORKERS` | `4` | 并发取数线程（**不要调高**，见上文探针盲区） |
@@ -162,11 +162,19 @@ PG 走 `ON CONFLICT DO UPDATE`，其它方言退化为「一次查出已存在 k
    列并重建唯一键。应用启动路径本身会跑 `alembic upgrade head`（`init_db()`，见
    `backend/app/core/database.py`），迁移失败会直接阻止启动，所以容器化部署不会出现
    「新代码 + 旧 schema」；手工/裸机部署则必须先执行 `alembic upgrade head`。
-2. **采集任务默认开启**（`MINUTE_COLLECT_ENABLED=True`）：分钟库是「现在不采、以后补不
-   回来」的数据，每个交易日漏采即永久缺失 —— 这正是本 issue 立项要防的结果，所以交付物
-   默认生效。首轮请有人看日志确认 `elapsed_sec`（夜间窗口余量）与磁盘余量
-   （≈13 GB/年/周期）；幂等可重入、断点续采、`source_probe` / `failed` / `no_session` /
-   `elapsed_sec` 均已进日志，无人值守失败也不会损坏已有数据。
+2. **采集任务默认关闭**（`MINUTE_COLLECT_ENABLED=False`）：分钟库是「现在不采、以后补不
+   回来」的数据，但首次上线仍**不得自动开跑** —— 生产 `/` 是单块 40 GB 盘、实测仅剩
+   5.6 GB，而分钟库约 13 GB/年/周期，开跑后约 107 天写满；写满的是系统盘，
+   postgres + backend + frontend 会一起挂，不只是分钟库单独失败。而本 PR base 为
+   `dev/**`，合并即触发生产部署，默认 `True` 等于合并当晚 21:00 就开跑。
+
+   **打开条件（可机械判定）**：生产 `/` 可用空间 ≥ 20 GB（≈13 GB/年 + ~7 GB 余量）。
+
+   **谁在何时打开**：由队长 Venus 在容量满足后打开（扩盘 / 挂数据盘，或先回收
+   docker build cache、npm cache 等腾出空间），并**手工 `force=True` 跑首轮**（不走 cron）、
+   亲自盯日志确认 `elapsed_sec`（夜间窗口余量）与盘余量，确认无误后再交由
+   `MINUTE_COLLECT_CRON` 自动接管。打开方式：把 `MINUTE_COLLECT_ENABLED=True` 写进
+   `backend/settings/.prod.env` 后重启后端（该文件是挂载卷，无需重建镜像）。
 
    想先手工验证一轮（不依赖调度）时：
 
@@ -176,13 +184,14 @@ PG 走 `ON CONFLICT DO UPDATE`，其它方言退化为「一次查出已存在 k
    from app.core.database import SessionLocal
    from datetime import date
    db = SessionLocal()
-   print(MinuteCollector(db).collect('1', date(2026,10,2)).as_dict())
+   print(MinuteCollector(db).collect('1', date(2026,10,2), force=True).as_dict())
    db.close()"
    ```
 
    期望：`source_probe=ok`、`failed` 为 0 或仅停牌标的、`elapsed_sec` 落在夜间窗口内。
-   若团队惯例是风险动作先关着，可置 `False`（写进 `backend/settings/.prod.env` 后重启
-   后端），但**必须同时指定谁在何时打开**，否则「临时关着」会静默变成「一直没开」。
+   注意这条手工命令与开关无关 —— 调度任务不开（`MINUTE_COLLECT_ENABLED=False`）时它
+   照样能跑，正是「责任人先手工跑首轮、确认无误再交给 cron」的执行方式。跑完务必核对
+   盘余量，不要把它当成绕过打开条件的常规手段。
 
 ## 验证
 
