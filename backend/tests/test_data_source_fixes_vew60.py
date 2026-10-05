@@ -260,6 +260,11 @@ class HandshakeReconnectTests(unittest.TestCase):
 
         这条用例是上面那条的证伪对照：实现若退化成「只置位」，两条一起红，所以
         「修复」与 VEW-60 的失败模式在测试层面是可区分的。
+
+        探测层的重连重试（VEW-70）也要一起停掉，否则它会在下一次尝试时重建一条
+        ``need_setup`` 已为 False 的干净连接，把这个对照悄悄救回来 —— 那样测的就不是
+        「只置位够不够」，而是「探测层会不会顺手兜住」。停掉之后仍判负，才说明错位
+        的连接本身取不到 K 线。
         """
         api = HandshakeAwareTdxApi()
         quotes = HandshakeQuotes(api)
@@ -268,7 +273,8 @@ class HandshakeReconnectTests(unittest.TestCase):
             client.client.need_setup = False
 
         with mock.patch.object(ap, "_disable_tdx_setup_handshake", flag_only):
-            got = ap._try_mootdx_server(quotes, ("1.2.3.4", 7709))
+            with mock.patch.object(ap, "_reconnect_probe_client", lambda client: False):
+                got = ap._try_mootdx_server(quotes, ("1.2.3.4", 7709))
         self.assertIsNone(got, "错位的连接不重连就取不到 K 线，必须判负")
         self.assertEqual(api.connect_calls, 1)
 
@@ -344,7 +350,8 @@ class FetchSerializationTests(_SharedClientTestCase):
 
         self.assertTrue(done.wait(timeout=10))
         t.join(timeout=10)
-        self.assertEqual(client.bars.call_count, 1)
+        # 探针按周期各测一次（VEW-70：不再用单一日线代表整个源），全部走同一把锁。
+        self.assertEqual(client.bars.call_count, len(ap._MOOTDX_PROBE_FREQUENCIES))
 
 
 class IsDownTests(unittest.TestCase):

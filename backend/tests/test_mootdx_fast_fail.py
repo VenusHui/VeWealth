@@ -202,10 +202,11 @@ class MootdxFastFailTests(unittest.TestCase):
         quotes.factory = mock.Mock(return_value=client)
         got = ap._try_mootdx_server(quotes, ("1.1.1.1", 7709))
         self.assertIs(got, client)
-        # 两次探针取数都在「保留 auto_retry + 收敛退避」的探测模式下进行
+        # 两次探针取数都在「关掉库内重试 + 空退避表」的探测模式下进行（VEW-70）：
+        # 一次 bars() 必须就是一次连接尝试，重连重试由探测层显式做并计入预算
         self.assertEqual(
             client.client.seen,
-            [(True, ap._ProbeRetryStrategy), (True, ap._ProbeRetryStrategy)],
+            [(False, ap._ProbeRetryStrategy), (False, ap._ProbeRetryStrategy)],
         )
         # 探测通过后恢复原策略，长连取数客户端保持自愈行为
         self.assertIs(client.client.retry_strategy, original_strategy)

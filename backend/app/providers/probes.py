@@ -147,10 +147,16 @@ def probe_tencent() -> ProbeResult:
 
 
 def probe_mootdx() -> ProbeResult:
-    """mootdx：TCP 直连取 3 根日 K。
+    """mootdx：TCP 直连取 3 根 K 线，**按周期**判定源健康（VEW-70）。
 
     Uses the lazy accessor so a transient init failure at boot is retried on
     subsequent probes (VEW-36), instead of being permanently reported skipped.
+
+    原来只测日线（frequency=4）并用它代表整个源：日线端点的一次抖动会同时把源级
+    健康度与熔断状态打下去，而同一镜像的 5min 端点（深度图默认周期）其实是好的。
+    现在复用取数路径同一套裁决（有界重试 + 三态结论），逐个周期探测并记入分周期
+    健康档案；只有**确认结构性不可用**才置 DOWN 并摘除 client，慢失败 / 预算耗尽
+    只记一条 deferred、保留上次已知状态。
     """
     try:
         from app.providers.astock_provider import (
@@ -158,7 +164,12 @@ def probe_mootdx() -> ProbeResult:
             _invalidate_mootdx_client,
             _mootdx_fetch_guard,
             _MOOTDX_PROBE_LOCK_TIMEOUT,
+            _MOOTDX_SOURCE_PROBE_BUDGET,
+            _PERIOD_DEAD,
+            _PERIOD_OK,
+            probe_mootdx_periods,
         )
+        from app.providers.mirror_health import period_label
     except Exception:
         source_monitor.record_skipped("mootdx", detail="mootdx 依赖或客户端初始化失败")
         return ProbeResult(
@@ -204,23 +215,63 @@ def probe_mootdx() -> ProbeResult:
         # 让 /api/health/sources 的源延迟随并发取数虚高（VEW-60 评审 M3）。
         start = time.monotonic()
         try:
-            df = client.bars(symbol=_probe_symbol(), frequency=4, start=0, offset=3)
-            ok = df is not None and not df.empty
-            if not ok:
-                _invalidate_mootdx_client(client)
-            duration_ms = (time.monotonic() - start) * 1000
-            source_monitor.record_attempt(
-                "mootdx",
-                ok=ok,
-                duration_ms=duration_ms,
-                error=None if ok else "mootdx 探针返回空",
-                context="probe",
+            verdicts = probe_mootdx_periods(
+                client, deadline=time.monotonic() + _MOOTDX_SOURCE_PROBE_BUDGET
             )
+            duration_ms = (time.monotonic() - start) * 1000
+            detail = " ".join(
+                f"{period_label(freq)}={verdict}" for freq, verdict in verdicts.items()
+            )
+            if not verdicts:
+                # 预算在首次尝试前就耗尽：没测到，保留上次已知状态（VEW-60 评审）。
+                source_monitor.record_deferred(
+                    "mootdx", detail="探针预算耗尽，本轮未测到任何周期"
+                )
+                return ProbeResult(
+                    source="mootdx",
+                    status=STATUS_UNKNOWN,
+                    duration_ms=duration_ms,
+                    detail="mootdx 探针预算耗尽（本轮顺延）",
+                )
+            dead = any(v == _PERIOD_DEAD for v in verdicts.values())
+            ok = all(v == _PERIOD_OK for v in verdicts.values())
+            if dead:
+                # 只有确认结构性不可用才摘除：单次抖动摘除会引发全量重扫（VEW-70）。
+                _invalidate_mootdx_client(client)
+            if ok:
+                source_monitor.record_attempt(
+                    "mootdx",
+                    ok=True,
+                    duration_ms=duration_ms,
+                    context="probe",
+                )
+                return ProbeResult(
+                    source="mootdx",
+                    status=STATUS_UP,
+                    duration_ms=duration_ms,
+                    detail=f"mootdx K线探针 {detail}",
+                )
+            if dead:
+                source_monitor.record_attempt(
+                    "mootdx",
+                    ok=False,
+                    duration_ms=duration_ms,
+                    error=f"mootdx 探针确认结构性不可用: {detail}",
+                    context="probe",
+                )
+                return ProbeResult(
+                    source="mootdx",
+                    status=STATUS_DOWN,
+                    duration_ms=duration_ms,
+                    detail=f"mootdx K线探针 {detail}",
+                )
+            # 未得出结论（慢失败 / 预算耗尽）：只留痕，不改源状态。
+            source_monitor.record_deferred("mootdx", detail=f"本轮未得出结论: {detail}")
             return ProbeResult(
                 source="mootdx",
-                status=STATUS_UP if ok else STATUS_DOWN,
+                status=STATUS_UNKNOWN,
                 duration_ms=duration_ms,
-                detail="mootdx K线探针" if ok else "mootdx K线探针返回空",
+                detail=f"mootdx K线探针未得出结论 {detail}（本轮顺延）",
             )
         except Exception as e:
             _invalidate_mootdx_client(client)

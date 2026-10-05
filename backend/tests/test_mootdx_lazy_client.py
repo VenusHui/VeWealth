@@ -23,12 +23,35 @@ class FakeQuotes:
         return []
 
 
+class FakeTdxApi:
+    """Minimal tdxpy API stand-in so the probe's reconnect path is exercisable.
+
+    Retries reconnect (VEW-70: a dropped connection never recovers, so repeating a
+    call on the same socket proves nothing) — without an ``ip``/``port`` to
+    reconnect to, the probe would stop after a single attempt.
+    """
+
+    ip = "1.1.1.1"
+    port = 7709
+
+    def __init__(self):
+        self.reconnects = 0
+
+    def disconnect(self):
+        return None
+
+    def connect(self, ip=None, port=7709, time_out=None, **kwargs):
+        self.reconnects += 1
+        return True
+
+
 class SymbolAwareClient:
     """Return configured DataFrames per symbol and record every raw request."""
 
     def __init__(self, responses):
         self.responses = responses
         self.calls = []
+        self.client = FakeTdxApi()
 
     def bars(self, *args, **kwargs):
         self.calls.append(kwargs)
@@ -100,6 +123,7 @@ class MootdxLazyClientTests(unittest.TestCase):
         self.assertIsNone(ap._mootdx_init_failed_at)
 
     def test_empty_probe_symbol_invalidates_on_data_path(self):
+        """探针标的**连续**多次空返回才摘除客户端（VEW-70 有界 quorum）。"""
         client = SymbolAwareClient({"000001": pd.DataFrame()})
         ap._mootdx_client = client
         provider = object.__new__(ap.AStockDataProvider)
@@ -108,7 +132,8 @@ class MootdxLazyClientTests(unittest.TestCase):
 
         self.assertIsNone(result)
         self.assertIsNone(ap._mootdx_client)
-        self.assertEqual(len(client.calls), 1)
+        # 首次请求 + 有界 quorum 的确认探测
+        self.assertEqual(len(client.calls), 1 + ap._MOOTDX_PROBE_ATTEMPTS)
 
     def test_symbol_empty_keeps_client_when_probe_symbol_has_data(self):
         client = SymbolAwareClient(
@@ -137,8 +162,10 @@ class MootdxLazyClientTests(unittest.TestCase):
 
         self.assertIsNone(result)
         self.assertIsNone(ap._mootdx_client)
+        # 请求标的空 → 用探针标的做有界确认（VEW-70：单次空返回不摘除）
         self.assertEqual(
-            [call["symbol"] for call in client.calls], ["600519", "000001"]
+            [call["symbol"] for call in client.calls],
+            ["600519"] + ["000001"] * ap._MOOTDX_PROBE_ATTEMPTS,
         )
 
     def test_pagination_exhaustion_does_not_invalidate_client(self):
