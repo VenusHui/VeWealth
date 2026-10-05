@@ -128,11 +128,21 @@ class Settings(BaseSettings):
     # 分钟库根目录。容器内 /app/data 是持久卷（vewealth-backend-data），重部署不丢；
     # 本地开发相对 backend/ 解析。
     MINUTE_LIBRARY_DIR: str = "data/minute_bars"
-    # 默认开启：分钟库是「现在不采、以后补不回来」的数据，每个交易日漏采即永久缺失，
-    # 所以交付物必须默认生效。首轮请有人看日志确认 elapsed_sec（夜间窗口余量）与磁盘
-    # 余量（≈13 GB/年/周期）；写入幂等可重入、断点续采、source_probe / failed /
-    # elapsed_sec 均已进日志。若要改成「首次上线先关着」，置 False 并指定谁在何时打开。
-    MINUTE_COLLECT_ENABLED: bool = True
+    # 默认关闭（VEW-64 裁定）：生产磁盘余量不足，首次上线不得自动开跑。
+    # 实测（2026-10-04，ssh tencent-ollama）：/ 为单块 40 GB 盘、仅剩 5.6 GB，而分钟库
+    # ≈13 GB/年/周期 —— 开跑后约 107 天写满 /，写满的是系统盘，postgres + backend +
+    # frontend 会一起挂，不只是分钟库单独失败。且 PR base 为 dev/**，合并即触发生产部署，
+    # 带着 True 合进去当晚 21:00 就会开跑。
+    #
+    # 打开条件（可机械判定）：生产 / 可用空间 ≥ 20 GB（≈13 GB/年 + ~7 GB 余量）。
+    # 谁在何时打开：由队长 Venus 在容量满足后打开（扩盘 / 挂数据盘，或按裁定先回收
+    # docker build cache、npm cache 等腾出空间），并**手工 force=True 跑首轮**（不走 cron）、
+    # 亲自盯日志确认 elapsed_sec（夜间窗口余量）与盘余量，确认无误后再交由
+    # MINUTE_COLLECT_CRON 自动接管。
+    #
+    # 不要「临时先关着」当默认：本系统没有自动重跑机制、调度只针对 date.today()，
+    # 漏采的交易日不可补回，长期关闭等于 P0 交付物不生效 —— 必须由上述责任人显式打开。
+    MINUTE_COLLECT_ENABLED: bool = False
     # 收盘后采集：晚于日线采集（20:00）与 universe 快照（20:40），
     # 保证当日股票池快照已落盘，采集按点状态选池。
     MINUTE_COLLECT_CRON: str = "0 21 * * 1-5"
