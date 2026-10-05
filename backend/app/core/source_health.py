@@ -350,9 +350,16 @@ class SourceHealthMonitor:
         恢复由源级探针负责：探针每轮都会真实请求一次并 ``record_attempt``，成功即
         把连续失败计数清零、状态翻回 ``up``，熔断随之自动解除。
 
-        消费方仅限日线链路（``fetch_daily_data_with_meta`` 跳过东财重试）；分钟链路
-        刻意不消费该信号 —— 它走不同的东财接口（``eastmoney_trends2`` / 不同 klt），
-        且自带 ``_MOOTDX_MINUTE_BUDGET`` 墙钟预算，多一次失败重试不突破前端超时约束。
+        消费方为日线链路（``fetch_daily_data_with_meta``）与分钟链路
+        （``fetch_minute_data``），两者都在东财 ``down`` 时跳过其重试。
+
+        分钟链路原先刻意不消费该信号，理由是「走不同的东财接口」。VEW-61 实测更正了
+        这一点：东财封锁是 **host 级**（覆盖 ``push2his`` / ``push2``），分钟链路用的
+        ``eastmoney_trends2`` / ``eastmoney_kline`` 与日线同在 ``push2his``，日线探针
+        的 down 信号对分钟链路同样成立。VEW-63 接入腾讯 ifzq 备份源后，跳过注定失败的
+        东财重试更重要 —— 那三次请求加退避挤占的是腾讯本可用的
+        ``_MOOTDX_MINUTE_BUDGET`` 预算。分钟链路的墙钟预算约束依然成立：腾讯回退的
+        单次超时同样按剩余预算夹紧（``_bounded_tencent_timeout``）。
         """
         with self._lock:
             st = self._states.get(source)
