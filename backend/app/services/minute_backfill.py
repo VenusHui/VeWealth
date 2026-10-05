@@ -69,10 +69,25 @@ vs 回测事实源里永久缺一段历史。
 前 ``MINUTE_BACKFILL_MAX_ATTEMPTS - 1`` 轮记 ``failed``（可重试），第 N 轮转入
 ``gapped`` 终态（有缺口完成）并保留最后一次的原因。缺口数据仍已落盘，只是不再重取。
 
-计数**只对「该标的自身覆盖不全」生效**。源级故障（整区间取空、取数抛异常）不计次 ——
-那是源的问题，源恢复后必须还能重取，不该被标的级的重试上限吃掉，否则连续几轮源故障
-就会把全市场标的一次性推进终态、永久丢历史（这正是本模块要防的事）。要重试已记
-``gapped`` 的标的，显式传 ``run(retry_gaps=True)``；否则只能删日志文件。
+计数**只对「该标的自身覆盖不全」生效**，也就是**只对逐块「块内覆盖不足」计次**。
+其余三条失败路径都不计次，一律保持可重试：
+
+- 源级故障：整区间取空（``_classify_empty``）、取数抛异常；
+- **预算截断**（``truncated``）：纯墙钟判据，与数据完整性无关 —— 慢但在线的镜像每块
+  都完整返回也会命中；
+- **整体覆盖不足**（``_coverage_short``）：源端深度不足。
+
+后两条与源级故障一样是**源侧条件**，不是该标的的事：计次等于「源一慢/一浅，全市场
+就收敛到有缺口完成」，而源恢复后这些标的历史再也取不回来 —— 正是本模块要防的事。
+（把计次条件写成「有没有抛异常」是错的，这是 VEW-65 三轮评审的核心。）
+
+即便如此，单标的判据仍分不开「这个标的停牌」与「源整体变浅」（东财备源降级只给最近
+几天时，每个标的的最新一块都会块首缺失），所以再加一道**市场级占比兜底**：本轮计次
+标的占本轮尝试数过半时视作源侧事件、整轮不计次（与 ``_classify_empty`` 同一机制、
+同一门槛，且同样只在全市场口径下生效）。计次决策因此在**轮末**统一做
+（``_apply_gap_attempts``），不在取数循环里。
+
+要重试已记 ``gapped`` 的标的，显式传 ``run(retry_gaps=True)``；否则只能删日志文件。
 
 复权口径（与日线链路的分工）
 ----------------------------
@@ -119,7 +134,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Iterable, NamedTuple, Optional, Sequence
 
 import pandas as pd
 from sqlalchemy import select
@@ -209,14 +224,35 @@ class BackfillRefused(RuntimeError):
     """
 
 
+class ChunkProblem(NamedTuple):
+    """单块取数的问题，以及它是否**该由该标的自己负责**。
+
+    ``countable`` 决定这条问题是否累积该标的的重试计数（计数到上限转 ``gapped``
+    终态）。判据是「成因在标的还是源」：
+
+    - **块内覆盖不足**（``countable=True``）：本块取到了 bar 但块首缺一截，且没有截断
+      标志。成因可能是该标的停牌（永久），也可能是源静默变浅 —— 单看一个标的分不开，
+      所以先按「该标的的事」计次，靠重试次数收敛；市场级占比兜底见
+      ``MinuteBackfiller._apply_gap_attempts``。
+    - **预算截断**（``countable=False``）：源侧条件（墙钟预算），与标的身无关，
+      源恢复后必须还能重取，绝不能吃终态上限。
+
+    单独一个 ``bool`` 不够表达这件事，用字符串匹配又太脆 —— 这个区分已经被评审打回
+    两次（VEW-65 二轮/三轮），所以放进类型里。
+    """
+
+    reason: str
+    countable: bool
+
+
 def _chunk_problem(
     frame: Optional[pd.DataFrame],
     chunk_start: date,
     chunk_end: date,
     truncated: bool,
     list_date: Optional[date] = None,
-) -> Optional[str]:
-    """单块取数是否有问题？有问题返回原因（供记可重试失败），否则 ``None``。
+) -> Optional[ChunkProblem]:
+    """单块取数是否有问题？有问题返回 :class:`ChunkProblem`，否则 ``None``。
 
     **逐块判定**，不看合并后的整体：合并后的「最早日期」由第 1 块决定，中间块开头缺
     一截既不改变它、也不会触发任何整体判据，是个完全无判据的洞（VEW-65 评审①）。
@@ -225,8 +261,11 @@ def _chunk_problem(
 
     1. **预算截断**（``truncated``）：源按「最新往旧」翻页，预算耗尽时丢的是本块**最旧**
        的那一段。标志由 ``_fetch_chunk`` 直接返回，不经过 ``DataFrame.attrs``。
+       这是**源侧**条件（``countable=False``）：纯墙钟判据，与数据完整性无关 ——
+       慢但在线的镜像每块都完整返回也会命中，不能因此把标的判成终态。
     2. **块内覆盖不足**：本块取到了 bar，但最早一根明显晚于块起点。这正是截断在数据上
-       的签名（也覆盖 ``_estimate_start_offset`` 估偏导致的块首缺失）。
+       的签名（也覆盖 ``_estimate_start_offset`` 估偏导致的块首缺失），是唯一
+       ``countable=True`` 的判据。
 
     第 2 条只对「取到了 bar」的块生效：整块取空可能是**合法**的（区间内长期停牌），
     无法与源故障区分，交给整体覆盖度校验与 ``_classify_empty`` 判定，不在这里误杀。
@@ -234,11 +273,15 @@ def _chunk_problem(
     ``list_date`` 晚于块起点时同样豁免第 2 条：标的在块起点还没上市，块首没有 bar 是
     事实而不是缺失（与 ``_coverage_short`` 同一豁免，否则新上市标的永远重试）。截断
     不豁免 —— 那是源侧故障，与标的何时上市无关。
+
+    注意**不要**把第 2 条提到第 1 条前面：被截断的块确实可能缺最旧的一段，即便取回的
+    部分看起来够得着块起点。截断要继续产生「问题」（记可重试失败），只是不吃终态上限。
     """
     if truncated:
-        return (
+        return ChunkProblem(
             f"{chunk_start}..{chunk_end} 取数预算耗尽被截断，本块最旧的一段可能缺失"
-            "（可重试）"
+            "（可重试）",
+            False,
         )
     if frame is None or frame.empty or "trade_time" not in frame.columns:
         return None
@@ -248,10 +291,11 @@ def _chunk_problem(
     floor = chunk_start + timedelta(days=_COVERAGE_SLACK_DAYS)
     if earliest <= floor:
         return None
-    return (
+    return ChunkProblem(
         f"{chunk_start}..{chunk_end} 块内覆盖不足：取回最早 {earliest}，"
         f"晚于块起点 {chunk_start}（+{_COVERAGE_SLACK_DAYS} 天容差）→ 块首疑似缺失"
-        "（可重试）"
+        "（可重试）",
+        True,
     )
 
 
@@ -840,6 +884,9 @@ class MinuteBackfiller:
         buffered_symbols = 0
         fetch_seconds: list[float] = []
         empty_symbols: list[str] = []
+        # 本轮的覆盖不足失败（标的, 原因, 是否该由该标的自己负责）。轮末统一计次 ——
+        # 市场级占比兜底需要本轮总数，单标的判据分不开「这个标的停牌」与「源整体变浅」。
+        gap_candidates: list[tuple[str, str, bool]] = []
 
         def flush_buffer() -> None:
             nonlocal buffer, buffered_symbols
@@ -890,10 +937,13 @@ class MinuteBackfiller:
                 # 覆盖问题**逐块**收集（截断 / 块首缺失），再叠加整体覆盖度校验
                 # （区间起点够不着 = 源端深度不足）。两者都不写 completed：
                 # 记完成会让这段历史永久缺失（见模块 docstring）。
-                # 归一成 list 再 join：``problems`` 是 list[str]，``_coverage_short``
-                # 返回 str，直接 join 字符串会把原因按**单字**拆开（评审前就在的错误
-                # 消息格式问题，正好落在这条 errors 上，而队长要靠它判断缺口成因）。
-                short: list[str] = list(problems)
+                # 归一成 list 再 join：``problems`` 的元素是 ChunkProblem，
+                # ``_coverage_short`` 返回 str，直接 join 会把原因按**单字**拆开
+                # （评审前就在的错误消息格式问题，正好落在这条 errors 上）。
+                short: list[str] = [p.reason for p in problems]
+                # 只有「块内覆盖不足」算该标的自身的事；截断与整体覆盖不足都是源侧条件，
+                # 只记可重试失败、不吃终态上限（否则慢镜像/源变浅会把全市场推进终态）。
+                countable = any(p.countable for p in problems)
                 if frames:
                     merged = pd.concat(frames, ignore_index=True)
                     coverage_reason = self._coverage_short(
@@ -905,22 +955,13 @@ class MinuteBackfiller:
                     merged = None
 
                 if short:
-                    # 数据仍然落盘（幂等合并，重跑会补齐）。判据分不开「可重试的截断」
-                    # 与「永久性的停牌缺口」，只能按标的计次收敛：前 N-1 轮记 failed
-                    # （可重试），第 N 轮转 gapped 终态并保留原因。不设上限的话停牌标的
-                    # 永远进不了终态，每轮重取整段区间、skipped 永远填不满。
-                    reason = "; ".join(short)
-                    if journal.record_gap_failure(symbol, reason, max_attempts):
-                        result.gapped += 1
-                        if len(result.errors) < 10:
-                            result.errors.append(
-                                f"{symbol}: 连续 {max_attempts} 轮覆盖不足，"
-                                f"记有缺口完成、不再重试（retry_gaps=True 可重取）: {reason}"
-                            )
-                    else:
-                        result.failed += 1
-                        if len(result.errors) < 10:
-                            result.errors.append(f"{symbol}: {reason}")
+                    # 数据仍然落盘（幂等合并，重跑会补齐）。先一律记可重试 failed ——
+                    # 这是安全默认；够格计次的标的在轮末由 _apply_gap_attempts 转终态。
+                    result.failed += 1
+                    journal.mark(symbol, "failed")
+                    if len(result.errors) < 10:
+                        result.errors.append(f"{symbol}: {'; '.join(short)}")
+                    gap_candidates.append((symbol, "; ".join(short), countable))
                     if merged is None:
                         continue
                 else:
@@ -933,6 +974,7 @@ class MinuteBackfiller:
                     flush_buffer()
 
         flush_buffer()
+        self._apply_gap_attempts(journal, gap_candidates, result, max_attempts)
         self._classify_empty(journal, empty_symbols, result, probe)
         journal.flush()
 
@@ -1008,24 +1050,29 @@ class MinuteBackfiller:
         period: str,
         chunks: Sequence[tuple[date, date]],
         list_date: Optional[date] = None,
-    ) -> tuple[list[pd.DataFrame], float, list[str]]:
+    ) -> tuple[list[pd.DataFrame], float, list[ChunkProblem]]:
         """取单标的在整段区间内的 bar（按块取，块内一次调用翻页取完）。
 
         返回 ``(frames, 耗时秒, 覆盖问题列表)``。**覆盖问题必须逐块判定、随返回值
         带出**，不能靠 ``DataFrame.attrs`` 穿过 ``pd.concat`` —— pandas 只在所有输入
         的 attrs 完全相同时才保留，一旦窗口跨多块（默认参数下必然如此）标志就被丢掉，
         被截断的块会被静默记成 completed、历史永久缺失（VEW-65 评审①②）。
+
+        问题带 ``countable`` 标志（见 :class:`ChunkProblem`）：只有「块内覆盖不足」算
+        该标的自身的事，可累积重试计数；「预算截断」是源侧条件，只记可重试失败。
         """
         started = time.monotonic()
         frames: list[pd.DataFrame] = []
-        problems: list[str] = []
+        problems: list[ChunkProblem] = []
         for chunk_start, chunk_end in chunks:
             frame, _, truncated = self._fetch_chunk(
                 symbol, period, chunk_start, chunk_end
             )
-            reason = _chunk_problem(frame, chunk_start, chunk_end, truncated, list_date)
-            if reason:
-                problems.append(reason)
+            problem = _chunk_problem(
+                frame, chunk_start, chunk_end, truncated, list_date
+            )
+            if problem:
+                problems.append(problem)
             if frame is not None and not frame.empty:
                 frames.append(frame)
         return frames, time.monotonic() - started, problems
@@ -1156,19 +1203,29 @@ class MinuteBackfiller:
 
         与 ``MinuteCollector._probe_source`` 同一套三态词汇与同一条判据（只有拿到
         源可用的正面证据才认终态），但单位不同：那边判「某一天」，这边判「整个区间」。
+
+        取数异常按 ``PROBE_DOWN`` 降级而不是向上抛：探针在**第一个标的之前**跑，抛出去
+        会让 12–30 小时的回填整体失败；降级后只是把「取空」判成可重试，方向安全
+        （VEW-65 三轮评审的非阻塞观察）。
         """
         symbol = str(getattr(settings, "SOURCE_HEALTH_PROBE_SYMBOL", "000001")).zfill(6)
         # 在区间内**均匀取样**若干天探测：只看区间末尾会漏掉「源能覆盖区间前半段、
         # 但最近几天还没上架」这种形态，只看起点则会把「源深度不足」当成源故障。
         # 取样点含起点与终点 —— 起点是覆盖度校验的基准，必须探到。
-        for probe_day in _probe_days(start, end):
-            frame, _, _ = self._fetch_chunk(symbol, period, probe_day, probe_day)
-            if frame is not None and not frame.empty:
-                return PROBE_OK
-        # 区间内取不到 → 看更早（区间之前）有没有：有 = 源能给历史但给不到本区间
-        earlier, _, _ = self._fetch_chunk(
-            symbol, period, start - timedelta(days=60), start - timedelta(days=1)
-        )
+        try:
+            for probe_day in _probe_days(start, end):
+                frame, _, _ = self._fetch_chunk(symbol, period, probe_day, probe_day)
+                if frame is not None and not frame.empty:
+                    return PROBE_OK
+            # 区间内取不到 → 看更早（区间之前）有没有：有 = 源能给历史但给不到本区间
+            earlier, _, _ = self._fetch_chunk(
+                symbol, period, start - timedelta(days=60), start - timedelta(days=1)
+            )
+        except Exception as e:
+            logger.error(
+                "回填源探针取数异常（按源不可用处理，空结果保持可重试）: %s", e
+            )
+            return PROBE_DOWN
         if earlier is not None and not earlier.empty:
             logger.warning(
                 "回填源探针：%s 在本区间 %s..%s 取不到 bar、在区间之前有 —— "
@@ -1179,6 +1236,71 @@ class MinuteBackfiller:
             )
             return PROBE_NO_SESSION
         return PROBE_DOWN
+
+    def _apply_gap_attempts(
+        self,
+        journal: _BackfillJournal,
+        candidates: Sequence[tuple[str, str, bool]],
+        result: BackfillResult,
+        max_attempts: int,
+    ) -> None:
+        """把本轮「该标的自身覆盖不全」的失败按标的计次，到上限的转 ``gapped`` 终态。
+
+        调用点在轮末，不在取数循环里 —— 市场级占比兜底要等本轮总数出来才知道。
+
+        **只对 ``countable=True`` 计次**（即逐块「块内覆盖不足」）。截断与整体覆盖不足
+        都是源侧条件，保持可重试：``truncated`` 是纯墙钟判据，慢但在线的镜像每块数据
+        完整也会命中；``_coverage_short`` 是源端深度。把这两类计次等于「源一慢/一浅，
+        全市场就收敛到有缺口完成」—— 源恢复后取不回来，正是本模块要防的事
+        （VEW-65 三轮评审）。
+
+        市场级兜底（与 ``_classify_empty`` 同一机制、同一门槛）：即便只对逐块判据计次，
+        单标的判据仍分不开「这个标的停牌」与「源整体变浅」—— 东财备源降级只给最近几天
+        时，每个标的的最新一块都会块首缺失。因此本轮计次标的占本轮尝试数过半时，视作
+        源侧事件，整轮不计次（全部保持可重试 ``failed``）。
+
+        兜底**只在全市场口径下生效**（``universe_source != "explicit"``）：占比要回答的
+        是市场级问题，分母必须是全市场。显式给了标的清单（自选池 / 单标的验证）时占比
+        没有市场含义 —— 1 只标的报覆盖问题会算出 100%，把「该股停牌」误判成源故障，
+        让它永远无法记终态。
+        """
+        countable = [(s, r) for s, r, ok in candidates if ok]
+        if not countable:
+            return
+
+        limit = float(settings.MINUTE_COLLECT_EMPTY_RATIO_LIMIT)
+        market_scale = result.universe_source != "explicit"
+        attempted = max(1, result.requested)
+        ratio = len(countable) / attempted
+        if market_scale and ratio > limit:
+            message = (
+                f"覆盖问题占比 {ratio:.0%} 超过阈值 {limit:.0%}"
+                f"（本轮尝试 {len(countable)}/{attempted}，全市场 {result.universe_size}）"
+                f"，疑似源侧事件，本轮 {len(countable)} 个标的均不计次、保持可重试"
+            )
+            logger.error("分钟回填源异常: %s", message)
+            if len(result.errors) < 10:
+                result.errors.append(message)
+            return
+
+        promoted = 0
+        for symbol, reason in countable:
+            if journal.record_gap_failure(symbol, reason, max_attempts):
+                # 本轮它已记 failed，改判终态：两个计数器互斥，要一起挪。
+                result.failed -= 1
+                result.gapped += 1
+                promoted += 1
+        if promoted:
+            logger.info(
+                "分钟回填: %d 个标的连续 %d 轮覆盖不足，记有缺口完成（不再重试）",
+                promoted,
+                max_attempts,
+            )
+            if len(result.errors) < 10:
+                result.errors.append(
+                    f"{promoted} 个标的连续 {max_attempts} 轮覆盖不足，"
+                    f"记有缺口完成、不再重试（retry_gaps=True 可重取）"
+                )
 
     def _classify_empty(
         self,

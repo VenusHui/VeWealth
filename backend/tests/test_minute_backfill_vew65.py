@@ -601,7 +601,9 @@ def test_truncation_flag_survives_multi_chunk_window(tmp_path, enabled, monkeypa
     frames, _, problems = filler._fetch_symbol_window("000001", "1", MULTI_CHUNKS)
 
     assert seen["middle"] and frames, "中间块没走到，用例前提不成立"
-    assert any("截断" in p for p in problems), "中间块的截断标志被 concat 丢掉了"
+    assert any("截断" in p.reason for p in problems), "中间块的截断标志被 concat 丢掉了"
+    # 截断是源侧条件，不能吃终态上限
+    assert all(not p.countable for p in problems)
 
 
 def test_run_records_failure_when_only_middle_chunk_truncated(
@@ -763,6 +765,144 @@ def test_gap_counter_is_per_symbol(tmp_path, enabled, monkeypatch):
     )
     assert r.fetched == 1, "健康标的应记完成"
     assert r.gapped == 1 and r.failed == 0
+
+
+def test_chunk_problem_countable_only_for_chunk_coverage():
+    """计次标志必须区分「该标的的事」与「源侧条件」（VEW-65 三轮评审）。
+
+    截断是纯墙钟判据 —— 慢但在线的镜像每块数据完整也会命中，计次等于「源一慢全市场
+    就收敛到有缺口完成」；块内覆盖不足才可能是该标的停牌。
+    """
+    from app.services.minute_backfill import _chunk_problem
+
+    truncated = _chunk_problem(None, date(2026, 7, 1), date(2026, 7, 30), True)
+    assert truncated is not None and truncated.countable is False
+
+    # 块首缺一截（取到 bar 但最早晚于块起点 + 容差）→ 该标的自己的事
+    late = pd.DataFrame(
+        {"trade_time": pd.to_datetime(["2026-07-20 09:30", "2026-07-21 09:30"])}
+    )
+    hole = _chunk_problem(late, date(2026, 7, 1), date(2026, 7, 30), False)
+    assert hole is not None and hole.countable is True
+
+
+def test_slow_mirror_truncation_never_reaches_terminal(tmp_path, enabled, monkeypatch):
+    """评审三轮路径 1/3：慢但在线的镜像（每块数据完整，只是撞墙钟预算）不能转终态。
+
+    ``truncated = time.monotonic() >= deadline - 0.05`` 是纯墙钟判据，与数据完整性
+    无关。修复前连跑 3 轮 → ``gapped=1``，之后换成健康源也是 ``skipped=1``、再也不
+    重取 —— 源侧条件却付出了历史代价。
+    """
+    monkeypatch.setattr(settings, "MINUTE_BACKFILL_MAX_ATTEMPTS", 1)
+    days = [d for cs, ce in MULTI_CHUNKS for d in (cs, ce)]
+
+    def make(tmp):
+        f = _backfiller(tmp, RangeProvider(days))
+        real = f._fetch_chunk
+
+        def fake(symbol, period, cs, ce):
+            frame, took, _ = real(symbol, period, cs, ce)
+            return frame, took, True  # 数据完整，但报预算截断
+
+        f._fetch_chunk = fake
+        return f
+
+    for round_no in range(1, 4):
+        r = make(tmp_path).run(
+            "1", MULTI_START, MULTI_END, symbols=["000001"], confirm=True
+        )
+        assert r.gapped == 0, f"第 {round_no} 轮把源侧截断记成了终态"
+        assert r.failed == 1 and r.skipped == 0, f"第 {round_no} 轮"
+        assert any("截断" in e for e in r.errors)
+
+
+def test_source_depth_shortfall_never_reaches_terminal(tmp_path, enabled, monkeypatch):
+    """评审三轮路径 4：整体覆盖不足（源端深度）不能转终态。
+
+    07-13 起才有 bar：每块块首都落在 +12 天容差内（逐块判据不触发），只有整体判据
+    触发。修复前 3 轮 → ``gapped=1``。
+    """
+    monkeypatch.setattr(settings, "MINUTE_BACKFILL_MAX_ATTEMPTS", 1)
+
+    def script(symbol, lo, hi):
+        d0 = date(2026, 7, 13)
+        if hi < d0:
+            return []
+        d, out = max(lo, d0), []
+        while d <= hi:
+            if d.weekday() < 5:
+                out.append(d)
+            d += timedelta(days=1)
+        return out
+
+    provider = ScriptedProvider(script)
+    for round_no in range(1, 4):
+        r = _backfiller(tmp_path, provider).run(
+            "1", MULTI_START, MULTI_END, symbols=["000001"], confirm=True
+        )
+        assert r.gapped == 0, f"第 {round_no} 轮把源端深度不足记成了终态"
+        assert r.failed == 1 and r.skipped == 0, f"第 {round_no} 轮"
+        assert any("覆盖不足" in e for e in r.errors)
+
+
+def test_market_scale_ratio_guard_suppresses_counting(tmp_path, enabled, monkeypatch):
+    """市场级兜底：本轮报覆盖问题的标的过半时视作源侧事件，整轮不计次。
+
+    单标的判据分不开「这个标的停牌」与「源整体变浅」—— 东财备源降级只给最近几天时，
+    每个标的的最新一块都会块首缺失。占比是唯一能分开的信号（与 ``_classify_empty``
+    同一机制、同一门槛）。
+    """
+    monkeypatch.setattr(settings, "MINUTE_BACKFILL_MAX_ATTEMPTS", 1)
+    middle_start, middle_end = MULTI_CHUNKS[1]
+
+    def script(symbol, lo, hi):
+        # 所有标的都在中间块块首缺一截 → 逐块判据对每个标的都触发
+        if lo == middle_start:
+            return [middle_end - timedelta(days=1), middle_end]
+        return [d for d in (lo, hi) if d <= hi]
+
+    symbols = [f"00000{i}" for i in range(1, 5)]
+    filler = _backfiller(tmp_path, ScriptedProvider(script))
+    # 全市场口径（symbols=None）才会启用占比兜底 —— 显式清单没有市场含义
+    monkeypatch.setattr(
+        filler._collector,
+        "resolve_universe",
+        lambda _end: (symbols, "security_universe"),
+    )
+
+    for round_no in range(1, 4):
+        r = filler.run("1", MULTI_START, MULTI_END, confirm=True)
+        assert r.gapped == 0, f"第 {round_no} 轮：全市场覆盖问题被记成了终态"
+        assert r.failed == len(symbols) and r.skipped == 0
+        assert any("疑似源侧事件" in e for e in r.errors)
+
+
+def test_explicit_symbols_bypass_market_scale_ratio_guard(
+    tmp_path, enabled, monkeypatch
+):
+    """显式清单不受占比兜底影响 —— 否则单标的验证永远无法记终态。"""
+    monkeypatch.setattr(settings, "MINUTE_BACKFILL_MAX_ATTEMPTS", 1)
+    resume = MULTI_CHUNKS[1][0] + timedelta(days=19)
+    provider = _suspended_provider(resume)
+    r = _backfiller(tmp_path, provider).run(
+        "1", MULTI_START, MULTI_END, symbols=["000001"], confirm=True
+    )
+    assert r.gapped == 1, "显式清单下占比没有市场含义，不该被兜底压住"
+
+
+def test_probe_fetch_exception_degrades_to_down(tmp_path, enabled):
+    """探针取数抛异常不能穿出 ``run()`` —— 它跑在第一个标的之前，抛出去会让整个
+    12–30 小时的回填在开始前就失败。按 ``PROBE_DOWN`` 降级（空结果保持可重试）。
+    """
+
+    class Boom:
+        def fetch_minute_data(self, *a, **kw):
+            raise RuntimeError("镜像连接被重置")
+
+    filler = _backfiller(tmp_path, Boom())
+    result = filler.run("1", START, END, symbols=["000001"], confirm=True)
+    assert result.failed == 1 and result.gapped == 0
+    assert result.skipped == 0
 
 
 def test_journal_persists_attempts_and_gaps(tmp_path):
