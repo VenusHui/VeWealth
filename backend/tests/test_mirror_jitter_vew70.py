@@ -98,6 +98,23 @@ class FakeTdxApi:
         return True if self.connect_ok else False
 
 
+class SlowConnectTdxApi(FakeTdxApi):
+    """建连本身要花时间的替身：真实镜像上重连最坏吃掉一整个探测超时。
+
+    复审必修 ② 的形态就出在这里 —— 重连发生在**一轮探测中途**，判定若只看
+    ``now >= deadline``，重连后的那点余量会被当成「还装得下一次完整尝试」，于是
+    候选冲破竞速窗口（实测重连 2.0s 时候选跑到 7.20s，窗口只有 6.5s）。
+    """
+
+    def __init__(self, connect_delay: float, **kwargs):
+        super().__init__(**kwargs)
+        self._connect_delay = connect_delay
+
+    def connect(self, ip=None, port=7709, time_out=None, **kwargs):
+        time.sleep(self._connect_delay)
+        return super().connect(ip, port, time_out, **kwargs)
+
+
 class PeriodScriptedClient:
     """按 ``frequency`` 消费预设响应的假 client，可注入单次调用耗时。
 
@@ -381,7 +398,12 @@ class CostBoundedRetryTests(MirrorJitterBase):
             self.addCleanup(patcher.stop)
 
     def test_slow_failures_are_truncated_by_the_candidate_budget(self):
-        """慢失败：装得下几次试几次，候选预算用尽即收手（结论仍是「未证实」）。"""
+        """慢失败：装得下几次试几次，候选预算用尽即收手（结论仍是「未证实」）。
+
+        本用例的算式（两次 0.4s 装得下、第三次 0.6s 装不下）**以退避为 0 为前提**，
+        基类把退避置 0 正是为了快。退避计入成本这条由
+        :meth:`test_backoff_counts_toward_the_candidate_cost` 单独钉住。
+        """
         self._shrink(timeout=0.2, budget=0.5)
         client = PeriodScriptedClient({FREQ_5MIN: [], FREQ_DAILY: [_df()]}, delay=0.2)
 
@@ -390,6 +412,44 @@ class CostBoundedRetryTests(MirrorJitterBase):
         # 两次 = 0.4 装得下，第三次要 0.6 > 0.5 —— 按成本停在 2 次，而不是 3 次
         self.assertEqual(client.frequency_calls(FREQ_5MIN), 2)
         self.assertEqual(verdict, ap.MIRROR_UNKNOWN, "慢失败只判未证实，不判死")
+
+    def test_backoff_counts_toward_the_candidate_cost(self):
+        """退避也是候选成本的一部分，不能只在「退避免费」时成立（复审次要项 ①）。
+
+        真实退避 0.2s 下慢失败路径停在 **1** 次而不是 2 次 —— 上面的用例把这个变量
+        置 0 了，测不到这条。这里按比例把退避放大到 0.15s：一次 0.2s 的尝试加一次
+        0.15s 的退避已经 0.35s，再要一次 0.2s 的尝试就是 0.55s > 0.5s 的候选预算。
+        """
+        self._shrink(timeout=0.2, budget=0.5)
+        backoff = mock.patch.object(ap, "_MOOTDX_PROBE_ATTEMPT_BACKOFF", 0.15)
+        backoff.start()
+        self.addCleanup(backoff.stop)
+        client = PeriodScriptedClient({FREQ_5MIN: []}, delay=0.2)
+
+        verdict = ap._mirror_serves_bars(client, ("1.1.1.1", 7709))
+
+        self.assertEqual(client.frequency_calls(FREQ_5MIN), 1)
+        self.assertEqual(verdict, ap.MIRROR_UNKNOWN)
+
+    def test_mirror_dead_is_bounded_by_the_candidate_budget_without_a_deadline(self):
+        """取数路径的确认探测（日线 / CYQ 路径不带 deadline）同样受候选预算约束。
+
+        复审必修 ①：``_mootdx_mirror_dead`` 此前把 ``deadline=None`` 原样传下去，
+        ``_probe_period_with_retry`` 里三处「装得下」判定全被跳过，一次确认最坏跑满
+        3 × 2.5s + 退避 ≈ 7.9s —— 而它持的是**全局取数锁**。现在它与
+        ``_mirror_serves_bars`` 同一写法：自造候选预算 deadline，有传入值就取 min。
+        """
+        self._shrink(timeout=0.2, budget=0.5)
+        client = PeriodScriptedClient({FREQ_5MIN: []}, delay=0.2)
+
+        started = time.monotonic()
+        dead = ap._mootdx_mirror_dead(client, FREQ_5MIN)
+        elapsed = time.monotonic() - started
+
+        # 两次 = 0.4 装得下，第三次要 0.6 > 0.5 —— 停在 2 次，而不是跑满 3 次
+        self.assertEqual(client.frequency_calls(FREQ_5MIN), 2)
+        self.assertFalse(dead, "慢失败只判「未证实」，不据此摘除 client")
+        self.assertLess(elapsed, ap._MOOTDX_PROBE_ATTEMPTS * 0.2, "上界由候选预算给出")
 
     def test_fast_empties_still_get_the_full_attempt_count(self):
         """快速空返回成本近零，仍跑满 ``_MOOTDX_PROBE_ATTEMPTS`` 次。
@@ -432,6 +492,40 @@ class CostBoundedRetryTests(MirrorJitterBase):
         # 5min 第二次尝试（0.3s）才成功；日线要 0.3 + 0.2 > 0.4，装不下 → 不测
         self.assertEqual(verdict, ap.MIRROR_DEGRADED)
         self.assertEqual(client.frequency_calls(FREQ_DAILY), 0)
+        self.assertLessEqual(elapsed, 0.4 + TEST_SLOW_SECONDS)
+
+    def test_a_reconnect_that_eats_the_budget_stops_the_retry(self):
+        """重连后要**重新**判「一次完整尝试还装得下」（复审必修 ②）。
+
+        重连本身可能吃掉剩下的预算，判定必须与循环开头同一条。只判 ``now >=
+        deadline`` 会漏掉「重连后还剩一点余量」这一档：那时起跑的一次尝试吃满整个
+        超时，候选就越过竞速窗口。重连该做还是要做（它是有效单位），只是不再起新的
+        尝试 —— 结论是「未证实」，不是判死。
+        """
+        self._shrink(timeout=0.2, budget=0.5)
+        client = PeriodScriptedClient({FREQ_5MIN: []}, delay=0.15)
+        client.client = SlowConnectTdxApi(connect_delay=0.2)
+
+        verdict = ap._probe_period_with_retry(
+            client, FREQ_5MIN, "1.1.1.1:7709", time.monotonic() + 0.5
+        )
+
+        # 首次尝试 0.15s；重连 0.2s 后只剩 0.15s，装不下一次 0.2s 的尝试
+        self.assertEqual(client.frequency_calls(FREQ_5MIN), 1)
+        self.assertEqual(client.client.reconnects, 1, "重连本身仍要做")
+        self.assertEqual(verdict, ap._PERIOD_UNPROVEN)
+
+    def test_candidate_stays_inside_its_budget_when_reconnects_are_slow(self):
+        """端到端：重连慢时候选仍不越过预算（复审必修 ② 的 7.20s 形态）。"""
+        self._shrink(timeout=0.2, budget=0.4)
+        client = PeriodScriptedClient({FREQ_5MIN: []}, delay=0.15)
+        client.client = SlowConnectTdxApi(connect_delay=0.2)
+
+        started = time.monotonic()
+        verdict = ap._mirror_serves_bars(client, ("1.1.1.1", 7709))
+        elapsed = time.monotonic() - started
+
+        self.assertEqual(verdict, ap.MIRROR_UNKNOWN)
         self.assertLessEqual(elapsed, 0.4 + TEST_SLOW_SECONDS)
 
     def test_first_attempt_runs_even_when_a_retry_would_not_fit(self):

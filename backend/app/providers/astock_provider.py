@@ -299,8 +299,9 @@ _MOOTDX_PROBE_MIN_TIMEOUT = 0.5
 # —— 判定写在 _probe_period_with_retry 里，用的是 `now + timeout > deadline`，
 # 正好卡在等号上时浮点误差会让最后一次重试时有时无。宁可多留 0.2s。
 #
-# 它同时是取数路径确认探测（_mootdx_mirror_dead）的上界：那里 deadline 可能为 None
-# （日线路径），此前会让一次确认最多占着全局取数锁 7.9s。
+# 它同时是取数路径确认探测（_mootdx_mirror_dead）的上界。那里的 deadline 可能为 None
+# （日线 / CYQ 路径不带预算），所以该函数自己按本预算造一个 deadline、再与传入值取
+# min，一次确认因此最多占着全局取数锁 5.4s 而不是 7.9s。
 _MOOTDX_PROBE_CANDIDATE_BUDGET = (
     2 * _MOOTDX_PROBE_TIMEOUT + 2 * _MOOTDX_PROBE_ATTEMPT_BACKOFF
 )
@@ -740,9 +741,18 @@ def _probe_period_with_retry(
             # 重连是重试的有效单位；连不上就没必要再花预算空转。
             if not _reconnect_probe_client(client, deadline):
                 return _PERIOD_UNPROVEN
-            # 重连本身可能吃掉剩下的预算，重连后要重新确认（评审必修 ②：重连失败会
-            # 留下一条未连接的 socket，再取数会立刻抛错并被记成「空返回」）。
-            if deadline is not None and time.monotonic() >= deadline:
+            # 重连本身可能吃掉剩下的预算（最坏一整个 _MOOTDX_PROBE_TIMEOUT），重连后
+            # 要重新确认（评审必修 ②：重连失败会留下一条未连接的 socket，再取数会
+            # 立刻抛错并被记成「空返回」）。
+            #
+            # 判定与循环开头**同一条**：要求「一次完整尝试还装得下」，不能只判
+            # `now >= deadline`。只判后者会漏掉「重连 1~2s 后还剩一点余量」这一档 ——
+            # 那时起跑的一次尝试会吃满整个超时，把候选顶出竞速窗口（VEW-70 复审必修
+            # ② 实测：重连成本 2.0s 时候选跑到 7.20s，越过 6.5s 的窗口）。
+            if (
+                deadline is not None
+                and time.monotonic() + _MOOTDX_PROBE_TIMEOUT > deadline
+            ):
                 return _PERIOD_UNPROVEN
         kind, elapsed = _probe_period_once(client, freq, label)
         if kind == _ATTEMPT_OK:
@@ -875,9 +885,17 @@ def _mootdx_mirror_dead(
 
     这是打断「一次抖动 → 摘除 client → 全量重扫」级联的落点：重扫有预算、常常扫不完，
     一次抖动会因此被放大成整源不可用。
+
+    ``deadline`` 可能为 ``None``（日线 / CYQ 路径不带预算，见 ``get_kline_with_provenance``
+    与 ``_compute_cyq_locally``），而本函数持的是**全局取数锁** —— 没有上界时一次确认
+    最坏会占着锁 7.9s。所以这里与 :func:`_mirror_serves_bars` 同一写法：自造一个候选
+    预算 deadline，调用方给了 deadline 就取更紧的那个（VEW-70 复审必修 ①）。
     """
+    candidate_deadline = time.monotonic() + _MOOTDX_PROBE_CANDIDATE_BUDGET
+    if deadline is not None:
+        candidate_deadline = min(deadline, candidate_deadline)
     verdict = _probe_period_with_retry(
-        client, freq, _mirror_label(client, None), deadline
+        client, freq, _mirror_label(client, None), candidate_deadline
     )
     return verdict == _PERIOD_DEAD
 
@@ -1485,8 +1503,10 @@ class AStockDataProvider(MarketDataProvider):
                         #
                         # 确认要在**探测模式**下跑：这里拿到的是取数 client（5s 超时 +
                         # tdxpy 默认 4 次重连重试），直接用它做 quorum，一次确认最坏能
-                        # 花掉 25s，把请求预算整个吃掉。短超时下每次尝试 2.5s，
-                        # _MOOTDX_PROBE_ATTEMPTS 次仍在扫描预算内。
+                        # 花掉 25s，把请求预算整个吃掉。切到探测模式后每次尝试 2.5s，
+                        # 且整次确认由 _MOOTDX_PROBE_CANDIDATE_BUDGET 收口（日线 / CYQ
+                        # 路径的 deadline 为 None，靠 _mootdx_mirror_dead 自造），最坏
+                        # 5.4s 而不是跑满 _MOOTDX_PROBE_ATTEMPTS 次的 7.9s。
                         if collected == 0 and initial_offset == 0:
                             saved = _apply_probe_tuning(client)
                             try:
