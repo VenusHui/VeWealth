@@ -506,3 +506,342 @@ def test_result_dict_has_p0_shaped_fields(tmp_path, enabled):
     ):
         assert key in payload
     assert payload["universe_source"] == "explicit"
+
+
+# ---------------------------------------------------------------------------
+# VEW-65 评审①②：多分块截断 / 续跑占比分母（原 31 个用例恰好绕过这两条路径）
+# ---------------------------------------------------------------------------
+
+# 90 天窗口 = 恰好 3 个 30 天分块，用于构造「中间块出问题」的场景
+MULTI_START = date(2026, 6, 1)
+MULTI_END = date(2026, 8, 29)
+MULTI_CHUNKS = _date_chunks(MULTI_START, MULTI_END, 30)
+
+
+class ScriptedProvider:
+    """按 ``(标的, 块区间)`` 决定返回哪些 bar —— 用于多分块 / 部分缺失场景。"""
+
+    def __init__(self, script):
+        self.script = script  # callable(symbol, lo, hi) -> list[date] | None
+        self.calls: list[dict] = []
+
+    def fetch_minute_data(
+        self,
+        stock_code,
+        start_datetime,
+        end_datetime,
+        period="1",
+        adjust="",
+        deadline=None,
+        count=500,
+        start_offset=0,
+        **kwargs,
+    ):
+        lo = date.fromisoformat(str(start_datetime)[:10])
+        hi = date.fromisoformat(str(end_datetime)[:10])
+        self.calls.append({"symbol": stock_code, "start": lo, "end": hi})
+        days = self.script(stock_code, lo, hi)
+        if not days:
+            return None
+        return _range_bars(stock_code, days, 3)
+
+
+def test_window_actually_spans_multiple_chunks():
+    """守住前提：默认分块下 90 天窗口确实是 3 块（否则下面两条用例形同虚设）。"""
+    assert len(MULTI_CHUNKS) == 3
+    assert MULTI_CHUNKS[0][0] == MULTI_START
+    assert MULTI_CHUNKS[-1][1] == MULTI_END
+
+
+def test_middle_chunk_hole_is_retryable_not_completion(tmp_path, enabled):
+    """评审①回归：中间块开头缺一截 → 可重试失败。
+
+    合并后的最早日期由第 1 块决定（= 区间起点），整体覆盖度校验照样通过；只有**逐块**
+    判定才能发现这个洞。修复前该标的会被记 completed（终态），这段历史永久缺失。
+    """
+    middle_start, middle_end = MULTI_CHUNKS[1]
+
+    def script(symbol, lo, hi):
+        if lo == middle_start:
+            # 中间块只返回最后两天：块首 29 天缺失
+            return [middle_end - timedelta(days=1), middle_end]
+        return [d for d in (lo, hi) if d <= hi]
+
+    filler = _backfiller(tmp_path, ScriptedProvider(script))
+    result = filler.run("1", MULTI_START, MULTI_END, symbols=["000001"], confirm=True)
+
+    assert result.fetched == 0, "中间块有洞却记了完成 —— 历史会永久缺失"
+    assert result.failed == 1
+    assert any("块内覆盖不足" in e for e in result.errors)
+    # 取到的部分仍然落盘（幂等合并，重跑补齐）
+    assert MinuteLibrary(tmp_path).available_dates("1")
+
+
+def test_truncation_flag_survives_multi_chunk_window(tmp_path, enabled, monkeypatch):
+    """评审①回归：多分块下中间块被截断必须仍被检出。
+
+    截断标志若走 ``DataFrame.attrs``，``pd.concat`` 会把它丢掉（pandas 只在所有输入的
+    attrs 完全相同时才保留），中间块被截断就再也检不出来。这里让**只有中间块**截断，
+    断言它照样记 failed。
+    """
+    days = [d for cs, ce in MULTI_CHUNKS for d in (cs, ce)]
+    filler = _backfiller(tmp_path, RangeProvider(days))
+    real = filler._fetch_chunk
+    middle_start = MULTI_CHUNKS[1][0]
+    seen = {"middle": False}
+
+    def fake(symbol, period, cs, ce):
+        frame, took, truncated = real(symbol, period, cs, ce)
+        if cs == middle_start:
+            seen["middle"] = True
+            return frame, took, True  # 只有中间块被预算截断
+        return frame, took, truncated
+
+    monkeypatch.setattr(filler, "_fetch_chunk", fake)
+    frames, _, problems = filler._fetch_symbol_window("000001", "1", MULTI_CHUNKS)
+
+    assert seen["middle"] and frames, "中间块没走到，用例前提不成立"
+    assert any("截断" in p for p in problems), "中间块的截断标志被 concat 丢掉了"
+
+
+def test_run_records_failure_when_only_middle_chunk_truncated(
+    tmp_path, enabled, monkeypatch
+):
+    """同上，但走完整的 ``run()`` —— 评审给的就是这条端到端路径。"""
+    days = [d for cs, ce in MULTI_CHUNKS for d in (cs, ce)]
+    filler = _backfiller(tmp_path, RangeProvider(days))
+    real = filler._fetch_chunk
+    middle_start = MULTI_CHUNKS[1][0]
+
+    def fake(symbol, period, cs, ce):
+        frame, took, truncated = real(symbol, period, cs, ce)
+        return frame, took, (True if cs == middle_start else truncated)
+
+    monkeypatch.setattr(filler, "_fetch_chunk", fake)
+    result = filler.run("1", MULTI_START, MULTI_END, symbols=["000001"], confirm=True)
+
+    assert result.fetched == 0 and result.failed == 1
+    assert any("截断" in e for e in result.errors)
+
+
+def test_chunk_with_no_bars_at_all_is_not_flagged_as_hole():
+    """整块取空**不**按块内洞处理：区间内长期停牌与源故障无法区分，交给整体判据。
+
+    误杀会让停牌标的永远无法记终态（每次重跑都重取），方向与 P0「可疑才重试」相悖。
+    """
+    from app.services.minute_backfill import _chunk_problem
+
+    assert _chunk_problem(None, date(2026, 7, 1), date(2026, 7, 30), False) is None
+    empty = pd.DataFrame({"trade_time": pd.to_datetime([])})
+    assert _chunk_problem(empty, date(2026, 7, 1), date(2026, 7, 30), False) is None
+
+
+def test_empty_ratio_denominator_uses_attempted_on_resume(
+    tmp_path, enabled, monkeypatch
+):
+    """评审②回归：续跑时空结果占比的分母必须是**本轮尝试数**。
+
+    修复前分母用 ``universe_size``（扣掉 skipped 之前的全量），续跑批次小的时候占比被
+    系统性低估，「本轮待采的标的全部取空」这种最该兜底的情形反而漏过 → 记终态 empty，
+    这批标的历史永久缺失且重跑不会再来。
+    """
+    pool = [f"60000{i}" for i in range(10)] + [f"00000{i}" for i in range(90)]
+    # run1：10 只抛异常 → failed（其余 90 只正常取到）
+    first_provider = RangeProvider([date(2026, 6, 1)], fail=pool[:10])
+    first_filler = _backfiller(tmp_path, first_provider)
+    monkeypatch.setattr(
+        first_filler._collector,
+        "resolve_universe",
+        lambda day, **kw: (pool, "snapshot"),
+    )
+    first = first_filler.run("1", START, END, confirm=True)
+    assert first.failed == 10 and first.fetched == 90
+
+    # run2：源部分故障，这 10 只全取空；探针标的（000001）正常
+    second_provider = RangeProvider([date(2026, 6, 1)], empty=pool[:10])
+    second_filler = _backfiller(tmp_path, second_provider)
+    monkeypatch.setattr(
+        second_filler._collector,
+        "resolve_universe",
+        lambda day, **kw: (pool, "snapshot"),
+    )
+    second = second_filler.run("1", START, END, confirm=True)
+
+    assert second.requested == 10 and second.skipped == 90
+    assert second.empty == 0, "本轮待采 100% 取空却记了终态 —— 历史永久缺失"
+    assert second.failed == 10
+    assert any("占比" in e for e in second.errors)
+
+
+# ---------------------------------------------------------------------------
+# VEW-65 评审③④：交叉校验的假通过与覆盖率
+# ---------------------------------------------------------------------------
+
+
+def test_cross_check_ok_is_false_when_nothing_compared():
+    """评审③回归：两边交集为空时 mismatch 天然是 0，不能据此报「通过」。"""
+    report = CrossCheckReport(period="1", start_date="", end_date="")
+    assert report.compared_bars == 0
+    assert report.ok is False, "一根 bar 都没比却报通过（假通过）"
+
+
+def test_cross_check_ok_requires_coverage():
+    """评审③④回归：只比上窗口尾巴不算通过。"""
+    report = CrossCheckReport(period="1", start_date="", end_date="")
+    report.compared_bars = 800  # 第二源单页上限
+    report.only_primary = 4200  # 主源 4 个月窗口的其余部分
+    assert report.coverage < 0.2
+    assert report.ok is False
+
+
+def test_cross_check_ok_true_only_on_full_agreement():
+    report = CrossCheckReport(period="1", start_date="", end_date="")
+    report.compared_bars = 100
+    assert report.coverage == 1.0
+    assert report.ok is True
+    # 有任一 mismatch 即不通过
+    report.volume_mismatch = 1
+    assert report.ok is False
+
+
+def test_cross_check_reports_secondary_empty_separately(tmp_path, enabled, monkeypatch):
+    """第二源「在但该窗口没数据」与「模块缺失」是两回事，必须分开报告。"""
+    filler = _backfiller(tmp_path, RangeProvider([date(2026, 6, 1)]))
+    monkeypatch.setattr(filler, "_fetch_secondary", lambda *a, **kw: pd.DataFrame())
+    report = filler.cross_check("1", START, END, ["000001"])
+
+    assert report.secondary_empty == 1
+    assert report.secondary_unavailable is False
+    assert report.compared_bars == 0 and report.ok is False
+
+
+def _install_fake_tencent(monkeypatch, pages_by_cursor: dict):
+    """把假的 ``app.providers.astock_data`` 塞进 sys.modules，模拟 VEW-63 取数接口。"""
+    import sys
+    import types
+
+    def tencent_minute_bars(symbol, period, start_time="", count=800, _record=True):
+        return pages_by_cursor.get(start_time, [])
+
+    def tencent_minute_frame(bars):
+        if not bars:
+            return None
+        return pd.DataFrame(bars)
+
+    module = types.ModuleType("app.providers.astock_data")
+    module.tencent_minute_bars = tencent_minute_bars
+    module.tencent_minute_frame = tencent_minute_frame
+    monkeypatch.setitem(sys.modules, "app.providers.astock_data", module)
+
+
+def _tencent_bars(day: date, hours=(9, 10)) -> list[dict]:
+    return [
+        {
+            "datetime": pd.Timestamp(f"{day.isoformat()} {h:02d}:30:00"),
+            "open": 10.0,
+            "close": 10.1,
+            "high": 10.2,
+            "low": 9.9,
+            "volume": 1000.0,
+        }
+        for h in hours
+    ]
+
+
+def test_secondary_pages_back_until_window_start(tmp_path, enabled, monkeypatch):
+    """评审④回归：第二源要按区间翻页，不能只取最新一页（1min 单页仅 ~3.3 个交易日）。"""
+    pages = {
+        "": _tencent_bars(date(2026, 6, 20)),  # 第 1 页：最新
+        "2026-06-20 09:30:00": _tencent_bars(date(2026, 6, 10)),
+        "2026-06-10 09:30:00": _tencent_bars(date(2026, 6, 1)),  # 够到区间起点 → 停
+    }
+    _install_fake_tencent(monkeypatch, pages)
+    filler = _backfiller(tmp_path, RangeProvider([date(2026, 6, 1)]))
+
+    frame = filler._fetch_secondary("000001", "1", START, END)
+
+    assert frame is not None and not frame.empty
+    assert set(pd.to_datetime(frame["datetime"]).dt.date) == {
+        date(2026, 6, 1),
+        date(2026, 6, 10),
+        date(2026, 6, 20),
+    }
+
+
+def test_secondary_paging_stops_when_cursor_does_not_advance(
+    tmp_path, enabled, monkeypatch
+):
+    """对未知契约的防御：源忽略 ``start_time`` 时不能原地打转。"""
+    calls = {"n": 0}
+    fixed = _tencent_bars(date(2026, 6, 20))
+
+    def bars(symbol, period, start_time="", count=800, _record=True):
+        calls["n"] += 1
+        return fixed  # 无论游标是什么都返回同一页
+
+    import sys
+    import types
+
+    module = types.ModuleType("app.providers.astock_data")
+    module.tencent_minute_bars = bars
+    module.tencent_minute_frame = lambda b: pd.DataFrame(b) if b else None
+    monkeypatch.setitem(sys.modules, "app.providers.astock_data", module)
+
+    filler = _backfiller(tmp_path, RangeProvider([date(2026, 6, 1)]))
+    frame = filler._fetch_secondary("000001", "1", START, END)
+
+    assert calls["n"] == 2, "游标没推进却没有及时停手"
+    assert frame is not None
+
+
+# ---------------------------------------------------------------------------
+# VEW-65 评审⑤⑥：执行侧盘余量硬校验 + 门槛含一年增量
+# ---------------------------------------------------------------------------
+
+
+def test_run_refuses_when_disk_headroom_insufficient(tmp_path, enabled, monkeypatch):
+    """评审⑤回归：闸门挡住「误跑」，这条挡「明知故跑」。"""
+    import app.services.minute_backfill as mb
+
+    monkeypatch.setattr(mb, "_free_bytes", lambda path: 1_000)
+    filler = _backfiller(tmp_path, RangeProvider([date(2026, 6, 1)]))
+    with pytest.raises(BackfillRefused, match="盘余量不足"):
+        filler.run("1", START, END, symbols=["000001"], confirm=True)
+
+
+def test_run_force_bypasses_disk_headroom(tmp_path, enabled, monkeypatch):
+    """显式 force=True 才放行 —— 责任人要在日志里留下「我知道放不下」的痕迹。"""
+    import app.services.minute_backfill as mb
+
+    monkeypatch.setattr(mb, "_free_bytes", lambda path: 1_000)
+    filler = _backfiller(tmp_path, RangeProvider([date(2026, 6, 1)]))
+    result = filler.run("1", START, END, symbols=["000001"], confirm=True, force=True)
+    assert result.fetched == 1
+
+
+def test_disk_check_skipped_when_free_space_unmeasurable(
+    tmp_path, enabled, monkeypatch
+):
+    """量不出盘余量时**不拦**：拿不到事实就不假装有事实，由前两层闸门兜底。"""
+    import app.services.minute_backfill as mb
+
+    monkeypatch.setattr(mb, "_free_bytes", lambda path: None)
+    filler = _backfiller(tmp_path, RangeProvider([date(2026, 6, 1)]))
+    result = filler.run("1", START, END, symbols=["000001"], confirm=True)
+    assert result.fetched == 1
+
+
+def test_plan_fits_includes_annual_growth(tmp_path, enabled, monkeypatch):
+    """评审⑥回归：闸门 = 一次性回填 + 至少一年增量，只看一次性会低估门槛。"""
+    import app.services.minute_backfill as mb
+
+    filler = _backfiller(tmp_path, RangeProvider([date(2026, 6, 1)]))
+    plan = filler.plan("1", START, END, symbols=["000001"])
+
+    assert plan.annual_bytes > plan.est_bytes, "一年增量应远大于 1 个月的一次性回填"
+    assert plan.required_bytes == int((plan.est_bytes + plan.annual_bytes) * 1.2)
+
+    # 恰好够一次性回填、不够「一次性 + 一年增量」→ 必须判放不下
+    monkeypatch.setattr(mb, "_free_bytes", lambda path: int(plan.est_bytes * 1.2) + 1)
+    tight = filler.plan("1", START, END, symbols=["000001"])
+    assert tight.fits is False

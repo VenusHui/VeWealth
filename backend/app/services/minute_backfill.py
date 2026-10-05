@@ -42,10 +42,18 @@ JSON 日志（``{root}/_state/backfill/...``），记录 ``completed`` / ``empty
 2. **备源降级**：mootdx 全挂时回退东财，而 1min 的备源 ``eastmoney_trends2`` 只有
    约 5 天窗口 —— 在一个 4 个月的区间里，它会安静地只返回最近几天。
 
-两者都不会抛异常。因此取数后必须做**覆盖度校验**（``_coverage_short``）：把取回
-数据的最早日期与区间起点比对，差得多且源本身覆盖得到区间起点时，记 ``failed``
-（可重试）而不是 ``completed``。判据偏向「可疑就重试」与 P0 一致：记错的代价不对称
-—— 多跑一轮取数 vs 回测事实源里永久缺一段历史。
+两者都不会抛异常。因此取数后必须做**覆盖度校验**，且必须**逐块 + 整体**两级都做：
+
+- **逐块**（``_chunk_problem``）：本块被预算截断，或本块取到了 bar 但最早一根明显晚于
+  块起点（块首缺一截）。截断标志由 ``_fetch_chunk`` **作为返回值带出**，不走
+  ``DataFrame.attrs`` —— pandas 只在所有输入的 attrs 完全相同时才在 ``pd.concat`` 时
+  保留 attrs，而窗口跨多块是默认情形，走 attrs 必丢标志（VEW-65 评审①）。
+- **整体**（``_coverage_short``）：合并后最早日期够不着区间起点（源端深度不足）。
+
+只做整体校验会漏掉**中间块的洞**：合并后的最早日期由第 1 块决定，中间块开头缺一截
+既不改变它、也不触发任何整体判据。两级都判不过就记 ``failed``（可重试）而不是
+``completed``。判据偏向「可疑就重试」与 P0 一致：记错的代价不对称 —— 多跑一轮取数
+vs 回测事实源里永久缺一段历史。
 
 新上市标的的合法短覆盖由 ``security_universe.list_date`` 豁免（查不到时按可疑处理）。
 
@@ -65,6 +73,9 @@ mootdx / 东财的 volume 单位是**股**，腾讯 ``ifzq`` 是**手**（差 10
 
 ``cross_check`` 拉两源同期数据，按 ``(stock_code, trade_time)`` 取交集比对：
 OHLC 要求**严格相等**（VEW-61 已验 m5 完全一致），volume 在单位换算后要求一致。
+第二源按区间翻页取数（``start_time`` 游标），并在报告里给出 ``coverage``；
+``ok`` 要求**确实比对上 bar 且覆盖率达标**，否则「两边交集为空」会被误报成通过。
+
 腾讯源由 VEW-63 接入，**尚未合入 dev/v1.3.0**，因此 ``_fetch_secondary`` 在缺少该
 模块时返回 ``None`` 并在报告里标注 ``secondary_unavailable`` —— 交叉校验的比较逻辑
 可以离线测（喂两段 frame），真实两源比对要等 VEW-63 合入后才生效。
@@ -72,10 +83,10 @@ OHLC 要求**严格相等**（VEW-61 已验 m5 完全一致），volume 在单�
 安全闸门（与 P0 同口径：代码可以进，写入不能跑）
 ------------------------------------------------
 ``run()`` 需要**同时**满足 ``settings.MINUTE_BACKFILL_ENABLED is True`` 与
-``confirm=True`` 才真正取数落盘；任一缺失都只产出计划。回填是一次性大范围跑批，
-生产 ``/`` 实测可用仅约 5 GB，而全市场回填实测约 4.5 GB（1min 4 个月 ≈ 1.7 GB +
-5min 2 年 ≈ 2.8 GB，见 ``docs/plans/2026-10-05-minute-backfill-p1-capacity.md``），
-容量拍板前不得执行。
+``confirm=True``，并通过盘余量硬校验（估算体积含一年增量，放不下即拒绝，除非显式
+``force=True``）才真正取数落盘。回填是一次性大范围跑批，全市场双周期实测约 4.5 GB
+（1min 4 个月 ≈ 1.7 GB + 5min 2 年 ≈ 2.8 GB），首年增量另需约 6.9 GB，见
+``docs/plans/2026-10-05-minute-backfill-p1-capacity.md``。容量拍板前不得执行。
 """
 
 from __future__ import annotations
@@ -158,6 +169,20 @@ _TRUNCATION_SLACK_SEC = 0.05
 # 区间取数单块的最大根数（mootdx 单页 800，25 页封顶；正常分块远达不到）。
 _MAX_BARS_PER_REQUEST = 20000
 
+# 一年的交易日数（用于把「一次性回填」与「至少一年的增量增长」放在同一口径下估算）。
+# 仓库没有交易日历，与 ``trading_days_between`` 同源：按日历日 × 5/7 折算。
+_TRADING_DAYS_PER_YEAR = 244
+
+# 交叉校验第二源（腾讯 ifzq）的单页根数上限与最多翻页数。单页 800 根是源端硬上限
+# （VEW-63），翻页上限用来给「窗口比源端深度还长」的情况封顶：拿不满就少比，由
+# ``CrossCheckReport.coverage`` 判成不通过，而不是无限翻页。
+_SECONDARY_PAGE_BARS = 800
+_SECONDARY_MAX_PAGES = 40
+
+# 交叉校验判定通过所需的最低覆盖率（被比对上的 bar / 两源 bar 总数）。第二源只覆盖
+# 窗口一小截时，「比过的部分一致」不能代表整段一致 —— 覆盖率不够就判不通过。
+_CROSS_CHECK_MIN_COVERAGE = 0.8
+
 
 class BackfillRefused(RuntimeError):
     """未满足安全闸门（开关未开 / 未显式 confirm）时拒绝执行回填。
@@ -165,6 +190,52 @@ class BackfillRefused(RuntimeError):
     刻意抛异常而不是返回一个「refused=True」的结果对象：回填是写生产磁盘的大动作，
     调用方漏判返回值就等于默认执行，抛异常让漏判变成显式失败。
     """
+
+
+def _chunk_problem(
+    frame: Optional[pd.DataFrame],
+    chunk_start: date,
+    chunk_end: date,
+    truncated: bool,
+    list_date: Optional[date] = None,
+) -> Optional[str]:
+    """单块取数是否有问题？有问题返回原因（供记可重试失败），否则 ``None``。
+
+    **逐块判定**，不看合并后的整体：合并后的「最早日期」由第 1 块决定，中间块开头缺
+    一截既不改变它、也不会触发任何整体判据，是个完全无判据的洞（VEW-65 评审①）。
+
+    两条判据：
+
+    1. **预算截断**（``truncated``）：源按「最新往旧」翻页，预算耗尽时丢的是本块**最旧**
+       的那一段。标志由 ``_fetch_chunk`` 直接返回，不经过 ``DataFrame.attrs``。
+    2. **块内覆盖不足**：本块取到了 bar，但最早一根明显晚于块起点。这正是截断在数据上
+       的签名（也覆盖 ``_estimate_start_offset`` 估偏导致的块首缺失）。
+
+    第 2 条只对「取到了 bar」的块生效：整块取空可能是**合法**的（区间内长期停牌），
+    无法与源故障区分，交给整体覆盖度校验与 ``_classify_empty`` 判定，不在这里误杀。
+
+    ``list_date`` 晚于块起点时同样豁免第 2 条：标的在块起点还没上市，块首没有 bar 是
+    事实而不是缺失（与 ``_coverage_short`` 同一豁免，否则新上市标的永远重试）。截断
+    不豁免 —— 那是源侧故障，与标的何时上市无关。
+    """
+    if truncated:
+        return (
+            f"{chunk_start}..{chunk_end} 取数预算耗尽被截断，本块最旧的一段可能缺失"
+            "（可重试）"
+        )
+    if frame is None or frame.empty or "trade_time" not in frame.columns:
+        return None
+    if list_date is not None and list_date > chunk_start:
+        return None
+    earliest = pd.to_datetime(frame["trade_time"]).dt.date.min()
+    floor = chunk_start + timedelta(days=_COVERAGE_SLACK_DAYS)
+    if earliest <= floor:
+        return None
+    return (
+        f"{chunk_start}..{chunk_end} 块内覆盖不足：取回最早 {earliest}，"
+        f"晚于块起点 {chunk_start}（+{_COVERAGE_SLACK_DAYS} 天容差）→ 块首疑似缺失"
+        "（可重试）"
+    )
 
 
 def _coerce_date(value: date | datetime | str) -> date:
@@ -223,6 +294,9 @@ class BackfillPlan:
     est_rows: int
     est_bytes: int
     free_bytes: Optional[int]
+    # 同一范围的**每年增量**（同一批标的 × 244 交易日）。闸门口径是「一次性回填 +
+    # 至少一年增量」，只看 est_bytes 会把门槛低估成一半以下（VEW-65 评审⑥）。
+    annual_bytes: int = 0
     # 已有分区里该周期已落盘的天数（增量采集合入后回填会少写这些天）
     existing_days: int = 0
     bytes_per_row: float = 0.0
@@ -232,11 +306,16 @@ class BackfillPlan:
     notes: list[str] = field(default_factory=list)
 
     @property
+    def required_bytes(self) -> int:
+        """闸门要求的空间 = （一次性回填 + 一年增量）× 20% 余量。"""
+        return int((self.est_bytes + self.annual_bytes) * 1.2)
+
+    @property
     def fits(self) -> Optional[bool]:
-        """估算体积能否被当前可用空间容纳（留 20% 余量）。"""
+        """一次性回填 + 一年增量能否被当前可用空间容纳（留 20% 余量）。"""
         if self.free_bytes is None:
             return None
-        return self.est_bytes * 1.2 <= self.free_bytes
+        return self.required_bytes <= self.free_bytes
 
     def as_dict(self) -> dict:
         return {
@@ -248,6 +327,10 @@ class BackfillPlan:
             "est_rows": self.est_rows,
             "est_bytes": self.est_bytes,
             "est_mb": round(self.est_bytes / 1e6, 2),
+            "annual_bytes": self.annual_bytes,
+            "annual_mb": round(self.annual_bytes / 1e6, 2),
+            "required_bytes": self.required_bytes,
+            "required_mb": round(self.required_bytes / 1e6, 2),
             "bytes_per_row": self.bytes_per_row,
             "free_bytes": self.free_bytes,
             "free_mb": (
@@ -319,14 +402,38 @@ class CrossCheckReport:
     only_primary: int = 0
     only_secondary: int = 0
     secondary_unavailable: bool = False
+    # 第二源在窗口内一根 bar 都没有的标的数（与 secondary_unavailable 不同：源在，
+    # 但这个窗口没数据 —— 如窗口早于其历史深度）。
+    secondary_empty: int = 0
     samples: list[dict] = field(default_factory=list)
 
     @property
+    def coverage(self) -> float:
+        """主源 bar 里被实际比对上的比例（分母含单边 bar）。"""
+        total = self.compared_bars + self.only_primary + self.only_secondary
+        if total <= 0:
+            return 0.0
+        return self.compared_bars / total
+
+    @property
     def ok(self) -> bool:
+        """校验是否**真的**通过。
+
+        三条件缺一不可，否则「没比成」会被当成「比过且一致」：
+
+        1. 第二源可用（``secondary_unavailable`` 为假）；
+        2. **确实比对上了 bar**（``compared_bars > 0``）—— 否则两边交集为空时
+           ``ohlc_mismatch``/``volume_mismatch`` 天然是 0，会假通过；
+        3. 覆盖率不低于 ``_CROSS_CHECK_MIN_COVERAGE`` —— 第二源只覆盖窗口的一小截时
+           （其单页上限 800 根，1min 约 3.3 个交易日），「比过 800 根一致」不能代表
+           整段区间一致，必须显式判不通过而不是给个绿灯。
+        """
         return (
             not self.secondary_unavailable
+            and self.compared_bars > 0
             and self.ohlc_mismatch == 0
             and self.volume_mismatch == 0
+            and self.coverage >= _CROSS_CHECK_MIN_COVERAGE
         )
 
     def as_dict(self) -> dict:
@@ -341,6 +448,8 @@ class CrossCheckReport:
             "only_primary": self.only_primary,
             "only_secondary": self.only_secondary,
             "secondary_unavailable": self.secondary_unavailable,
+            "secondary_empty": self.secondary_empty,
+            "coverage": round(self.coverage, 4),
             "ok": self.ok,
             "samples": self.samples[:10],
         }
@@ -500,6 +609,7 @@ class MinuteBackfiller:
             est_rows=est_rows,
             est_bytes=est_bytes,
             free_bytes=_free_bytes(Path(self.library.root)),
+            annual_bytes=estimate_bytes(period, len(pool), _TRADING_DAYS_PER_YEAR),
             existing_days=len(self.library.available_dates(period)),
             bytes_per_row=bpr,
             est_fetch_sec_low=est_low,
@@ -513,10 +623,15 @@ class MinuteBackfiller:
             f"B/row={bpr} 为 VEW-65 真实数据实测值（含 amount 列）；"
             "P0 文档的 39 B/row 来自均匀随机合成数据，偏保守约 3 倍"
         )
+        plan.notes.append(
+            f"闸门口径 = 一次性回填 {plan.est_bytes / 1e9:.2f} GB + 一年增量 "
+            f"{plan.annual_bytes / 1e9:.2f} GB，× 1.2 余量 = "
+            f"{plan.required_bytes / 1e9:.2f} GB；只看一次性回填会低估门槛（VEW-65 评审⑥）"
+        )
         if plan.fits is False:
             plan.notes.append(
-                "估算体积超过当前可用空间（含 20% 余量）—— 不得执行，"
-                "先扩盘或缩小范围（自选池 / 单周期 / 更短区间）"
+                "估算体积（一次性回填 + 一年增量，含 20% 余量）超过当前可用空间 —— "
+                "不得执行，先扩盘或缩小范围（自选池 / 单周期 / 更短区间）"
             )
         return plan
 
@@ -535,11 +650,21 @@ class MinuteBackfiller:
         chunk_days: Optional[int] = None,
         source: str = "mootdx",
         resume: bool = True,
+        force: bool = False,
     ) -> BackfillResult:
         """执行回填。
 
-        安全闸门：``settings.MINUTE_BACKFILL_ENABLED`` 与 ``confirm=True`` **都**满足
-        才真正取数落盘；否则抛 :class:`BackfillRefused`（见类说明）。
+        安全闸门（三层，全部在取数与落盘**之前**）：
+
+        1. ``settings.MINUTE_BACKFILL_ENABLED`` 为 True —— 挡「误跑」；
+        2. ``confirm=True`` —— 挡「无人确认就跑」；
+        3. 盘余量硬校验：本次范围的估算体积（一次性 + 一年增量，含余量）必须放得下，
+           否则抛 :class:`BackfillRefused` —— 挡「明知放不下还跑」。
+
+        第 3 条是 ``plan().fits`` 的**执行侧**对应物：``plan()`` 只把 ``fits=False``
+        写进 notes，``run()`` 不看就等于没闸门（VEW-65 评审⑤）。issue 的立项目标正是
+        「写满的是系统盘，postgres + backend + frontend 一起挂」，所以这里必须硬拦。
+        确实要在余量不足时执行（如已确认要分批小范围跑）走 ``force=True`` 显式放行。
         """
         if not settings.MINUTE_BACKFILL_ENABLED:
             raise BackfillRefused(
@@ -586,6 +711,12 @@ class MinuteBackfiller:
             pending = [s for s in pending if s not in already]
             result.skipped = len(universe) - len(pending)
         result.requested = len(pending)
+
+        # 盘余量硬校验（第三层闸门）：按**本轮待采**的标的数估算，不是全量 ——
+        # 续跑批次小的时候不该被全量估算拦住。估算含一年增量（与 plan() 同口径）。
+        self._assert_disk_headroom(
+            period, len(pending), start, end, force=force, requested=result.requested
+        )
 
         logger.info(
             "分钟回填开始: period=%s 区间=%s..%s 股票池=%d 待采=%d 跳过=%d "
@@ -644,13 +775,14 @@ class MinuteBackfiller:
                     symbol,
                     period,
                     chunks,
+                    listing_dates.get(symbol),
                 ): symbol
                 for symbol in pending
             }
             for future in as_completed(futures):
                 symbol = futures[future]
                 try:
-                    frames, took = future.result()
+                    frames, took, problems = future.result()
                 except Exception as e:
                     result.failed += 1
                     journal.mark(symbol, "failed")
@@ -659,19 +791,30 @@ class MinuteBackfiller:
                     continue
                 fetch_seconds.append(took)
 
-                if not frames:
+                if not frames and not problems:
                     empty_symbols.append(symbol)
                     continue
 
-                merged = pd.concat(frames, ignore_index=True)
-                short = self._coverage_short(merged, start, listing_dates.get(symbol))
+                # 覆盖问题**逐块**收集（截断 / 块首缺失），再叠加整体覆盖度校验
+                # （区间起点够不着 = 源端深度不足）。两者都不写 completed：
+                # 记完成会让这段历史永久缺失（见模块 docstring）。
+                short = problems or None
+                if frames:
+                    merged = pd.concat(frames, ignore_index=True)
+                    short = short or self._coverage_short(
+                        merged, start, listing_dates.get(symbol)
+                    )
+                else:
+                    merged = None
+
                 if short:
-                    # 覆盖不足：数据仍然落盘（幂等合并，重跑会补齐），但**不记完成**，
-                    # 让重跑重取 —— 记完成会让这段历史永久缺失（见模块 docstring）。
+                    # 数据仍然落盘（幂等合并，重跑会补齐），但不记完成，让重跑重取。
                     result.failed += 1
                     journal.mark(symbol, "failed")
                     if len(result.errors) < 10:
-                        result.errors.append(f"{symbol}: {short}")
+                        result.errors.append(f"{symbol}: {'; '.join(short)}")
+                    if merged is None:
+                        continue
                 else:
                     result.fetched += 1
                     journal.mark(symbol, "completed")
@@ -711,26 +854,85 @@ class MinuteBackfiller:
     # 单标的区间取数
     # ------------------------------------------------------------------
 
+    def _assert_disk_headroom(
+        self,
+        period: str,
+        symbols: int,
+        start: date,
+        end: date,
+        force: bool,
+        requested: int,
+    ) -> None:
+        """盘余量硬校验：放不下就抛 :class:`BackfillRefused`（``force=True`` 放行）。
+
+        估的是**一次性回填 + 一年增量**（与 ``plan().fits`` 同口径），不是只看这次写入：
+        issue 的闸门就是这两项之和，只看一次性会把门槛低估成一半以下。
+
+        量不出盘余量（``_free_bytes`` 返回 ``None``）时**不拦**：拿不到事实就不该假装
+        有事实，此时由前两层闸门与责任人兜底。这一取舍是显式的，不是遗漏。
+        """
+        free = _free_bytes(Path(self.library.root))
+        if free is None:
+            logger.warning("盘余量量不出，跳过容量硬校验（由开关与 confirm 兜底）")
+            return
+        days = trading_days_between(start, end)
+        est = estimate_bytes(period, symbols, days)
+        annual = estimate_bytes(period, symbols, _TRADING_DAYS_PER_YEAR)
+        required = int((est + annual) * 1.2)
+        if required <= free:
+            return
+        message = (
+            f"盘余量不足：本次范围（待采 {requested} 只，{start}..{end}）估算 "
+            f"一次性 {est / 1e9:.2f} GB + 一年增量 {annual / 1e9:.2f} GB = "
+            f"{required / 1e9:.2f} GB（含 20% 余量），可用仅 {free / 1e9:.2f} GB。"
+            "写满的是系统盘，postgres + backend + frontend 会一起挂。"
+            "请先扩盘或缩小范围（自选池 / 单周期 / 更短区间）；"
+            "确需在余量不足时执行，显式传 force=True"
+        )
+        if not force:
+            raise BackfillRefused(message)
+        logger.warning("盘余量不足但显式 force=True，继续执行。%s", message)
+
     def _fetch_symbol_window(
-        self, symbol: str, period: str, chunks: Sequence[tuple[date, date]]
-    ) -> tuple[list[pd.DataFrame], float]:
-        """取单标的在整段区间内的 bar（按块取，块内一次调用翻页取完）。"""
+        self,
+        symbol: str,
+        period: str,
+        chunks: Sequence[tuple[date, date]],
+        list_date: Optional[date] = None,
+    ) -> tuple[list[pd.DataFrame], float, list[str]]:
+        """取单标的在整段区间内的 bar（按块取，块内一次调用翻页取完）。
+
+        返回 ``(frames, 耗时秒, 覆盖问题列表)``。**覆盖问题必须逐块判定、随返回值
+        带出**，不能靠 ``DataFrame.attrs`` 穿过 ``pd.concat`` —— pandas 只在所有输入
+        的 attrs 完全相同时才保留，一旦窗口跨多块（默认参数下必然如此）标志就被丢掉，
+        被截断的块会被静默记成 completed、历史永久缺失（VEW-65 评审①②）。
+        """
         started = time.monotonic()
         frames: list[pd.DataFrame] = []
+        problems: list[str] = []
         for chunk_start, chunk_end in chunks:
-            frame, _ = self._fetch_chunk(symbol, period, chunk_start, chunk_end)
+            frame, _, truncated = self._fetch_chunk(
+                symbol, period, chunk_start, chunk_end
+            )
+            reason = _chunk_problem(frame, chunk_start, chunk_end, truncated, list_date)
+            if reason:
+                problems.append(reason)
             if frame is not None and not frame.empty:
                 frames.append(frame)
-        return frames, time.monotonic() - started
+        return frames, time.monotonic() - started, problems
 
     def _fetch_chunk(
         self, symbol: str, period: str, start: date, end: date
-    ) -> tuple[Optional[pd.DataFrame], float]:
-        """取单标的一段区间。返回 ``(规范化前的原始 frame, 耗时秒)``。
+    ) -> tuple[Optional[pd.DataFrame], float, bool]:
+        """取单标的一段区间。返回 ``(规范化前的原始 frame, 耗时秒, 是否被预算截断)``。
 
         ``start_offset`` 用日历差估算（源按「最新往旧」翻页，历史区间要先跳过之后
         的所有 bar）；估偏了由覆盖度校验兜住 —— 它会把覆盖不足的标的记成可重试失败，
         不会静默写半段。
+
+        截断标志**作为返回值带出**而不是写 ``frame.attrs``：调用方会把多块 concat
+        起来，而 pandas 只在所有输入的 attrs 相同时才保留 attrs，走 attrs 必丢
+        （VEW-65 评审①）。
         """
         began = time.monotonic()
         budget = float(settings.MINUTE_BACKFILL_FETCH_BUDGET)
@@ -753,14 +955,17 @@ class MinuteBackfiller:
             deadline=deadline,
         )
         took = time.monotonic() - began
+        # 预算耗尽 → 翻页被 deadline 打断，返回的是半段。无论取没取到 bar 都要带出这个
+        # 标志：取空 + 预算耗尽同样可疑（见 _chunk_problem）。
+        truncated = time.monotonic() >= deadline - _TRUNCATION_SLACK_SEC
         if df is None or df.empty:
-            return None, took
+            return None, took, truncated
 
         frame = df.copy()
         if "trade_time" not in frame.columns and "datetime" in frame.columns:
             frame = frame.rename(columns={"datetime": "trade_time"})
         if "trade_time" not in frame.columns:
-            return None, took
+            return None, took, truncated
         stamps = pd.to_datetime(frame["trade_time"])
         # 只保留区间内的 bar：备源（东财 trends2）会返回跨区间的窗口，不裁剪会把
         # 区间外的 bar 也写进分区。
@@ -768,13 +973,9 @@ class MinuteBackfiller:
         frame = frame.loc[mask].copy()
         frame["trade_time"] = stamps.loc[mask]
         if frame.empty:
-            return None, took
+            return None, took, truncated
         frame["stock_code"] = symbol
-        if time.monotonic() >= deadline - _TRUNCATION_SLACK_SEC:
-            # 预算耗尽 → 翻页被 deadline 打断，返回的是半段。标成截断让覆盖度校验
-            # 把它记成可重试失败（见模块 docstring「取到一部分为什么不能记为完成」）。
-            frame.attrs["truncated"] = True
-        return frame, took
+        return frame, took, truncated
 
     def _estimate_start_offset(self, period: str, end: date) -> int:
         """估算「跳过最新多少根 bar 才能到区间末尾」（源按最新往旧翻页）。"""
@@ -787,15 +988,19 @@ class MinuteBackfiller:
     def _coverage_short(
         self, frame: pd.DataFrame, start: date, list_date: Optional[date]
     ) -> Optional[str]:
-        """取回数据是否覆盖到区间起点？覆盖不足时返回原因（供记可重试失败）。
+        """整体覆盖度：取回的数据够得着区间起点吗？不够则返回原因（供记可重试失败）。
 
-        覆盖不足有两种成因，后果不同：
-        - **截断**（预算耗尽 / 备源窗口太短）：必须重试，否则这段历史永久缺失；
+        只管**区间起点**这一件事：区间起点够不着只有两种成因，后果不同 ——
+
+        - **源端深度不足 / 预算截断**：必须重试（截断由 ``_chunk_problem`` 逐块判定，
+          这里兜住「整段都没够到起点」的情况）；
         - **标的本身没有更早的数据**（新上市）：重试无意义，由 ``list_date`` 豁免。
+
         查不到 ``list_date`` 时按可疑处理（重试），与 P0「可疑就重试」同向。
+
+        **中间块的洞不在这里判** —— 合并后的最早日期由第 1 块决定，中间块开头缺一截
+        既不改变它也不触发本判据。那类洞由 ``_chunk_problem`` 逐块负责。
         """
-        if frame.attrs.get("truncated"):
-            return "取数预算耗尽被截断（可重试）"
         if frame.empty or "trade_time" not in frame.columns:
             return None
         earliest = pd.to_datetime(frame["trade_time"]).dt.date.min()
@@ -848,11 +1053,11 @@ class MinuteBackfiller:
         # 但最近几天还没上架」这种形态，只看起点则会把「源深度不足」当成源故障。
         # 取样点含起点与终点 —— 起点是覆盖度校验的基准，必须探到。
         for probe_day in _probe_days(start, end):
-            frame, _ = self._fetch_chunk(symbol, period, probe_day, probe_day)
+            frame, _, _ = self._fetch_chunk(symbol, period, probe_day, probe_day)
             if frame is not None and not frame.empty:
                 return PROBE_OK
         # 区间内取不到 → 看更早（区间之前）有没有：有 = 源能给历史但给不到本区间
-        earlier, _ = self._fetch_chunk(
+        earlier, _, _ = self._fetch_chunk(
             symbol, period, start - timedelta(days=60), start - timedelta(days=1)
         )
         if earlier is not None and not earlier.empty:
@@ -889,13 +1094,20 @@ class MinuteBackfiller:
         回答的是「源是不是只坏了一部分」这个市场级问题，分母必须是全市场。调用方显式
         给了标的清单（自选池 / 单标的验证）时，占比没有市场含义 —— 1 只自选股取空会
         算出 100%，把「该股确实无数据」误判成源故障、让它永远无法记终态。
+
+        分母用 ``result.requested``（**本轮实际尝试数**）而不是 ``universe_size``：
+        续跑时后者是扣掉 ``skipped`` 之前的全量，会把分母放大、占比系统性低估，让
+        「本轮待采的标的全部取空」这种最该兜底的情形反而漏过（VEW-65 评审②）。
+        方向上也偏安全：续跑批次小、误判成源故障的代价只是一次重试（``failed`` 会重试），
+        而漏判的代价是这批标的历史**永久缺失**（``empty`` 是终态）。
         """
         if not candidates:
             return
         evidence = PROBE_OK if result.fetched > 0 else probe
         limit = float(settings.MINUTE_COLLECT_EMPTY_RATIO_LIMIT)
         market_scale = result.universe_source != "explicit"
-        ratio = len(candidates) / max(1, result.universe_size)
+        attempted = max(1, result.requested)
+        ratio = len(candidates) / attempted
 
         if evidence == PROBE_OK and (not market_scale or ratio <= limit):
             result.empty += len(candidates)
@@ -907,7 +1119,7 @@ class MinuteBackfiller:
             # 源可用但空结果占了大半 —— 源只坏了一部分，探针恰好落在好的那部分
             reason = (
                 f"空结果占比 {ratio:.0%} 超过阈值 {limit:.0%}"
-                f"（{len(candidates)}/{result.universe_size}）"
+                f"（本轮尝试 {len(candidates)}/{attempted}，全市场 {result.universe_size}）"
             )
         elif probe == PROBE_DOWN:
             reason = "源探针在区间内未取到样本 bar"
@@ -944,24 +1156,40 @@ class MinuteBackfiller:
         )
         for symbol in symbols:
             symbol = str(symbol).zfill(6)
-            primary, _ = self._fetch_chunk(symbol, str(period), start, end)
+            primary, _, _ = self._fetch_chunk(symbol, str(period), start, end)
             secondary = self._fetch_secondary(symbol, str(period), start, end)
             if secondary is None:
+                # 第二源模块缺失（VEW-63 未合入）→ 整份报告标不可用
                 report.secondary_unavailable = True
                 return report
             if primary is None or primary.empty:
                 continue
             report.compared_symbols += 1
+            if secondary.empty:
+                # 源在、但这个窗口没数据（如窗口早于其历史深度）：计入 secondary_empty，
+                # 不当作「比对通过」。空表走不进 compare_frames，也不会污染 mismatch 计数。
+                report.secondary_empty += 1
+                continue
             compare_frames(primary, secondary, report)
         return report
 
     def _fetch_secondary(
         self, symbol: str, period: str, start: date, end: date
     ) -> Optional[pd.DataFrame]:
-        """取第二源（腾讯 ``ifzq``）同期数据，成交量统一为「股」。
+        """取第二源（腾讯 ``ifzq``）**整段区间**的数据，成交量统一为「股」。
 
-        VEW-63 未合入时返回 ``None``（调用方据此标 ``secondary_unavailable``）——
-        不抛异常：交叉校验是**验证**步骤，缺源时应如实报告而不是让回填流程崩掉。
+        返回 ``None`` 表示第二源模块不可用（VEW-63 未合入）；返回空表表示源在、但这个
+        窗口没数据。两者语义不同，调用方据此分别记 ``secondary_unavailable`` /
+        ``secondary_empty`` —— 不抛异常：交叉校验是**验证**步骤，缺源时应如实报告而不是
+        让回填流程崩掉。
+
+        **按区间翻页**：单页上限 800 根（``_SECONDARY_PAGE_BARS``），只取最新一页的话
+        1min 只覆盖约 3.3 个交易日、5min 约 16 个交易日，拿它去「校验」4 个月的窗口等于
+        只比了尾巴（VEW-65 评审④）。翻页用 ``start_time`` 游标（VEW-63 的契约：传上一页
+        最旧的时间戳取更旧的一页）。
+
+        对未知契约的防御：游标**没有推进**（源忽略了 ``start_time``）或页数/时间超限时
+        立即停手 —— 宁可少比几页让 ``coverage`` 把它判成不通过，也不能原地打转或死循环。
         """
         try:
             from app.providers.astock_data import (
@@ -977,12 +1205,49 @@ class MinuteBackfiller:
         )
         if api_period is None:
             return None
-        bars = tencent_minute_bars(
-            symbol, api_period, start_time="", count=800, _record=False
-        )
-        frame = tencent_minute_frame(bars)
-        if frame is None or frame.empty:
+
+        deadline = time.monotonic() + float(settings.MINUTE_BACKFILL_FETCH_BUDGET)
+        pages: list[pd.DataFrame] = []
+        cursor = ""
+        seen_cursors: set[str] = set()
+        for _ in range(_SECONDARY_MAX_PAGES):
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    "交叉校验第二源翻页超预算，按已取页比对: symbol=%s period=%s",
+                    symbol,
+                    period,
+                )
+                break
+            bars = tencent_minute_bars(
+                symbol,
+                api_period,
+                start_time=cursor,
+                count=_SECONDARY_PAGE_BARS,
+                _record=False,
+            )
+            page = tencent_minute_frame(bars)
+            if page is None or page.empty:
+                break
+            page = page.drop_duplicates(subset=["datetime"], keep="last")
+            oldest = pd.to_datetime(page["datetime"]).min()
+            pages.append(page)
+            # 已经够到区间起点 → 不用再往旧翻
+            if oldest.date() <= start:
+                break
+            next_cursor = oldest.strftime("%Y-%m-%d %H:%M:%S")
+            if next_cursor in seen_cursors:
+                # 游标没推进：源忽略了 start_time。停手，别原地打转。
+                logger.warning(
+                    "交叉校验第二源游标未推进（start_time 未生效？），停止翻页: %s",
+                    symbol,
+                )
+                break
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+
+        if not pages:
             return pd.DataFrame()
+        frame = pd.concat(pages, ignore_index=True)
         frame["stock_code"] = symbol
         stamps = pd.to_datetime(frame["datetime"])
         mask = (stamps.dt.date >= start) & (stamps.dt.date <= end)
