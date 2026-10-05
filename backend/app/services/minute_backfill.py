@@ -57,6 +57,23 @@ vs 回测事实源里永久缺一段历史。
 
 新上市标的的合法短覆盖由 ``security_universe.list_date`` 豁免（查不到时按可疑处理）。
 
+收敛：为什么需要重试上限
+------------------------
+「可疑就重试」必须配一个上限，否则**永久性**的覆盖不足会让标的永远停在 ``failed``：
+典型是**块首停牌** —— 标的在块起点后停牌 19 个交易日才复牌，本块照样有 bar（复牌后的），
+所以不是「整块空」，而 ``list_date`` 豁免不了老标的。这种块每轮都判不过，且**重试多少次
+都不会变**，结果是每轮重取整段区间、``skipped`` 永远填不满，运维上还与真实源故障长得
+一模一样。
+
+判据本身分不开「可重试的截断」与「永久性的停牌缺口」，只能靠次数区分：**按标的**计数，
+前 ``MINUTE_BACKFILL_MAX_ATTEMPTS - 1`` 轮记 ``failed``（可重试），第 N 轮转入
+``gapped`` 终态（有缺口完成）并保留最后一次的原因。缺口数据仍已落盘，只是不再重取。
+
+计数**只对「该标的自身覆盖不全」生效**。源级故障（整区间取空、取数抛异常）不计次 ——
+那是源的问题，源恢复后必须还能重取，不该被标的级的重试上限吃掉，否则连续几轮源故障
+就会把全市场标的一次性推进终态、永久丢历史（这正是本模块要防的事）。要重试已记
+``gapped`` 的标的，显式传 ``run(retry_gaps=True)``；否则只能删日志文件。
+
 复权口径（与日线链路的分工）
 ----------------------------
 **分钟库全程存不复权（raw）bar**：mootdx ``get_security_bars`` 返回非复权原始行情
@@ -356,6 +373,8 @@ class BackfillResult:
     fetched: int = 0
     empty: int = 0
     failed: int = 0
+    # 达到重试上限、带缺口转入终态的标的数（与 failed 互斥：failed 会重试，gapped 不会）
+    gapped: int = 0
     skipped: int = 0
     bars_written: int = 0
     partitions_written: int = 0
@@ -376,6 +395,7 @@ class BackfillResult:
             "fetched": self.fetched,
             "empty": self.empty,
             "failed": self.failed,
+            "gapped": self.gapped,
             "skipped": self.skipped,
             "bars_written": self.bars_written,
             "partitions_written": self.partitions_written,
@@ -424,9 +444,16 @@ class CrossCheckReport:
         1. 第二源可用（``secondary_unavailable`` 为假）；
         2. **确实比对上了 bar**（``compared_bars > 0``）—— 否则两边交集为空时
            ``ohlc_mismatch``/``volume_mismatch`` 天然是 0，会假通过；
-        3. 覆盖率不低于 ``_CROSS_CHECK_MIN_COVERAGE`` —— 第二源只覆盖窗口的一小截时
-           （其单页上限 800 根，1min 约 3.3 个交易日），「比过 800 根一致」不能代表
-           整段区间一致，必须显式判不通过而不是给个绿灯。
+        3. 覆盖率不低于 ``_CROSS_CHECK_MIN_COVERAGE`` —— 第二源只覆盖窗口的一小截时，
+           「比过的那截一致」不能代表整段区间一致，必须显式判不通过而不是给个绿灯。
+
+        覆盖率这一条的**实际约束是第二源的深度上限，不是单页条数**：早期版本的
+        理由写的是「单页 800 根、1min 约 3.3 个交易日」，那是分页之前的事；现在
+        ``_fetch_secondary`` 按 ``start_time`` 游标翻页取到窗口起点，条数不再是瓶颈。
+        真正的瓶颈是 VEW-61 实测的源端历史深度（``SOURCE_HISTORY_DAYS``）：腾讯 1min
+        只回溯约 18 个交易日，所以 **1min 的校验窗口必须 ≤ 约 18 个交易日**才可能
+        ``ok=True``；5/15min 约 6 个月、30/60min 约 12 个月，长窗口没有这个问题。
+        窗口超出源端深度时正确结果是「不通过」，不是「通过」。
         """
         return (
             not self.secondary_unavailable
@@ -475,6 +502,12 @@ class _BackfillJournal:
         self.completed: set[str] = set()
         self.empty: set[str] = set()
         self.failed: set[str] = set()
+        # 每标的的**覆盖不足**计数，以及达到上限后的终态桶（原因一并保留）。
+        # 存在的理由见模块 docstring「收敛：为什么需要重试上限」：块首停牌这类永久性
+        # 缺口重试多少次都不会变，没有上限就会永远停在 failed、每轮重取整段区间。
+        # 计数**只**由覆盖不足累积；源级故障不碰它（源恢复后必须还能重取）。
+        self.attempts: dict[str, int] = {}
+        self.gapped: dict[str, str] = {}
         self._lock = threading.Lock()
         self._load()
 
@@ -492,11 +525,19 @@ class _BackfillJournal:
             ("failed", self.failed),
         ):
             target.update(str(c).zfill(6) for c in payload.get(key, []))
+        for key, raw in (payload.get("attempts") or {}).items():
+            try:
+                self.attempts[str(key).zfill(6)] = int(raw)
+            except (TypeError, ValueError):
+                continue
+        for key, reason in (payload.get("gapped") or {}).items():
+            self.gapped[str(key).zfill(6)] = str(reason)
 
     def mark(self, symbol: str, bucket: str) -> None:
         with self._lock:
             for target in (self.completed, self.empty, self.failed):
                 target.discard(symbol)
+            self.gapped.pop(symbol, None)
             {
                 "completed": self.completed,
                 "empty": self.empty,
@@ -504,6 +545,39 @@ class _BackfillJournal:
             }[
                 bucket
             ].add(symbol)
+            if bucket in ("completed", "empty"):
+                # 取全了：清掉覆盖不足计数，让计数保持「连续」语义 —— 中间成功过一次
+                # 就不该算进上限。
+                self.attempts.pop(symbol, None)
+
+    def record_gap_failure(self, symbol: str, reason: str, limit: int) -> bool:
+        """记一次**覆盖不足**失败，返回 True 表示本轮到上限、转入 ``gapped`` 终态。
+
+        只有「该标的自身取数覆盖不全」走这里（块被截断 / 块首缺失 / 区间起点够不着）。
+        源级故障（整区间取空、取数抛异常）**不走**这里 —— 那是源的问题，源恢复后必须
+        还能重取；若也计次，连续几轮源故障会把全市场标的一次性推进终态、永久丢历史。
+        """
+        with self._lock:
+            count = self.attempts.get(symbol, 0) + 1
+            self.attempts[symbol] = count
+            if count < max(1, int(limit)):
+                return False
+            for target in (self.completed, self.empty, self.failed):
+                target.discard(symbol)
+            self.gapped[symbol] = reason
+            # 计数只服务「还在重试中」的标的：转终态后原因已记在 gapped 里，计数是死数据。
+            self.attempts.pop(symbol, None)
+            return True
+
+    def clear_gaps(self, symbols: Iterable[str]) -> int:
+        """把指定标的从 ``gapped`` 终态放回待采（``retry_gaps=True`` 时用）。"""
+        with self._lock:
+            cleared = 0
+            for symbol in symbols:
+                if self.gapped.pop(symbol, None) is not None:
+                    self.attempts.pop(symbol, None)
+                    cleared += 1
+            return cleared
 
     def flush(self) -> None:
         """原子落盘；失败不致命 —— 库里的数据才是事实源。"""
@@ -517,6 +591,8 @@ class _BackfillJournal:
                 "completed": sorted(self.completed),
                 "empty": sorted(self.empty),
                 "failed": sorted(self.failed),
+                "attempts": {k: v for k, v in sorted(self.attempts.items()) if v},
+                "gapped": {k: self.gapped[k] for k in sorted(self.gapped)},
                 "updated_at": datetime.utcnow().isoformat(timespec="seconds"),
             }
         try:
@@ -530,8 +606,12 @@ class _BackfillJournal:
             logger.warning("回填断点日志写入失败(不影响已落盘数据): %s", e)
 
     def done(self) -> set[str]:
-        """已确认无需再取的标的。``failed`` **不在**其中（可重试）。"""
-        return self.completed | self.empty
+        """已确认无需再取的标的。
+
+        ``failed`` **不在**其中（可重试）；``gapped``（有缺口完成）在 —— 它正是为了让
+        永久性缺口不再被无限重试才存在的。要重取走 ``run(retry_gaps=True)``。
+        """
+        return self.completed | self.empty | set(self.gapped)
 
 
 class MinuteBackfiller:
@@ -651,6 +731,7 @@ class MinuteBackfiller:
         source: str = "mootdx",
         resume: bool = True,
         force: bool = False,
+        retry_gaps: bool = False,
     ) -> BackfillResult:
         """执行回填。
 
@@ -665,6 +746,10 @@ class MinuteBackfiller:
         写进 notes，``run()`` 不看就等于没闸门（VEW-65 评审⑤）。issue 的立项目标正是
         「写满的是系统盘，postgres + backend + frontend 一起挂」，所以这里必须硬拦。
         确实要在余量不足时执行（如已确认要分批小范围跑）走 ``force=True`` 显式放行。
+
+        收敛：覆盖不足按标的计次，``MINUTE_BACKFILL_MAX_ATTEMPTS`` 轮后转 ``gapped``
+        终态（有缺口完成，不再重取）。想重取这些缺口传 ``retry_gaps=True``。语义与
+        为什么源级故障不计次，见模块 docstring。
         """
         if not settings.MINUTE_BACKFILL_ENABLED:
             raise BackfillRefused(
@@ -688,6 +773,7 @@ class MinuteBackfiller:
         workers = max(1, int(workers or settings.MINUTE_BACKFILL_WORKERS))
         chunk_days = max(1, int(chunk_days or settings.MINUTE_BACKFILL_CHUNK_DAYS))
         flush_symbols = max(1, int(settings.MINUTE_BACKFILL_FLUSH_SYMBOLS))
+        max_attempts = max(1, int(settings.MINUTE_BACKFILL_MAX_ATTEMPTS))
 
         started = time.monotonic()
         result = BackfillResult(
@@ -705,6 +791,12 @@ class MinuteBackfiller:
         journal = _BackfillJournal(
             self.library.root, period, start, end, enabled=resume
         )
+        if retry_gaps:
+            # 显式要求重取「有缺口完成」的标的：清掉终态与计数让它们回到待采。
+            # 没有这条路径，gapped 就只能靠删日志文件才能重试 —— 那是个运维陷阱。
+            cleared = journal.clear_gaps(universe)
+            if cleared:
+                logger.info("分钟回填: %d 个有缺口标的按 retry_gaps 放回待采", cleared)
         pending = list(universe)
         if resume:
             already = journal.done()
@@ -798,21 +890,37 @@ class MinuteBackfiller:
                 # 覆盖问题**逐块**收集（截断 / 块首缺失），再叠加整体覆盖度校验
                 # （区间起点够不着 = 源端深度不足）。两者都不写 completed：
                 # 记完成会让这段历史永久缺失（见模块 docstring）。
-                short = problems or None
+                # 归一成 list 再 join：``problems`` 是 list[str]，``_coverage_short``
+                # 返回 str，直接 join 字符串会把原因按**单字**拆开（评审前就在的错误
+                # 消息格式问题，正好落在这条 errors 上，而队长要靠它判断缺口成因）。
+                short: list[str] = list(problems)
                 if frames:
                     merged = pd.concat(frames, ignore_index=True)
-                    short = short or self._coverage_short(
+                    coverage_reason = self._coverage_short(
                         merged, start, listing_dates.get(symbol)
                     )
+                    if coverage_reason:
+                        short.append(coverage_reason)
                 else:
                     merged = None
 
                 if short:
-                    # 数据仍然落盘（幂等合并，重跑会补齐），但不记完成，让重跑重取。
-                    result.failed += 1
-                    journal.mark(symbol, "failed")
-                    if len(result.errors) < 10:
-                        result.errors.append(f"{symbol}: {'; '.join(short)}")
+                    # 数据仍然落盘（幂等合并，重跑会补齐）。判据分不开「可重试的截断」
+                    # 与「永久性的停牌缺口」，只能按标的计次收敛：前 N-1 轮记 failed
+                    # （可重试），第 N 轮转 gapped 终态并保留原因。不设上限的话停牌标的
+                    # 永远进不了终态，每轮重取整段区间、skipped 永远填不满。
+                    reason = "; ".join(short)
+                    if journal.record_gap_failure(symbol, reason, max_attempts):
+                        result.gapped += 1
+                        if len(result.errors) < 10:
+                            result.errors.append(
+                                f"{symbol}: 连续 {max_attempts} 轮覆盖不足，"
+                                f"记有缺口完成、不再重试（retry_gaps=True 可重取）: {reason}"
+                            )
+                    else:
+                        result.failed += 1
+                        if len(result.errors) < 10:
+                            result.errors.append(f"{symbol}: {reason}")
                     if merged is None:
                         continue
                 else:
@@ -834,7 +942,7 @@ class MinuteBackfiller:
 
         logger.info(
             "分钟回填完成: period=%s 区间=%s..%s 探针=%s 成功=%d 空=%d 失败=%d "
-            "跳过=%d 写入=%d 分区=%d 耗时=%.1fs 单标的均值=%.3fs",
+            "有缺口=%d 跳过=%d 写入=%d 分区=%d 耗时=%.1fs 单标的均值=%.3fs",
             period,
             start,
             end,
@@ -842,6 +950,7 @@ class MinuteBackfiller:
             result.fetched,
             result.empty,
             result.failed,
+            result.gapped,
             result.skipped,
             result.bars_written,
             result.partitions_written,

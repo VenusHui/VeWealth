@@ -636,6 +636,187 @@ def test_chunk_with_no_bars_at_all_is_not_flagged_as_hole():
     assert _chunk_problem(empty, date(2026, 7, 1), date(2026, 7, 30), False) is None
 
 
+# ---------------------------------------------------------------------------
+# 收敛：覆盖不足按标的计次，到上限转 gapped（评审二轮）
+#
+# 块首没有 bar 有两种成因，判据分不开：可重试的（截断 / 源深度抖动）与永久的
+# （块首那段停牌，复牌后才有 bar）。只能靠次数区分 —— 没有上限时停牌标的永远停在
+# failed，每轮重取整段区间、skipped 永远填不满，运维上还与真实源故障长得一样。
+# ---------------------------------------------------------------------------
+
+
+def _suspended_provider(resume_day: date) -> ScriptedProvider:
+    """标的停牌到 ``resume_day``，之后每个工作日都有 bar。"""
+
+    def script(symbol, lo, hi):
+        if hi < resume_day:
+            return []
+        days, d = [], max(lo, resume_day)
+        while d <= hi:
+            if d.weekday() < 5:
+                days.append(d)
+            d += timedelta(days=1)
+        return days
+
+    return ScriptedProvider(script)
+
+
+def test_long_suspension_converges_instead_of_failing_forever(
+    tmp_path, enabled, monkeypatch
+):
+    """评审二轮回归：块首因**停牌**缺失必须收敛，不能永远 failed。
+
+    区间 06-01..08-29 分 3 块，标的停牌到 07-20 复牌 → 中间块 [07-01, 07-30] 块首缺
+    19 天 > 12 天容差，且该块**不是空的**（有复牌后的 bar），``list_date`` 也豁免不了
+    老标的。修复前连跑三轮 ``requested=1 skipped=0 failed=1`` 完全一致 —— 永远不收敛。
+    """
+    monkeypatch.setattr(settings, "MINUTE_BACKFILL_MAX_ATTEMPTS", 1)
+    resume = MULTI_CHUNKS[1][0] + timedelta(days=19)
+    assert (resume - MULTI_CHUNKS[1][0]).days > 12, "前提：块首缺失超出容差"
+
+    provider = _suspended_provider(resume)
+    first = _backfiller(tmp_path, provider).run(
+        "1", MULTI_START, MULTI_END, symbols=["000001"], confirm=True
+    )
+    assert (first.fetched, first.gapped, first.failed) == (0, 1, 0)
+    assert any("不再重试" in e for e in first.errors)
+    # 缺口数据照样落盘（只是不再重取）
+    assert MinuteLibrary(tmp_path).available_dates("1")
+
+    second = _backfiller(tmp_path, provider).run(
+        "1", MULTI_START, MULTI_END, symbols=["000001"], confirm=True
+    )
+    assert second.skipped == 1, "第二轮没收敛 —— 停牌标的会被永远重取整段区间"
+    assert second.requested == 0
+
+
+def test_suspension_needs_max_attempts_before_terminal(tmp_path, enabled):
+    """上限内的几轮仍是可重试 failed（给真故障留重试），到上限才转 gapped。
+
+    这里用 ``settings`` 的**默认值**（3），确保默认配置本身就收敛。
+    """
+    resume = MULTI_CHUNKS[1][0] + timedelta(days=19)
+    provider = _suspended_provider(resume)
+
+    def run():
+        return _backfiller(tmp_path, provider).run(
+            "1", MULTI_START, MULTI_END, symbols=["000001"], confirm=True
+        )
+
+    for round_no in (1, 2):
+        r = run()
+        assert (r.failed, r.gapped, r.skipped) == (1, 0, 0), f"第 {round_no} 轮"
+    third = run()
+    assert (third.failed, third.gapped) == (0, 1), "到上限应转终态，而不是继续 failed"
+    assert run().skipped == 1, "转终态后重跑应跳过"
+
+
+def test_source_failure_does_not_consume_gap_attempts(tmp_path, enabled, monkeypatch):
+    """源级故障**不**计次 —— 否则连续几轮源故障会把全市场推进终态、永久丢历史。
+
+    上限设成 1（最激进）：若源故障也计次，第一轮就会转 ``gapped``、第二轮 ``skipped=1``。
+    正确行为是每轮都记可重试 ``failed``，源恢复后还能重取。
+    """
+    monkeypatch.setattr(settings, "MINUTE_BACKFILL_MAX_ATTEMPTS", 1)
+    provider = RangeProvider([])  # 全区间取空（含探针标的 000001）→ 源故障
+    for round_no in range(1, 4):
+        r = _backfiller(tmp_path, provider).run(
+            "1", START, END, symbols=["000002"], confirm=True
+        )
+        assert r.gapped == 0, f"第 {round_no} 轮把源故障记成了终态"
+        assert r.failed == 1
+        assert r.skipped == 0, f"第 {round_no} 轮源故障被跳过 —— 源恢复后取不回来了"
+
+
+def test_retry_gaps_puts_terminal_symbols_back(tmp_path, enabled, monkeypatch):
+    """``retry_gaps=True`` 把 gapped 放回待采 —— 否则只能删日志文件才能重试。"""
+    monkeypatch.setattr(settings, "MINUTE_BACKFILL_MAX_ATTEMPTS", 1)
+    resume = MULTI_CHUNKS[1][0] + timedelta(days=19)
+    provider = _suspended_provider(resume)
+
+    def run(**kwargs):
+        return _backfiller(tmp_path, provider).run(
+            "1", MULTI_START, MULTI_END, symbols=["000001"], confirm=True, **kwargs
+        )
+
+    assert run().gapped == 1
+    assert run().skipped == 1  # 默认是终态
+    again = run(retry_gaps=True)
+    assert again.requested == 1, "retry_gaps 没把标的放回待采"
+    assert again.gapped == 1  # 重取仍缺 → 再次转终态
+
+
+def test_gap_counter_is_per_symbol(tmp_path, enabled, monkeypatch):
+    """计数按标的独立：健康标的照常完成，不被别的标的的缺口拖住。"""
+    monkeypatch.setattr(settings, "MINUTE_BACKFILL_MAX_ATTEMPTS", 1)
+    resume = MULTI_CHUNKS[1][0] + timedelta(days=19)
+    suspended = _suspended_provider(resume)
+    healthy = ScriptedProvider(lambda symbol, lo, hi: [lo, hi] if lo <= hi else [])
+
+    class Both:
+        def fetch_minute_data(self, stock_code, *a, **kw):
+            src = suspended if stock_code == "000001" else healthy
+            return src.fetch_minute_data(stock_code, *a, **kw)
+
+    r = _backfiller(tmp_path, Both()).run(
+        "1", MULTI_START, MULTI_END, symbols=["000001", "000002"], confirm=True
+    )
+    assert r.fetched == 1, "健康标的应记完成"
+    assert r.gapped == 1 and r.failed == 0
+
+
+def test_journal_persists_attempts_and_gaps(tmp_path):
+    """计数与终态要跨轮持久化，否则每轮都从零开始、上限形同虚设。"""
+    from app.services.minute_backfill import _BackfillJournal
+
+    first = _BackfillJournal(tmp_path, "1", START, END)
+    assert first.record_gap_failure("000001", "原因A", 3) is False
+    assert first.record_gap_failure("000002", "原因B", 1) is True
+    first.flush()
+
+    reloaded = _BackfillJournal(tmp_path, "1", START, END)
+    assert reloaded.attempts == {"000001": 1}
+    assert reloaded.gapped == {"000002": "原因B"}
+    assert reloaded.done() == {"000002"}
+    # 计数接着上一轮累：再失败两次即到上限
+    assert reloaded.record_gap_failure("000001", "原因C", 3) is False
+    assert reloaded.record_gap_failure("000001", "原因C", 3) is True
+
+
+def test_journal_counter_semantics(tmp_path):
+    """计数是「连续」语义；``mark`` 的源级桶不碰计数。"""
+    from app.services.minute_backfill import _BackfillJournal
+
+    journal = _BackfillJournal(tmp_path, "1", START, END)
+    journal.mark("000002", "failed")  # 源级故障
+    assert "000002" not in journal.attempts
+    assert "000002" not in journal.done()
+    # 成功一次即清零：中间成功过就不该算进上限
+    journal.record_gap_failure("000001", "原因", 3)
+    journal.mark("000001", "completed")
+    assert "000001" not in journal.attempts
+    assert "000001" not in journal.gapped and "000001" in journal.done()
+    # 上限 1：一次即终态
+    assert journal.record_gap_failure("000003", "原因", 1) is True
+
+
+def test_coverage_reason_is_not_character_split(tmp_path, enabled, monkeypatch):
+    """错误消息里的原因不能被按**单字**拆开（``_coverage_short`` 返回 str、
+    ``problems`` 是 list，直接 ``'; '.join`` 会把字符串拆成字符）。
+
+    这条 errors 是队长判断缺口成因的唯一入口，拆成单字等于没有信息。
+    """
+    monkeypatch.setattr(settings, "MINUTE_BACKFILL_MAX_ATTEMPTS", 1)
+    # 07-13 复牌：中间块块首缺 12 天，恰好落在逐块容差内（不触发逐块判据），
+    # 只有「区间起点够不着」的整体判据触发 —— 正好是返回 str 的那条路径。
+    provider = _suspended_provider(date(2026, 7, 13))
+    r = _backfiller(tmp_path, provider).run(
+        "1", MULTI_START, MULTI_END, symbols=["000001"], confirm=True
+    )
+    assert r.failed + r.gapped == 1
+    assert "疑似截断" in r.errors[0], f"原因被拆成了单字: {r.errors[0]!r}"
+
+
 def test_empty_ratio_denominator_uses_attempted_on_resume(
     tmp_path, enabled, monkeypatch
 ):

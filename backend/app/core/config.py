@@ -192,8 +192,9 @@ class Settings(BaseSettings):
     #
     # run() 自带盘余量硬校验（估算含一年增量，放不下即抛 BackfillRefused，除非显式
     # force=True），所以「忘了看盘余量」不会静默写满 —— 但**盘余量本身要先实测**：
-    # 生产 / 的可用空间被 docker 构建活动主导（同日两次读数差约 10 GB），单次 df
-    # 不能当闸门依据，量法与成因见 docs/plans/2026-10-05-minute-backfill-p1-capacity.md。
+    # 生产 / 的可用空间同日两次读数差约 10 GB（成因推断为 docker 构建活动，未实测峰值），
+    # 单次 df 不能当闸门依据，量法、稳态占用复核与「策略性预留」的口径见
+    # docs/plans/2026-10-05-minute-backfill-p1-capacity.md。
     MINUTE_BACKFILL_ENABLED: bool = False
     # 单标的单次取数墙钟预算（秒）。回填走「区间取数」，一次调用内部会翻多页，
     # 比每日采集的 20s 宽松；仍保留上界，避免坏镜像把单个标的拖成分钟级。
@@ -210,6 +211,17 @@ class Settings(BaseSettings):
     # （1min 4 个月 ≈ 2 万行/标的），因此这里比 MINUTE_COLLECT_FLUSH_EVERY 小得多：
     # 100 标的 × 2 万行 ≈ 200 万行 ≈ 160 MB，是可控的内存峰值。
     MINUTE_BACKFILL_FLUSH_SYMBOLS: int = 100
+    # 同一标的**连续**多少轮覆盖不足后转入 ``gapped``（有缺口完成）终态、不再重取。
+    # 为什么必须有上限：块首缺失有两种成因，判据分不开 ——
+    #   · 可重试的：取数预算截断、源端深度抖动；
+    #   · 永久的：块首那段**停牌**，复牌后才有 bar（该块不是空的，list_date 也豁免不了）。
+    # 没有上限时停牌标的永远停在 failed，每轮重取整段区间（1min 4 个月 = 23 块），
+    # skipped 永远填不满，回填跑不完第二轮；运维上还与真实源故障长得一样。
+    # 计数**只**累积「该标的自身覆盖不全」，源级故障（整区间取空 / 取数抛异常）不计次 ——
+    # 源恢复后必须还能重取，否则连续几轮源故障会把全市场一次性推进终态、永久丢历史。
+    # 3 轮是「给真故障留够重试、又不让永久缺口拖住长跑」的折中；调大只是多跑几轮取数。
+    # 要重取已记 gapped 的标的：run(..., retry_gaps=True)。
+    MINUTE_BACKFILL_MAX_ATTEMPTS: int = 3
 
     # 预警配置
     DEFAULT_ALERT_THRESHOLD: float = 0.7
