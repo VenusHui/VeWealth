@@ -268,14 +268,21 @@ jobs:
             # ⚠️ 真正的坑是 `docker system prune --volumes`（会删掉 postgresql_postgres_data 数据卷）；
             #    `docker builder prune` 本身没有 --volumes 这个 flag。
             echo "🧹 清理构建缓存（封顶 1GB）..."
+            # ⚠️ 两个分支各写各的字面量，不要用变量拼参数（VEW-68）：
+            #   远端 sshd 用的是 ubuntu 的登录 shell（zsh），zsh 默认**不**对未加引号的
+            #   参数展开做词分割，`CACHE_CAP="--keep-storage 1GB"; docker builder prune -f $CACHE_CAP`
+            #   会把整个字符串当成**一个**参数，报 `unknown flag: --keep-storage 1GB`，
+            #   封顶静默失效（2026-10-06 生产实测：Build Cache 28 项 / 1.229GB 全部可回收）。
+            #   字面量写法不依赖任何 shell 的词分割语义。
+            prune_ok=0
             if docker builder prune --help 2>&1 | grep -q -- '--max-used-space'; then
-              CACHE_CAP="--max-used-space 1GB"
               echo "   （使用 --max-used-space 1GB，buildkit >= 0.17 语义）"
+              docker builder prune -f --max-used-space 1GB || prune_ok=1
             else
-              CACHE_CAP="--keep-storage 1GB"
               echo "   （使用 --keep-storage 1GB，buildkit < 0.17 语义）"
+              docker builder prune -f --keep-storage 1GB || prune_ok=1
             fi
-            if ! docker builder prune -f $CACHE_CAP; then
+            if [ "$prune_ok" -ne 0 ]; then
               echo "⚠️⚠️⚠️ 构建缓存清理失败：磁盘可能在持续增长，请人工检查（VEW-68）⚠️⚠️⚠️"
             fi
 
