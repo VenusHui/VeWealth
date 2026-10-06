@@ -2,8 +2,8 @@
 数据采集服务（在线分时表）
 
 采集**自选股**分钟数据写入 PG ``stock_minute_data``（在线查询路径：分时图 / 告警 /
-选股信号）。全市场跨年归档走 ``minute_collector.MinuteCollector`` + Parquet 分钟库，
-不写本表 —— 见 VEW-64 的存储选型。
+选股信号）。本表只是近期窗口、不是归档：全市场跨年分钟归档路径已按「纯网络取数」
+方向退役（VEW-71），本模块是按需取数的唯一写入方。
 
 写入契约：按 ``(stock_code, period, trade_time)`` 批量 upsert（PG 走
 ``ON CONFLICT DO UPDATE``），替代原先「逐行 query 查重再 add」的 N+1 写法。
