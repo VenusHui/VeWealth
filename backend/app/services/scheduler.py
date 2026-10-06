@@ -40,61 +40,6 @@ def collect_daily_data(trade_date: date = None):
         db.close()
 
 
-def collect_minute_data(trade_date: date = None):
-    """
-    每日收盘后采集全市场分钟行情到本地分钟库（VEW-64 P0）。
-
-    与 ``collect_daily_data`` 的区别：后者只采自选股、写 PG 在线表；本任务采全市场、
-    写 Parquet 分钟库（回测与归档的事实源）。幂等 + 断点续采，重跑同一天不会重复
-    入库，中断后重跑只补未完成的标的。
-
-    Args:
-        trade_date: 交易日期，默认为今天
-    """
-    from app.services.minute_collector import MinuteCollector
-
-    if trade_date is None:
-        trade_date = date.today()
-
-    periods = [
-        p.strip() for p in str(settings.MINUTE_COLLECT_PERIODS).split(",") if p.strip()
-    ]
-    if not periods:
-        logger.warning("分钟采集未配置周期(MINUTE_COLLECT_PERIODS 为空)，跳过")
-        return []
-
-    logger.info(f"开始分钟行情采集: {trade_date} periods={periods}")
-
-    db = SessionLocal()
-    try:
-        collector = MinuteCollector(db)
-        results = collector.collect_periods(periods, trade_date)
-        for item in results:
-            logger.info(
-                f"分钟采集结果: period={item.period} date={item.trade_date} "
-                f"探针={item.source_probe} 成功={item.fetched} 空={item.empty} "
-                f"疑似休市={item.no_session} 失败={item.failed} 跳过={item.skipped} "
-                f"写入={item.bars_written} 分区行数={item.partition_rows} "
-                f"耗时={item.elapsed_sec:.1f}s"
-            )
-            if item.failed or item.no_session:
-                # 两者都是可重试的（failed = 取数异常或源异常时被判可疑的空结果；
-                # no_session = 疑似非交易日，源滞后时也会命中）。重跑同一天即可补齐，
-                # 所以这里只提示、不告警。
-                logger.warning(
-                    f"分钟采集 {item.trade_date} period={item.period} 有 "
-                    f"{item.failed + item.no_session} 个标的可重跑补齐"
-                    f"（failed={item.failed} no_session={item.no_session}）: "
-                    f"{item.errors[:3]}"
-                )
-        return [r.as_dict() for r in results]
-    except Exception as e:
-        logger.error(f"分钟行情采集失败: {str(e)}", exc_info=True)
-        return None
-    finally:
-        db.close()
-
-
 def check_price_alerts():
     """
     价格预警检查任务
@@ -202,20 +147,6 @@ class AppScheduler:
             replace_existing=True,
         )
         logger.info(f"已添加任务: universe 快照 ({settings.UNIVERSE_SNAPSHOT_CRON})")
-
-        # 全市场分钟行情采集任务（VEW-64 P0）。独立开关：分钟库尚未纳入备份/容量
-        # 规划的环境可以先关掉，不影响其余 4 个任务。
-        if settings.MINUTE_COLLECT_ENABLED:
-            self.scheduler.add_job(
-                collect_minute_data,
-                trigger=CronTrigger.from_crontab(settings.MINUTE_COLLECT_CRON),
-                id="minute_data_collection",
-                name="分钟行情采集",
-                replace_existing=True,
-            )
-            logger.info(f"已添加任务: 分钟行情采集 ({settings.MINUTE_COLLECT_CRON})")
-        else:
-            logger.info("分钟行情采集任务已禁用 (MINUTE_COLLECT_ENABLED=False)")
 
     def start(self):
         """启动调度器"""

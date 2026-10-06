@@ -13,12 +13,15 @@ DEFAULT_MINUTE_PERIOD = "1"
 
 
 class StockMinuteData(Base):
-    """股票分时数据表。
+    """股票分时数据表（在线查询的近期窗口）。
 
-    本表是**在线查询**用的近期窗口（分时图 / 告警 / 选股信号），数据量小、按
-    (stock_code, period, trade_time) 唯一定位。全市场跨年归档走本地分钟库
-    （`app/services/minute_store.py` 的 Parquet 分区），不写进本表 —— 详见
-    VEW-64 的存储选型说明。
+    只采自选股、行数小，按 ``(stock_code, period, trade_time)`` 唯一定位；写入方是
+    ``data_collector.DataCollector``（按需取数，不是定时全市场灌库）。
+
+    ``period`` 列保留：在线读路径用它显式限定周期（``DEFAULT_MINUTE_PERIOD``），唯一键
+    也依赖它区分周期。历史上本表还参与过「全市场跨年分钟归档」（VEW-64 的 Parquet
+    分钟库），该路径已按「纯网络取数」方向退役（VEW-71）—— 本表**不是**归档，代码里
+    也不存在「打开某个开关就往这里灌全市场分钟数据」的路径。
     """
 
     __tablename__ = "stock_minute_data"
@@ -55,7 +58,7 @@ class StockMinuteData(Base):
         # 唯一索引：同一标的、同一周期、同一时间点只允许一行 —— 批量 upsert 的冲突键。
         # period 必须进键：1min 与 5min 在 09:35 这类时点上 trade_time 相同（VEW-64）。
         Index("idx_unique_data", "stock_code", "period", "trade_time", unique=True),
-        # 按周期扫描某个交易日 / 日期区间（采集断点续采与在线回看）
+        # 按周期扫描某个交易日 / 日期区间（在线按周期回看）
         Index("idx_minute_period_date", "period", "trade_date"),
     )
 
