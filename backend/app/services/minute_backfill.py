@@ -108,9 +108,10 @@ OHLC 要求**严格相等**（VEW-61 已验 m5 完全一致），volume 在单�
 第二源按区间翻页取数（``start_time`` 游标），并在报告里给出 ``coverage``；
 ``ok`` 要求**确实比对上 bar 且覆盖率达标**，否则「两边交集为空」会被误报成通过。
 
-腾讯源由 VEW-63 接入，**尚未合入 dev/v1.3.0**，因此 ``_fetch_secondary`` 在缺少该
-模块时返回 ``None`` 并在报告里标注 ``secondary_unavailable`` —— 交叉校验的比较逻辑
-可以离线测（喂两段 frame），真实两源比对要等 VEW-63 合入后才生效。
+腾讯源由 VEW-63 接入，已随 ``dev/v1.3.0`` 合入。``_fetch_secondary`` 仍保留
+「模块不可用即降级」的守卫：import 失败时返回 ``None`` 并在报告里标注
+``secondary_unavailable`` —— 交叉校验是**验证**步骤，缺源时应如实报告，不能让回填
+流程崩掉。比较逻辑可离线测（喂两段 frame），不依赖活的外部源。
 
 安全闸门（与 P0 同口径：代码可以进，写入不能跑）
 ------------------------------------------------
@@ -1404,8 +1405,8 @@ class MinuteBackfiller:
     ) -> CrossCheckReport:
         """拉两源同期数据做交叉校验（OHLC 严格相等、volume 换算后相等）。
 
-        第二源（腾讯 ``ifzq``）由 VEW-63 接入；该模块尚未合入 dev/v1.3.0 时报告里
-        标 ``secondary_unavailable``，比较逻辑本身仍可离线单测。
+        第二源（腾讯 ``ifzq``）由 VEW-63 接入。模块不可用时报告里标
+        ``secondary_unavailable``（降级而非抛错），比较逻辑本身可离线单测。
         """
         start = _coerce_date(start_date)
         end = _coerce_date(end_date)
@@ -1417,7 +1418,7 @@ class MinuteBackfiller:
             primary, _, _ = self._fetch_chunk(symbol, str(period), start, end)
             secondary = self._fetch_secondary(symbol, str(period), start, end)
             if secondary is None:
-                # 第二源模块缺失（VEW-63 未合入）→ 整份报告标不可用
+                # 第二源模块不可用 → 整份报告标不可用
                 report.secondary_unavailable = True
                 return report
             if primary is None or primary.empty:
@@ -1436,7 +1437,7 @@ class MinuteBackfiller:
     ) -> Optional[pd.DataFrame]:
         """取第二源（腾讯 ``ifzq``）**整段区间**的数据，成交量统一为「股」。
 
-        返回 ``None`` 表示第二源模块不可用（VEW-63 未合入）；返回空表表示源在、但这个
+        返回 ``None`` 表示第二源模块不可用（import 失败）；返回空表表示源在、但这个
         窗口没数据。两者语义不同，调用方据此分别记 ``secondary_unavailable`` /
         ``secondary_empty`` —— 不抛异常：交叉校验是**验证**步骤，缺源时应如实报告而不是
         让回填流程崩掉。
@@ -1455,7 +1456,9 @@ class MinuteBackfiller:
                 tencent_minute_frame,
             )
         except ImportError:
-            logger.warning("腾讯 ifzq 分钟源不可用（VEW-63 未合入），本次跳过交叉校验")
+            logger.warning(
+                "腾讯 ifzq 分钟源不可用（app.providers.astock_data 导入失败），本次跳过交叉校验"
+            )
             return None
 
         api_period = {"1": "m1", "5": "m5", "15": "m15", "30": "m30", "60": "m60"}.get(

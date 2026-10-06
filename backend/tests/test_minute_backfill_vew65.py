@@ -476,8 +476,18 @@ def test_compare_frames_counts_one_sided_bars():
     assert report.compared_bars == 2
 
 
-def test_cross_check_reports_secondary_unavailable(tmp_path, enabled):
-    """VEW-63（腾讯 ifzq）未合入时，交叉校验如实报告缺源，而不是假装通过。"""
+def test_cross_check_reports_secondary_unavailable(tmp_path, enabled, monkeypatch):
+    """第二源模块不可用时，交叉校验如实报告缺源，而不是假装通过。
+
+    **显式模拟模块缺失**：``sys.modules`` 里置 ``None`` 会让 import 抛
+    ``ImportError``（CPython 既定语义），于是只测代码的降级行为，不再依赖「仓库里
+    恰好没有这个模块」—— 后者测的是仓库当前状态，VEW-63 一合入前提就过期（dev/v1.3.0
+    的 ``c2b55a2`` 就是这么转红的）。顺带：import 在这里就失败，
+    ``tencent_minute_bars`` 根本走不到，用例不再打腾讯 ifzq。
+    """
+    import sys
+
+    monkeypatch.setitem(sys.modules, "app.providers.astock_data", None)
     filler = _backfiller(tmp_path, RangeProvider([date(2026, 6, 1)]))
     report = filler.cross_check("5", START, END, symbols=["000001"])
     assert report.secondary_unavailable is True
