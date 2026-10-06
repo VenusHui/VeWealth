@@ -237,6 +237,136 @@ def tencent_quote(codes: list[str], _record: bool = True) -> dict[str, dict]:
 
 
 # ---------------------------------------------------------------------------
+# New: Tencent ifzq historical minute K-line (VEW-63)
+# ---------------------------------------------------------------------------
+
+TENCENT_MKLINE_URL = "https://ifzq.gtimg.cn/appstock/app/kline/mkline"
+
+# 本平台 period（分钟字符串）→ 腾讯接口 period 参数
+TENCENT_MINUTE_PERIODS = {
+    "1": "m1",
+    "5": "m5",
+    "15": "m15",
+    "30": "m30",
+    "60": "m60",
+}
+
+# 单次根数上限。count>800 时服务端**静默回落**到 320（VEW-61 实测 800 生效、900
+# 回落），回落不报错、响应里也看不出来，调用方无从感知，所以本地先夹紧。
+TENCENT_MINUTE_MAX_COUNT = 800
+
+# 腾讯分钟线成交量单位是「手」，mootdx 是「股」，两者差 100 倍（VEW-61 交叉校验：
+# sz000001 m5 最新 3 根与 mootdx 一致，仅成交量差 100）。取数链对外统一按 mootdx
+# 口径输出「股」，否则下游因子/指标会在换源时静默错算 100 倍。
+TENCENT_VOLUME_LOT_TO_SHARE = 100
+
+
+def _tencent_symbol(code: str) -> str:
+    """代码 → 腾讯接口用的 ``sh|sz|bj`` + 6 位（已带前缀则原样返回）。"""
+    s = str(code).strip().lower()
+    if s[:2] in ("sh", "sz", "bj"):
+        return s
+    s = s.zfill(6)
+    return f"{get_prefix(s)}{s}"
+
+
+def tencent_minute_bars(
+    code: str,
+    period: str,
+    start_time: str = "",
+    count: int = TENCENT_MINUTE_MAX_COUNT,
+    timeout: float = 12,
+    _record: bool = True,
+) -> list[list[Any]]:
+    """腾讯 ifzq 历史分钟 K 线单次请求（原始 bar 列表）。
+
+    ``ifzq.gtimg.cn`` 与 ``qt.gtimg.cn`` 同属腾讯行情，但提供**历史分钟 K 线**且
+    可翻页；东财封锁是 host 级（``push2his`` / ``push2``），腾讯不受影响，因此作为
+    分钟级取数的无封锁备份源（VEW-61 实测：800 根/页、60 次连打无观测到限流）。
+
+    Args:
+        code: 6 位代码或已带 sh/sz/bj 前缀的代码。
+        period: 腾讯 period 参数（``m1`` / ``m5`` / ``m15`` / ``m30`` / ``m60``）。
+        start_time: 翻页游标 ``YYYYMMDDHHMM``；空串表示从最新一根往前取。
+        count: 根数，超过 ``TENCENT_MINUTE_MAX_COUNT`` 先本地夹紧（服务端回落是静默的）。
+        _record: 是否把本次请求写入 source_monitor；探针自建轻量请求时传 False。
+
+    Returns:
+        原始 bar 列表，每根形如 ``[time, open, close, high, low, volume, {}, ...]``
+        （time 为 ``YYYYMMDDHHMM``，volume 单位「手」）；失败或无数据返回 ``[]``。
+    """
+    api_period = TENCENT_MINUTE_PERIODS.get(str(period), str(period))
+    symbol = _tencent_symbol(code)
+    want = max(1, min(int(count or 1), TENCENT_MINUTE_MAX_COUNT))
+    url = _build_url(
+        TENCENT_MKLINE_URL, {"param": f"{symbol},{api_period},{start_time},{want}"}
+    )
+    req = urllib.request.Request(url)
+    req.add_header("User-Agent", UA)
+    req.add_header("Referer", "https://gu.qq.com/")
+    start = time.monotonic()
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        data = json.loads(resp.read().decode("utf-8", "ignore"))
+    except Exception as e:
+        if _record:
+            source_monitor.record_attempt(
+                "tencent",
+                ok=False,
+                duration_ms=(time.monotonic() - start) * 1000,
+                error=str(e),
+                context=f"tencent_mkline:{api_period}",
+            )
+        logger.warning(f"腾讯分钟K线请求失败 {symbol} {api_period}: {e}")
+        return []
+
+    node = (data.get("data") or {}).get(symbol) or {}
+    bars = node.get(api_period) or []
+    if _record:
+        source_monitor.record_attempt(
+            "tencent",
+            ok=bool(bars),
+            duration_ms=(time.monotonic() - start) * 1000,
+            error=None if bars else "腾讯分钟K线返回空或解析失败",
+            context=f"tencent_mkline:{api_period}",
+        )
+    return bars
+
+
+def tencent_minute_frame(bars: list[list[Any]]) -> Optional[pd.DataFrame]:
+    """腾讯原始分钟 bar → 标准化 DataFrame（成交量换算为「股」）。
+
+    Returns:
+        DataFrame，columns ``[datetime, open, close, high, low, volume]``，按时间升序
+        并去重；无有效行返回 ``None``。
+    """
+    rows: list[list[Any]] = []
+    for bar in bars or []:
+        if not isinstance(bar, (list, tuple)) or len(bar) < 6:
+            continue
+        try:
+            ts = pd.to_datetime(str(bar[0]), format="%Y%m%d%H%M")
+            o, c, h, low = float(bar[1]), float(bar[2]), float(bar[3]), float(bar[4])
+        except (ValueError, TypeError):
+            continue
+        try:
+            volume = float(bar[5]) * TENCENT_VOLUME_LOT_TO_SHARE
+        except (ValueError, TypeError):
+            # 单根缺量不该丢掉整根 K 线（OHLC 仍可用于形态 / 回测）
+            volume = 0.0
+        rows.append([ts, o, c, h, low, volume])
+
+    if not rows:
+        return None
+    df = pd.DataFrame(
+        rows, columns=["datetime", "open", "close", "high", "low", "volume"]
+    )
+    # 分页交界可能重叠，按 datetime 去重后再排序
+    df = df.drop_duplicates(subset=["datetime"], keep="last")
+    return df.sort_values("datetime").reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
 # From a-stock-data: Eastmoney single-stock info
 # ---------------------------------------------------------------------------
 

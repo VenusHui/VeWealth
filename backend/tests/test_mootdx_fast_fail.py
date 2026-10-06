@@ -465,6 +465,8 @@ class MootdxFastFailTests(unittest.TestCase):
         ), mock.patch.object(ap.time, "sleep"), mock.patch.object(
             ap, "eastmoney_kline", return_value=None
         ) as em, mock.patch.object(
+            ap, "tencent_minute_bars", return_value=[]
+        ), mock.patch.object(
             provider, "_fetch_kline_mootdx", return_value=None
         ):
             result = provider.fetch_minute_data(
@@ -482,6 +484,8 @@ class MootdxFastFailTests(unittest.TestCase):
         ), mock.patch.object(ap.time, "sleep"), mock.patch.object(
             ap, "eastmoney_kline", return_value=None
         ) as em, mock.patch.object(
+            ap, "tencent_minute_bars", return_value=[]
+        ), mock.patch.object(
             provider, "_fetch_kline_mootdx", return_value=None
         ):
             result = provider.fetch_minute_data(
@@ -504,6 +508,8 @@ class MootdxFastFailTests(unittest.TestCase):
             ap.time, "monotonic", side_effect=clock
         ), mock.patch.object(ap.time, "sleep") as sleeper, mock.patch.object(
             ap, "eastmoney_kline", side_effect=hanging
+        ), mock.patch.object(
+            ap, "tencent_minute_bars", return_value=[]
         ), mock.patch.object(
             provider, "_fetch_kline_mootdx", return_value=None
         ):

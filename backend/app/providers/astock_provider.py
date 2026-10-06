@@ -1,7 +1,7 @@
 """AStockDataProvider — implements MarketDataProvider via a-stock-data patterns.
 
 Primary K-line source: mootdx (TCP, no IP block).
-Fallback chain: Eastmoney HTTP → Tushare (daily only).
+Fallback chain: Eastmoney HTTP → Tushare (daily only) → Tencent ifzq (minute only).
 """
 
 from __future__ import annotations
@@ -25,11 +25,15 @@ from app.core.source_health import source_monitor
 from app.providers.base import MarketDataProvider
 from app.providers.provenance import DailyDataResult, DataProvenance
 from app.providers.astock_data import (
+    TENCENT_MINUTE_MAX_COUNT,
+    TENCENT_MINUTE_PERIODS,
     eastmoney_all_stocks,
     eastmoney_cyq,
     eastmoney_kline,
     eastmoney_trends2,
     fqt_code,
+    tencent_minute_bars,
+    tencent_minute_frame,
 )
 
 try:
@@ -154,17 +158,24 @@ _MOOTDX_REACHABILITY_WORKERS = 64
 # 恰好比重试所需的 5.2s 短，可用镜像只要丢了首包就必定被切掉（实测端到端 init
 # 8 次只成功 6 次，两次失败都卡在 6.0s 预算上）。8s 留出 6.5s 窗口，重试跑得完。
 _MOOTDX_SCAN_BUDGET = 8.0
-# 分钟链路整体预算（秒）：mootdx 探测/取数 + 东财回退合计计入，须小于前端 15s
-# 超时。超时放弃本次取数，返回空而非让请求挂起（VEW-54）。
+# 分钟链路整体预算（秒）：mootdx 探测/取数 + 东财回退 + 腾讯回退合计计入，须小于
+# 前端 15s 超时。超时放弃本次取数，返回空而非让请求挂起（VEW-54）。
 #
 # 该预算是**整条链路**的硬边界，不只管 mootdx 阶段：东财回退的单次 HTTP 超时按剩余
-# 预算夹紧（见 _bounded_eastmoney_timeout），重试退避也在预算内才 sleep。否则
+# 预算夹紧（见 _bounded_eastmoney_timeout），腾讯备份源同理
+# （见 _bounded_tencent_timeout），重试退避也在预算内才 sleep。否则
 # 「8s 扫描 + 15s 首次回退 = 23s」会让预算形同虚设（VEW-62 评审 ①）。
 _MOOTDX_MINUTE_BUDGET = 12.0
 # 东财回退单次请求的默认超时（秒），与 eastmoney_* 的默认值一致。
 _EASTMONEY_FALLBACK_TIMEOUT = 15.0
 # 夹紧后的下限（秒）：剩余预算再少也至少给一次请求这点时间，否则回退等于直接放弃。
 _EASTMONEY_FALLBACK_MIN_TIMEOUT = 1.0
+
+# 腾讯 ifzq 分钟线（无封锁备份源，VEW-63）的单次请求超时与下限。腾讯走 HTTP 单次
+# 请求、实测单页 800 根 ~0.3s，不需要东财那样的 15s 默认值；同样按剩余预算夹紧，
+# 保证它排在东财之后时仍装得进 _MOOTDX_MINUTE_BUDGET。
+_TENCENT_FALLBACK_TIMEOUT = 8.0
+_TENCENT_FALLBACK_MIN_TIMEOUT = 1.0
 
 # 源级探针等待取数锁的上限（秒）。探针与取数共用同一 client 与同一把锁：取数正在
 # 翻页时探针若无限期等待，会把串行的 run_all_probes() 整轮拖住，排在后面的
@@ -435,6 +446,21 @@ def _bounded_eastmoney_timeout(deadline: Optional[float]) -> float:
     return max(
         _EASTMONEY_FALLBACK_MIN_TIMEOUT,
         min(_EASTMONEY_FALLBACK_TIMEOUT, remaining),
+    )
+
+
+def _bounded_tencent_timeout(deadline: Optional[float]) -> float:
+    """腾讯备份源单次请求的超时：默认 8s，按剩余预算夹紧并保底（VEW-63）。
+
+    腾讯排在东财之后，拿到的往往是已被 mootdx 扫描和东财回退吃掉大半的剩余预算；
+    与东财回退同理，不夹紧就会让「单次请求超时」突破 ``_MOOTDX_MINUTE_BUDGET``。
+    """
+    if deadline is None:
+        return _TENCENT_FALLBACK_TIMEOUT
+    remaining = deadline - time.monotonic()
+    return max(
+        _TENCENT_FALLBACK_MIN_TIMEOUT,
+        min(_TENCENT_FALLBACK_TIMEOUT, remaining),
     )
 
 
@@ -1456,6 +1482,109 @@ class AStockDataProvider(MarketDataProvider):
     # Minute data
     # ------------------------------------------------------------------
 
+    def _fetch_kline_tencent(
+        self,
+        stock_code: str,
+        period: str,
+        start_date: str,
+        end_date: str,
+        count: int = 500,
+        start_offset: int = 0,
+        deadline: Optional[float] = None,
+    ) -> Optional[pd.DataFrame]:
+        """通过腾讯 ifzq 取分钟 K 线（无封锁备份源，VEW-63）。
+
+        腾讯一次一个标的、单页上限 800 根，用 ``start_time`` 游标向前翻页。这里按
+        ``count`` / ``start_offset`` 只取需要的根数，取满即停，不做无界翻页。
+
+        Args:
+            count: 需要的根数（从最新一根起算，已跳过 ``start_offset`` 根）。
+            start_offset: 跳过最新的 N 根，供前端滚动加载复用。
+            deadline: 绝对 ``time.monotonic()`` 时间戳；翻页与单次请求都受它约束，
+                      ``None`` 表示不设预算（与 ``_fetch_kline_mootdx`` 口径一致）。
+
+        Returns:
+            DataFrame columns ``[datetime, open, close, high, low, volume]``，成交量已
+            按 mootdx 口径换算为「股」；失败或无数据返回 ``None``。
+        """
+        api_period = TENCENT_MINUTE_PERIODS.get(str(period))
+        if api_period is None:
+            return None
+
+        want = max(int(count or 500), 1)
+        skip = max(int(start_offset or 0), 0)
+        start_ts = pd.Timestamp(start_date) if start_date else None
+
+        frames: list[list[list[Any]]] = []
+        cursor = ""
+        while want > 0:
+            if deadline is not None and time.monotonic() >= deadline:
+                logger.warning(
+                    f"腾讯分钟K线 {stock_code} 超过取数预算, 提前返回已取部分"
+                )
+                break
+            # 单页上限 800（服务端超限静默回落，先本地夹紧）；把还要跳过的根数
+            # 一并算进本次请求，避免为了 skip 多跑一轮。
+            page_size = min(TENCENT_MINUTE_MAX_COUNT, want + skip)
+            raw = tencent_minute_bars(
+                stock_code,
+                api_period,
+                start_time=cursor,
+                count=page_size,
+                timeout=_bounded_tencent_timeout(deadline),
+            )
+            if not raw:
+                break
+
+            # 单页内 bar 按时间升序（最旧在前），翻页方向是「由新到旧」，所以
+            # 「跳过最新 N 根」要从本页**尾部**裁，而不是头部。
+            page = raw
+            if skip:
+                if skip >= len(page):
+                    skip -= len(page)
+                    page = []
+                else:
+                    page = page[: len(page) - skip]
+                    skip = 0
+            if page:
+                frames.append(page)
+                want -= len(page)
+
+            # 游标取**原始页**最旧一根：本次裁剪只影响返回内容，不影响翻页位置。
+            oldest = str(raw[0][0])
+            if len(raw) < page_size or oldest == cursor:
+                # 不足一页 = 已翻到底；游标未前进 = 接口忽略 start_time，防死循环
+                break
+            cursor = oldest
+            if start_ts is not None:
+                try:
+                    if pd.to_datetime(oldest, format="%Y%m%d%H%M") < start_ts:
+                        # 再往前只会更旧，请求区间之外，停止翻页
+                        break
+                except (ValueError, TypeError):  # pragma: no cover - 防御性
+                    pass
+
+        if not frames:
+            return None
+        df = tencent_minute_frame([bar for page in frames for bar in page])
+        if df is None or df.empty:
+            return None
+
+        if start_date:
+            df = df[df["datetime"] >= pd.Timestamp(start_date)]
+        if end_date:
+            df = df[df["datetime"] <= pd.Timestamp(end_date)]
+        if df.empty:
+            return None
+
+        df = df.reset_index(drop=True)
+        df["datetime"] = df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
+        # 腾讯 mkline 返回非复权原始行情（与 mootdx 同为不复权），如实标注，
+        # 调用方请求 qfq/hfq 时据此判定降级（VEW-55 / VEW-63）。
+        df.attrs["adjust_served"] = ""
+        df.attrs["adjust_degraded"] = False
+        return df
+
     def fetch_minute_data(
         self,
         stock_code: str,
@@ -1497,62 +1626,94 @@ class AStockDataProvider(MarketDataProvider):
         # 单次回退的超时按剩余预算夹紧：回退阶段原来只在两次尝试之间检查 deadline，
         # 而 eastmoney_* 的单次 HTTP 超时恒为 15s，mootdx 全挂时最坏是「8s 扫描 +
         # 15s 首次回退 ≈ 23s」，12s 预算与前端 15s 超时都拦不住（VEW-62 评审 ①）。
-        for attempt in range(1, max_retries + 2):
-            if time.monotonic() >= deadline:
-                logger.warning(
-                    f"分钟数据请求 {stock_code} 在回退阶段超预算, 放弃本次取数"
-                )
-                return None
-            http_timeout = _bounded_eastmoney_timeout(deadline)
-            try:
-                if period == "1":
-                    df = eastmoney_trends2(code=stock_code, timeout=http_timeout)
-                else:
-                    fqt = fqt_code(adjust)
-                    df = eastmoney_kline(
-                        code=stock_code,
-                        klt=period,
-                        beg="",
-                        end="20500101",
-                        fqt=fqt,
-                        timeout=http_timeout,
-                    )
-
-                if df is not None and not df.empty:
-                    # 东财分钟线按 fqt 复权（1 分钟走 trends2 接口，无复权参数）。
-                    served = adjust if period != "1" else ""
-                    df.attrs["adjust_served"] = served
-                    df.attrs["adjust_degraded"] = bool(adjust) and served != adjust
-                    # Filter to requested datetime range
-                    if "datetime" in df.columns:
-                        df["datetime"] = pd.to_datetime(df["datetime"])
-                        mask = (df["datetime"] >= pd.Timestamp(start_datetime)) & (
-                            df["datetime"] <= pd.Timestamp(end_datetime)
-                        )
-                        df = df[mask]
-                        df["datetime"] = df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
-
-                    if not df.empty:
-                        return df
-
-            except Exception as e:
-                logger.warning(
-                    f"获取股票 {stock_code} 分钟数据失败(第{attempt}次): {e}"
-                )
-
-            if attempt <= max_retries:
-                # 退避也要留在预算内，否则 sleep 会把总耗时顶出 12s 预算。
-                if time.monotonic() + _RETRY_SLEEP * attempt >= deadline:
-                    logger.warning(
-                        f"分钟数据请求 {stock_code} 回退退避将超出预算, 放弃本次取数"
-                    )
-                    return None
-                time.sleep(_RETRY_SLEEP * attempt)
-                continue
+        #
+        # 已知 down 则整段跳过（VEW-63）：东财封锁是 host 级，分钟链路用的
+        # trends2 / kline 与日线同在 push2his，source_monitor 的 down 信号对分钟
+        # 链路同样成立；不跳过就是拿三次注定失败的请求 + 退避去挤腾讯备份源的预算。
+        if source_monitor.is_down("eastmoney"):
             logger.warning(
-                f"股票 {stock_code} 在 {start_datetime}-{end_datetime} 期间无分钟数据"
+                f"股票 {stock_code} 东财已知不可用(source_monitor=down), 跳过分钟回退重试"
             )
-            return None
+        else:
+            for attempt in range(1, max_retries + 2):
+                if time.monotonic() >= deadline:
+                    logger.warning(
+                        f"分钟数据请求 {stock_code} 在回退阶段超预算, 放弃东财回退"
+                    )
+                    break
+                http_timeout = _bounded_eastmoney_timeout(deadline)
+                try:
+                    if period == "1":
+                        df = eastmoney_trends2(code=stock_code, timeout=http_timeout)
+                    else:
+                        fqt = fqt_code(adjust)
+                        df = eastmoney_kline(
+                            code=stock_code,
+                            klt=period,
+                            beg="",
+                            end="20500101",
+                            fqt=fqt,
+                            timeout=http_timeout,
+                        )
+
+                    if df is not None and not df.empty:
+                        # 东财分钟线按 fqt 复权（1 分钟走 trends2 接口，无复权参数）。
+                        served = adjust if period != "1" else ""
+                        df.attrs["adjust_served"] = served
+                        df.attrs["adjust_degraded"] = bool(adjust) and served != adjust
+                        # Filter to requested datetime range
+                        if "datetime" in df.columns:
+                            df["datetime"] = pd.to_datetime(df["datetime"])
+                            mask = (df["datetime"] >= pd.Timestamp(start_datetime)) & (
+                                df["datetime"] <= pd.Timestamp(end_datetime)
+                            )
+                            df = df[mask]
+                            df["datetime"] = df["datetime"].dt.strftime(
+                                "%Y-%m-%d %H:%M:%S"
+                            )
+
+                        if not df.empty:
+                            return df
+
+                except Exception as e:
+                    logger.warning(
+                        f"获取股票 {stock_code} 分钟数据失败(第{attempt}次): {e}"
+                    )
+
+                if attempt <= max_retries:
+                    # 退避也要留在预算内，否则 sleep 会把总耗时顶出 12s 预算。
+                    if time.monotonic() + _RETRY_SLEEP * attempt >= deadline:
+                        logger.warning(
+                            f"分钟数据请求 {stock_code} 回退退避将超出预算, 放弃东财回退"
+                        )
+                        break
+                    time.sleep(_RETRY_SLEEP * attempt)
+                    continue
+                break
+
+        # 3. Fallback: Tencent ifzq HTTP (无封锁备份源, VEW-63)
+        # 东财封锁为 host 级，此时腾讯仍可用；腾讯是纯 HTTP 单次请求、无共享 client，
+        # 不需要 mootdx 那把取数锁（锁是为 TDX 一问一答的连接复用加的，见
+        # _mootdx_fetch_lock）。同样受 deadline 约束，不会突破分钟链路预算。
+        df = self._fetch_kline_tencent(
+            stock_code,
+            period=period,
+            start_date=start_datetime,
+            end_date=end_datetime,
+            count=count,
+            start_offset=start_offset,
+            deadline=deadline,
+        )
+        if df is not None and not df.empty:
+            logger.info(
+                f"股票 {stock_code} period={period} 由腾讯 ifzq 返回 (共{len(df)}行)"
+            )
+            return df
+
+        logger.warning(
+            f"股票 {stock_code} 在 {start_datetime}-{end_datetime} 期间无分钟数据"
+        )
+        return None
 
     # ------------------------------------------------------------------
     # Real-time data
