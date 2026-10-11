@@ -30,6 +30,16 @@
 #
 # 数值比较一律交给 awk：远端 sshd 用的是 ubuntu 的登录 shell（zsh），shell 间的算术与
 # 词分割语义差异正是 VEW-68 那次静默失效的根因，awk 不依赖任何一方的语义。
+# 但 awk 的规则是「一方不是数值就按**字符串**比较」，所以喂进去之前必须先确认是数值
+# （见下面的 is_number），否则阈值写错会静默改变比较语义 —— 那正是这条闸门要消灭的
+# 失效形态（VEW-67 评审 M1）。
+#
+# 退出码契约：
+#   0 = 结论是通过（可能带 ::warning:: 注解）
+#   1 = 结论是不通过（post-prune 的封顶失败 / 低于临界）
+#   2 = **闸门给不出结论**（参数非法、阈值非数值、df 读不到）—— 绝不静默当通过
+# pre-deploy 的「只报数、不中止」由调用方 `|| true` 保证（见两个 workflow），
+# 所以它在任何退出码下都不会挡住发布。
 
 set -u
 
@@ -81,20 +91,45 @@ env_value() {
     cut -d= -f2- | tr -d "\"'" | tr -d "[:space:]"
 }
 
-# 阈值优先级：命令行 > env 文件 > 与后端一致的默认值
+# 只接受非负十进制数（可带小数）。不接受单位后缀、行内注释、空值等任何别的东西：
+# awk 遇到非数值会退化成字符串比较，`9 < "10GB"` 为假 → 9 GB 在临界 10 GB 下被判正常，
+# 静默放行（VEW-67 评审 M1 实测）。判不出结论就必须报错，不能当通过。
+is_number() {
+  printf '%s' "$1" | grep -Eq '^[0-9]+([.][0-9]+)?$'
+}
+
+# 阈值优先级：命令行 > env 文件 > 与后端一致的默认值。记录来源，报错时能指到具体哪一项。
 WARN_GB=10
+WARN_SRC="默认值"
 CRITICAL_GB=5
+CRITICAL_SRC="默认值"
 if [ -n "$WARN_GB_OVERRIDE" ]; then
   WARN_GB="$WARN_GB_OVERRIDE"
+  WARN_SRC="命令行 --warn-gb"
 else
   v=$(env_value DISK_HEADROOM_WARN_GB)
-  [ -n "$v" ] && WARN_GB="$v"
+  if [ -n "$v" ]; then
+    WARN_GB="$v"
+    WARN_SRC="${ENV_FILE} 的 DISK_HEADROOM_WARN_GB"
+  fi
 fi
 if [ -n "$CRITICAL_GB_OVERRIDE" ]; then
   CRITICAL_GB="$CRITICAL_GB_OVERRIDE"
+  CRITICAL_SRC="命令行 --critical-gb"
 else
   v=$(env_value DISK_HEADROOM_CRITICAL_GB)
-  [ -n "$v" ] && CRITICAL_GB="$v"
+  if [ -n "$v" ]; then
+    CRITICAL_GB="$v"
+    CRITICAL_SRC="${ENV_FILE} 的 DISK_HEADROOM_CRITICAL_GB"
+  fi
+fi
+
+bad=""
+is_number "$WARN_GB" || bad="警告阈值（${WARN_SRC}）= '${WARN_GB}'"
+is_number "$CRITICAL_GB" || bad="${bad:+${bad}；}临界阈值（${CRITICAL_SRC}）= '${CRITICAL_GB}'"
+if [ -n "$bad" ]; then
+  echo "::error::磁盘余量阈值不是数值：${bad}。只接受形如 10 或 7.5 的 GB 数 —— 带单位后缀（10GB）或行内注释会让比较退化成字符串比较、静默放行，判不出结论一律按失败处理（VEW-67）"
+  exit 2
 fi
 
 # 余量（GB，保留两位）
@@ -107,11 +142,15 @@ else
   FREE_GB=$(df -Pk "$TARGET_PATH" 2>/dev/null | awk 'NR==2 {printf "%.2f", $4/1024/1024}')
   if [ -z "$FREE_GB" ]; then
     echo "::error::无法读取 ${TARGET_PATH} 的磁盘余量（df 失败）：盘余量不可知，需人工检查"
-    # post-prune 判不出结果也算失败：这条闸门的存在意义就是「削不动了有人知道」，
-    # 静默放过等于退回 VEW-67 要修的那个状态。
-    [ "$MODE" = "post-prune" ] && exit 1
-    exit 0
+    # 判不出结果一律 exit 2：这条闸门的存在意义就是「削不动了有人知道」，静默放过
+    # 等于退回 VEW-67 要修的那个状态。pre-deploy 不会被它挡住（调用方有 `|| true`）。
+    exit 2
   fi
+fi
+
+if ! is_number "$FREE_GB"; then
+  echo "::error::磁盘余量读数不是数值：'${FREE_GB}'（来源：$( [ -n "$FREE_GB_OVERRIDE" ] && echo '命令行 --free-gb' || echo "df ${TARGET_PATH}" )）—— 判不出结论一律按失败处理（VEW-67）"
+  exit 2
 fi
 echo "   可用 ${FREE_GB} GB（阈值：警告 <${WARN_GB}GB / 临界 <${CRITICAL_GB}GB）"
 
@@ -140,7 +179,7 @@ if [ "$below_critical" = "1" ]; then
 fi
 
 if [ "$below_warn" = "1" ]; then
-  echo "::warning::/ 可用空间 ${FREE_GB}GB 低于警告阈值 ${WARN_GB}GB：尚可部署，但已进入策略性预留区（VEW-67）"
+  echo "::warning::/ 可用空间 ${FREE_GB}GB 低于警告阈值 ${WARN_GB}GB：尚可部署，但余量已进入需要留意的区间（VEW-67；阈值依据待队长拍板，见 config.py）"
   exit 0
 fi
 

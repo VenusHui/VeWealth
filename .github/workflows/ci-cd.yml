@@ -241,8 +241,11 @@ jobs:
             # 部署前先看一眼磁盘（VEW-68），并按 VEW-67 的阈值给出注解。
             # 此时旧容器还在跑，闸门只报数、不中止部署 —— 「盘不够」由本次运行末尾的
             # post-prune 判定负责失败并通知，不会漏（见 .github/scripts/disk_headroom_check.sh）。
+            # ⚠️ 末尾的 `|| true` 是这个不变量的**显式**保证（VEW-67 评审建议）：闸门自身
+            # 也可能以非零码退出（阈值非数值 / df 读不到 → exit 2），那属于配置问题，
+            # 不该挡住一次可能救急的发布；注解照样会打出来。别为了让 CI 变绿把它删掉。
             echo "📊 部署前磁盘检查："
-            bash .github/scripts/disk_headroom_check.sh pre-deploy
+            bash .github/scripts/disk_headroom_check.sh pre-deploy || true
 
             # 停止旧容器
             echo "🛑 停止旧容器..."

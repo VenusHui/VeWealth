@@ -98,8 +98,11 @@ jobs:
             # 部署前先看一眼磁盘（VEW-68），并按 VEW-67 的阈值给出注解。
             # 此时旧容器还在跑，闸门只报数、不中止部署 —— 「盘不够」由本次运行末尾的
             # post-prune 判定负责失败并通知，不会漏（见 .github/scripts/disk_headroom_check.sh）。
+            # ⚠️ 末尾的 `|| true` 是这个不变量的**显式**保证（VEW-67 评审建议）：闸门自身
+            # 也可能以非零码退出（阈值非数值 / df 读不到 → exit 2），那属于配置问题，
+            # 不该挡住一次可能救急的发布；注解照样会打出来。别为了让 CI 变绿把它删掉。
             echo "📊 部署前磁盘检查："
-            bash .github/scripts/disk_headroom_check.sh pre-deploy
+            bash .github/scripts/disk_headroom_check.sh pre-deploy || true
 
             # 停止服务
             echo "🛑 停止服务..."
@@ -147,26 +150,16 @@ jobs:
               echo "⚠️⚠️⚠️ 构建缓存清理失败：磁盘可能在持续增长，请人工检查（VEW-68）⚠️⚠️⚠️"
             fi
 
-            # 盘余量闸门（VEW-67）：封顶失败、或余量低于临界阈值 → 本次运行判失败。
-            #
-            # 部署本身可能已经成功，为什么还要判失败：这是仓库内唯一会通知到人的通道
-            # （GitHub Actions 的注解与失败）。40 GB 单盘写满是 postgres + backend +
-            # frontend 一起挂，属于需要立刻有人处理的处境 —— 判绿等于没人知道。
-            echo "📊 部署后磁盘检查："
-            if ! PRUNE_FAILED=$prune_ok bash .github/scripts/disk_headroom_check.sh post-prune; then
-              echo "❌ 盘余量闸门未通过（VEW-67）：见上方 ::error:: 注解，服务本身可能仍在正常提供"
-              exit 1
-            fi
-
             # 等待服务启动
             echo "⏳ 等待服务启动..."
             sleep 10
-            
-            # 健康检查
+
+            # 健康检查（先拿「服务」结论，再拿「盘」结论，见下方闸门 —— VEW-67 评审 M2）
             echo "🏥 健康检查..."
+            health_ok=0
             max_retries=30
             retry_count=0
-            
+
             while [ $retry_count -lt $max_retries ]; do
               if curl -f http://localhost:8001/health > /dev/null 2>&1; then
                 echo "✅ 后端服务正常"
@@ -176,35 +169,63 @@ jobs:
               echo "等待后端服务... ($retry_count/$max_retries)"
               sleep 2
             done
-            
+
             if [ $retry_count -eq $max_retries ]; then
               echo "❌ 后端服务健康检查失败"
               docker-compose logs --tail=50 backend
-              exit 1
+              health_ok=1
             fi
-            
-            retry_count=0
-            while [ $retry_count -lt $max_retries ]; do
-              if curl -f http://localhost:3000 > /dev/null 2>&1; then
-                echo "✅ 前端服务正常"
-                break
+
+            if [ "$health_ok" -eq 0 ]; then
+              retry_count=0
+              while [ $retry_count -lt $max_retries ]; do
+                if curl -f http://localhost:3000 > /dev/null 2>&1; then
+                  echo "✅ 前端服务正常"
+                  break
+                fi
+                retry_count=$((retry_count + 1))
+                echo "等待前端服务... ($retry_count/$max_retries)"
+                sleep 2
+              done
+
+              if [ $retry_count -eq $max_retries ]; then
+                echo "❌ 前端服务健康检查失败"
+                docker-compose logs --tail=50 frontend
+                health_ok=1
               fi
-              retry_count=$((retry_count + 1))
-              echo "等待前端服务... ($retry_count/$max_retries)"
-              sleep 2
-            done
-            
-            if [ $retry_count -eq $max_retries ]; then
-              echo "❌ 前端服务健康检查失败"
-              docker-compose logs --tail=50 frontend
-              exit 1
+            else
+              echo "⏭️  后端未就绪，跳过前端健康检查"
             fi
-            
+
             # 显示服务状态
             echo ""
             echo "📊 服务状态："
             docker-compose ps
-            
+
+            # 盘余量闸门（VEW-67）：封顶失败、或余量低于临界阈值 → 本次运行判失败。
+            #
+            # 部署本身可能已经成功，为什么还要判失败：这是仓库内唯一会通知到人的通道
+            # （GitHub Actions 的注解与失败）。40 GB 单盘写满是 postgres + backend +
+            # frontend 一起挂，属于需要立刻有人处理的处境 —— 判绿等于没人知道。
+            #
+            # ⚠️ 位置在健康检查**之后**（VEW-67 评审 M2）：早先它排在健康检查之前，
+            # 判红就 exit 1，健康检查整段被跳过，运行对外只说「盘不够（服务可能仍在正常
+            # 提供）」—— 而那句「可能」本来 30 秒后就能确定。更糟的是「只有盘不够」与
+            # 「盘不够且容器起挂了」的结论会长得一模一样，注意力被引到盘上。
+            echo "📊 部署后磁盘检查："
+            disk_ok=0
+            if ! PRUNE_FAILED=$prune_ok bash .github/scripts/disk_headroom_check.sh post-prune; then
+              disk_ok=1
+            fi
+
+            # 两个结论都拿到之后再判失败：红色运行里同时有「服务」与「盘」两个答案
+            if [ "$health_ok" -ne 0 ] || [ "$disk_ok" -ne 0 ]; then
+              echo ""
+              echo "❌ 部署收尾检查未通过（VEW-67）：服务健康=${health_ok} 盘余量=${disk_ok}（0=通过 / 1=不通过）"
+              echo "   服务侧结论见上方健康检查输出与容器日志；盘侧结论见上方 ::error:: 注解"
+              exit 1
+            fi
+
             echo ""
             echo "=========================================="
             echo "✅ 手动部署完成！"

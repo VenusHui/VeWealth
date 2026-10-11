@@ -271,12 +271,16 @@ class CapacityMonitor:
         }
 
     def snapshot(self) -> dict[str, Any]:
-        """最近一次 ``check()`` 的快照（尚未检查时 disks 为空）。"""
+        """最近一次 ``check()`` 的快照（尚未检查时 disks 为空）。
+
+        ``checked_at`` 取**最新那次采样**的时刻，不是本方法的调用时刻 —— 否则调用方
+        会读成「这份读数刚取的」。尚未检查时为空串，与「刚取过」区分得开（VEW-67 评审）。
+        """
         with self._lock:
             disks = [self._last[p] for p in self._paths if p in self._last]
         return {
             "status": self._overall(disks),
-            "checked_at": _now_iso(),
+            "checked_at": max((d.checked_at for d in disks), default=""),
             "thresholds": {
                 "warn_gb": self._warn_gb,
                 "critical_gb": self._critical_gb,

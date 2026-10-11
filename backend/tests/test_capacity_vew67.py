@@ -182,6 +182,15 @@ class CapacityMonitorTests(unittest.TestCase):
         self.assertEqual(parse_paths(""), ["/"])
         self.assertEqual(parse_paths(None), ["/"])
 
+    def test_snapshot_checked_at_is_sample_time_not_call_time(self):
+        """``checked_at`` 必须是那次采样的时刻，不是本方法的调用时刻（VEW-67 评审）。"""
+        self.monitor = CapacityMonitor(
+            paths=["/"], warn_gb=10.0, critical_gb=5.0, usage_fn=lambda _p: _usage(30.0)
+        )
+        self.assertEqual(self.monitor.snapshot()["checked_at"], "")  # 尚未检查
+        sampled_at = self.monitor.check()["disks"][0]["checked_at"]
+        self.assertEqual(self.monitor.snapshot()["checked_at"], sampled_at)
+
 
 class HealthEndpointTests(unittest.TestCase):
     def test_capacity_endpoint_shape(self):
@@ -306,20 +315,151 @@ class DiskHeadroomGateTests(unittest.TestCase):
         proc = self._run("post-prune", "--bogus")
         self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
 
+    # ------------------------------------------------------------------
+    # 阈值必须是数值：awk 遇到非数值会退化成字符串比较 → 静默放行（评审 M1）
+    # ------------------------------------------------------------------
+
+    def _env_file_with(self, tmp, body: str) -> str:
+        path = Path(tmp) / ".prod.env"
+        path.write_text(body, encoding="utf-8")
+        return str(path)
+
+    def test_unit_suffix_in_threshold_does_not_silently_pass(self):
+        """`10GB` 曾让 9 GB 在临界 10 GB 下被读成正常（"9" > "1"）。"""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = self._env_file_with(tmp, "DISK_HEADROOM_CRITICAL_GB=10GB\n")
+            proc = self._run("post-prune", "--free-gb", "9", "--env-file", env_file)
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            self.assertIn("::error::", proc.stdout)
+            self.assertNotIn("✅", proc.stdout)
+
+    def test_inline_comment_in_threshold_does_not_false_alarm(self):
+        """`5  # GB` 曾让 30 GB 的健康盘被判红（"30" < "5"）。"""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = self._env_file_with(tmp, "DISK_HEADROOM_CRITICAL_GB=5  # GB\n")
+            proc = self._run("post-prune", "--free-gb", "30", "--env-file", env_file)
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            self.assertIn("::error::", proc.stdout)
+
+    def test_invalid_cli_threshold_is_rejected(self):
+        for flag in ("--warn-gb", "--critical-gb"):
+            proc = self._run(
+                "post-prune",
+                "--free-gb",
+                "30",
+                "--env-file",
+                "/nonexistent",
+                flag,
+                "5GB",
+            )
+            self.assertEqual(proc.returncode, 2, flag + proc.stdout + proc.stderr)
+            self.assertIn("::error::", proc.stdout)
+
+    def test_invalid_free_gb_override_is_rejected(self):
+        proc = self._run("post-prune", "--free-gb", "abc", "--env-file", "/nonexistent")
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+
+    def test_invalid_threshold_never_reports_success_in_any_mode(self):
+        """判不出结论一律失败 —— pre-deploy 也不例外（调用方有 `|| true` 兜底）。"""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = self._env_file_with(tmp, "DISK_HEADROOM_WARN_GB=10GB\n")
+            for mode in ("pre-deploy", "post-prune", "check"):
+                proc = self._run(mode, "--free-gb", "30", "--env-file", env_file)
+                self.assertEqual(proc.returncode, 2, mode + proc.stdout + proc.stderr)
+
+    def test_decimal_and_integer_thresholds_are_accepted(self):
+        proc = self._run(
+            "post-prune",
+            "--free-gb",
+            "9",
+            "--env-file",
+            "/nonexistent",
+            "--critical-gb",
+            "7.5",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("::warning::", proc.stdout)  # 9 < 10 警告线，但不低于 7.5 临界
+
     def test_real_df_path_never_crashes(self):
         """不传 --free-gb 时走真实 df；只要求脚本能给出结论，不断言具体读数。"""
         proc = self._run("check", "--path", "/", "--env-file", "/nonexistent")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("可用", proc.stdout)
 
+    def test_unreadable_path_is_exit_2_not_silent_pass(self):
+        proc = self._run("check", "--path", "/nonexistent-mount-xyz")
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("::error::", proc.stdout)
+
+    # ------------------------------------------------------------------
+    # 闸门必须真的挂在部署路径上，且失败传导不能被悄悄摘掉
+    # ------------------------------------------------------------------
+
+    def _workflow(self, name: str) -> str:
+        return (REPO_ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+
     def test_deploy_workflows_call_the_gate(self):
         """闸门必须真的挂在部署路径上 —— 脚本再好，没人调用就等于没有。"""
         for name in ("ci-cd.yml", "manual-deploy.yml"):
-            text = (REPO_ROOT / ".github" / "workflows" / name).read_text(
-                encoding="utf-8"
-            )
+            text = self._workflow(name)
             self.assertIn("disk_headroom_check.sh pre-deploy", text, name)
             self.assertIn("disk_headroom_check.sh post-prune", text, name)
+
+    def test_post_prune_gate_propagates_failure(self):
+        """把调用改成 `|| true` 后子串仍在，但闸门不再判红 —— 这里钉住失败传导本身。
+
+        （评审非阻断建议：只断言「调用了」不够，`… post-prune || true` 同样能通过。）
+        """
+        for name in ("ci-cd.yml", "manual-deploy.yml"):
+            lines = [
+                line.strip()
+                for line in self._workflow(name).splitlines()
+                if "disk_headroom_check.sh post-prune" in line
+            ]
+            self.assertEqual(len(lines), 1, f"{name}: post-prune 调用行数异常 {lines}")
+            call = lines[0]
+            # 必须包在 `if ! …; then` 里，且同一行没有把退出码吞掉
+            self.assertTrue(call.startswith("if ! "), f"{name}: {call}")
+            self.assertTrue(call.endswith("; then"), f"{name}: {call}")
+            self.assertNotIn("|| true", call, f"{name}: {call}")
+            # 且紧随其后要有 exit 1（吞掉退出码就没意义了）
+            body = self._workflow(name)
+            after = body.split(call, 1)[1][:2000]
+            self.assertIn("exit 1", after, f"{name}: 闸门判红后没有 exit 1")
+
+    def test_pre_deploy_gate_cannot_block_a_deploy(self):
+        """pre-deploy 的「只报数、不中止」要靠调用处的 `|| true` 显式保证。"""
+        for name in ("ci-cd.yml", "manual-deploy.yml"):
+            lines = [
+                line.strip()
+                for line in self._workflow(name).splitlines()
+                if "disk_headroom_check.sh pre-deploy" in line
+            ]
+            self.assertEqual(len(lines), 1, f"{name}: pre-deploy 调用行数异常 {lines}")
+            self.assertTrue(
+                lines[0].endswith("|| true"),
+                f"{name}: pre-deploy 未被兜底 —— {lines[0]}",
+            )
+
+    def test_manual_deploy_gate_runs_after_health_checks(self):
+        """评审 M2：闸门早于健康检查时，判红会 exit 1 把服务结论整段跳过。"""
+        text = self._workflow("manual-deploy.yml")
+        gate_at = text.index("disk_headroom_check.sh post-prune")
+        self.assertLess(
+            text.index("后端服务健康检查失败"),
+            gate_at,
+            "闸门必须排在健康检查之后",
+        )
+        self.assertLess(text.index("前端服务健康检查失败"), gate_at)
+        # 健康检查失败不再直接 exit，而是记进 health_ok 留给末尾一起判
+        self.assertIn("health_ok=1", text)
+        self.assertIn('"$health_ok" -ne 0', text)
 
 
 if __name__ == "__main__":
