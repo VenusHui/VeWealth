@@ -12,10 +12,14 @@ bar 粒度以及由此带来的 A 股微观约束：
   成交；分钟级下不直接放弃，而是在**当日后续 bar** 继续尝试，当日仍未成交则作废并
   告警（``defer_to_next_bar`` 控制）。
 - **停牌**：某标的当日无 bar 或整日成交量为 0，当日不可成交 —— 持仓卖不出（顺延至
-  下一有行情的交易日），买单作废并告警，不静默跳过。
+  下一有行情的交易日），买单作废并告警，不静默跳过。成交量字段**缺失或全为 NaN**
+  不算停牌（那是源没给数据，不是确实没成交）。
 - **T+1**：当日买入当日不可卖出（要求卖出 bar 所在交易日严格晚于建仓日）。
 - **止损 / 止盈**（``stop_loss_pct`` / ``take_profit_pct``，可选）：按 bar 的
   low/high 触发 —— 这是分钟粒度相对日线唯一能新增的退出语义。
+
+同一次顺延在同一 (标的, 交易日, 原因) 上只告警一次：全天封板是 240 根 bar，逐 bar
+告警会把近似重复的字符串灌进 API 响应，把真正的信息淹掉。
 
 净值曲线是分钟粒度；持仓快照默认按交易日收盘落一份（``snapshot_every_bar`` 可改为
 逐 bar），避免长区间产生几十万条快照。绩效指标由调用方在**日频**曲线上计算
@@ -41,6 +45,7 @@ from app.services.backtest.engine import (
     size_entry_order,
 )
 from app.services.backtest.minute.session import (
+    is_closing_auction,
     is_halted_day,
     previous_close_by_session,
 )
@@ -108,8 +113,8 @@ def _prepare_minute_market_data(
             work["high"] = work[["open", "close"]].max(axis=1)
         if "low" not in work.columns:
             work["low"] = work[["open", "close"]].min(axis=1)
-        if "volume" not in work.columns:
-            work["volume"] = 0.0
+        # volume 缺失时不补 0：那是「源没给成交量」，不是「确实零成交」，补 0 会让该
+        # 标的整天被判停牌（见 session.is_halted_day）
         work["session_date"] = work["datetime"].dt.normalize()
         work["bar_index"] = work.index
         prepared[symbol] = work
@@ -235,7 +240,12 @@ def run_minute_portfolio(
     for symbol, frame in data.items():
         for _, bar in frame.iterrows():
             bars_by_time.setdefault(bar["datetime"], {})[symbol] = bar
-            session_last_time[bar["session_date"]] = bar["datetime"]
+            # 当日最晚 bar 取全市场最大值：只按遍历顺序覆盖会让收盘快照落在「最后一个
+            # 被遍历到的标的」的最后一根 bar 上 —— 该标的若缺尾 bar，快照时点就错了，
+            # 且结果依赖标的顺序
+            current_last = session_last_time.get(bar["session_date"])
+            if current_last is None or bar["datetime"] > current_last:
+                session_last_time[bar["session_date"]] = bar["datetime"]
         session_open_indices[symbol] = _session_open_bar_indices(frame)
         prev_close_map[symbol] = previous_close_by_session(frame)
         # 有 bar 但整日零成交同样是停牌（一字停牌无成交），不能只看 bar 是否存在
@@ -245,6 +255,31 @@ def run_minute_portfolio(
             if is_halted_day(day_frame)
         }
     times = sorted(bars_by_time)
+
+    # 窗口首日拿不到前收盘价 → 当日涨跌停约束缺失。调用方（minute.service）默认会向前
+    # 多取若干自然日来覆盖，真被源侧缺数据挡掉时必须显式说出来，不能静默放宽
+    if trade_start_ts is not None:
+        for symbol, frame in data.items():
+            first_session = pd.Timestamp(frame["session_date"].min())
+            if first_session < trade_start_ts:
+                continue  # 回测区间之前有行情，首日约束正常
+            if first_session not in prev_close_map.get(symbol, {}):
+                warnings.append(
+                    f"{symbol} {first_session.date()}: 窗口首日无前收盘价，"
+                    "当日涨跌停约束缺失"
+                )
+
+    # 同一次顺延在同一 (标的, 交易日, 原因) 上只告警一次，与停牌路径口径一致
+    warned: set[tuple[str, pd.Timestamp, str]] = set()
+
+    def warn_once(
+        symbol: str, session: pd.Timestamp, reason: str, message: str
+    ) -> None:
+        key = (symbol, session, reason)
+        if key in warned:
+            return
+        warned.add(key)
+        warnings.append(message)
 
     scheduled: dict[pd.Timestamp, list[_PendingOrder]] = {}
     if orders_df is not None and not orders_df.empty:
@@ -263,6 +298,12 @@ def run_minute_portfolio(
                 continue
             # 信号 bar 之后最早的一根 bar：收盘信号自然落到下一交易日的开盘集合竞价
             pos = bisect_right(times, signal_time)
+            if is_closing_auction(signal_time):
+                # 收盘集合竞价（14:57–15:00）内不再有连续竞价成交，当日已无法成交；
+                # 跳过当日剩余 bar，最早进下一交易日的开盘集合竞价
+                session = signal_time.normalize()
+                while pos < len(times) and times[pos].normalize() == session:
+                    pos += 1
             if pos >= len(times):
                 warnings.append(f"{symbol} {signal_time}: 信号后无下一 bar，未成交")
                 continue
@@ -280,7 +321,6 @@ def run_minute_portfolio(
             )
 
     carry: list[_PendingOrder] = []
-    halt_warned: set[tuple[str, pd.Timestamp]] = set()
     for ts in times:
         day_bars = bars_by_time[ts]
         session_date = ts.normalize()
@@ -294,19 +334,24 @@ def run_minute_portfolio(
             bar = day_bars.get(symbol)
             if bar is None or session_date in halted_sessions.get(symbol, set()):
                 # 停牌/无行情：当日不可成交，顺延到下一有行情的 bar（每交易日只告警一次）
-                if (symbol, session_date) not in halt_warned:
-                    halt_warned.add((symbol, session_date))
-                    warnings.append(
-                        f"{symbol} {session_date.date()}: 停牌/无行情，"
-                        "当日无法卖出，顺延"
-                    )
+                warn_once(
+                    symbol,
+                    session_date,
+                    "halt",
+                    f"{symbol} {session_date.date()}: 停牌/无行情，当日无法卖出，顺延",
+                )
                 continue
             rule = rules.get(symbol)
             previous_close = prev_close_map.get(symbol, {}).get(session_date)
             if previous_close is not None and is_limit_down(
                 float(bar["open"]), previous_close, symbol, ts, rule
             ):
-                warnings.append(f"{symbol} {ts}: 卖出遇跌停，顺延")
+                warn_once(
+                    symbol,
+                    session_date,
+                    "limit_down_defer",
+                    f"{symbol} {session_date.date()}: 卖出遇跌停，顺延",
+                )
                 continue
 
             exit_price: float | None = None
@@ -384,7 +429,12 @@ def run_minute_portfolio(
                 float(bar["open"]), previous_close, symbol, ts, rule
             ):
                 if cfg.defer_to_next_bar:
-                    warnings.append(f"{symbol} {ts}: 买入遇涨停，顺延至当日后续 bar")
+                    warn_once(
+                        symbol,
+                        session_date,
+                        "limit_up_defer",
+                        f"{symbol} {session_date.date()}: 买入遇涨停，顺延至当日后续 bar",
+                    )
                     carry.append(order)
                 else:
                     warnings.append(f"{symbol} {ts}: 买入遇涨停，未成交")

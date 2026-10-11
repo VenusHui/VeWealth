@@ -7,6 +7,9 @@
   竞价。分钟 K 线里没有 09:15–09:25 的 bar —— 开盘集合竞价的结果**就是当日第一根
   bar 的 open**，所以「在开盘价成交」等价于「在开盘集合竞价成交」，成交记录以
   ``fill_phase="call_auction"`` 标注；其余 bar 标注 ``"continuous"``。
+  收盘集合竞价时段内不再有连续竞价成交，落在该时段的信号当日已无法成交，最早只能
+  进下一交易日的开盘集合竞价 —— 由 ``minute.engine`` 用 :func:`is_closing_auction`
+  判断并顺延。
 - **连续竞价**：09:30–11:30 / 13:00–15:00，共 240 分钟。
 - **停牌**：某标的某交易日整日无 bar，或整日成交量为 0，视为停牌/无行情，当日不可
   成交（持仓卖不出、买单不成交），一律顺延或作废并告警，不静默跳过。
@@ -18,17 +21,13 @@
 
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import time
 
 import pandas as pd
 
-#: 连续竞价总分钟数（上午 120 + 下午 120）
-MINUTES_PER_SESSION = 240
-
-#: 开盘集合竞价时段（09:25 出开盘价，该结果落在当日第一根 bar 的 open 上）
-OPENING_AUCTION = (time(9, 15), time(9, 25))
-
-#: 收盘集合竞价时段（14:57–15:00）。此时段内产生的信号当日已无法连续竞价成交。
+#: 收盘集合竞价时段（14:57–15:00）。此时段内不再有连续竞价成交，落在其中的信号当日
+#: 已无法成交 —— 这是本模块唯一被撮合链依赖的时段常量，开盘集合竞价时段（09:15–09:25）
+#: 不需要常量：它的结果就是当日第一根 bar 的 open，见模块文档。
 CLOSING_AUCTION = (time(14, 57), time(15, 0))
 
 #: 连续竞价时段（起, 止），止为收盘时刻（含）
@@ -41,14 +40,6 @@ def _minutes_of_day(value: time) -> int:
 
 def _time_of_minutes(total: int) -> time:
     return time(total // 60, total % 60)
-
-
-def bars_per_day(period: str | int) -> int:
-    """该周期每个交易日的 bar 数（240 分钟 / 周期）。"""
-    minutes = int(str(period).strip())
-    if minutes <= 0:
-        raise ValueError(f"周期必须为正整数分钟: {period!r}")
-    return MINUTES_PER_SESSION // minutes
 
 
 def session_bar_times(period: str | int) -> list[time]:
@@ -66,48 +57,46 @@ def session_bar_times(period: str | int) -> list[time]:
     return times
 
 
-def open_bar_time(period: str | int) -> time:
-    """当日第一根 bar 的收盘时刻（开盘集合竞价的成交价落在它的 open 上）。"""
-    return session_bar_times(period)[0]
+def bars_per_day(period: str | int) -> int:
+    """该周期每个交易日的 bar 数。
 
-
-def is_session_open_bar(ts, period: str | int) -> bool:
-    """该 bar 是否为当日第一根 —— 即开盘集合竞价的成交 bar。"""
-    return pd.Timestamp(ts).time() == open_bar_time(period)
+    直接数时段表而不是 ``240 // period`` —— 后者只在周期整除 240 时与时段表一致，
+    而时段表才是取数侧真正对齐的口径。
+    """
+    return len(session_bar_times(period))
 
 
 def is_closing_auction(ts) -> bool:
-    """该时刻是否落在收盘集合竞价时段内。"""
+    """该时刻是否落在收盘集合竞价时段内（14:57–15:00，含 15:00 的收盘成交）。"""
     moment = pd.Timestamp(ts).time()
     return CLOSING_AUCTION[0] <= moment <= CLOSING_AUCTION[1]
 
 
-def session_date_of(ts) -> pd.Timestamp:
-    """bar 时刻 → 所属交易日（归一化到 00:00）。"""
-    return pd.Timestamp(ts).normalize()
-
-
 def is_halted_day(day_frame: pd.DataFrame | None) -> bool:
-    """整日无 bar，或整日成交量为 0，视为停牌/无行情。"""
+    """整日无 bar，或整日成交量为 0，视为停牌/无行情。
+
+    ``volume`` **缺失或全为 NaN** 时返回 False：那是「源没给成交量」，不是「确实零成
+    交」。两者混为一谈会让没有成交量字段的标的整天不可成交（买单作废、持仓卖不出）。
+    """
     if day_frame is None or day_frame.empty:
         return True
     if "volume" not in day_frame.columns:
         return False
     try:
-        return (
-            float(pd.to_numeric(day_frame["volume"], errors="coerce").fillna(0).sum())
-            <= 0
-        )
+        volume = pd.to_numeric(day_frame["volume"], errors="coerce").dropna()
     except (TypeError, ValueError):  # pragma: no cover - 防御性
         return False
+    if volume.empty:
+        return False
+    return float(volume.sum()) <= 0
 
 
 def previous_close_by_session(frame: pd.DataFrame) -> dict[pd.Timestamp, float]:
     """每个交易日 → 该标的**前一交易日**收盘价，用于算涨跌停上下限。
 
     分钟 bar 里没有「昨日收盘」字段，只能由序列自身聚合。窗口首日没有前序交易日，
-    故不出现在结果里（该日的涨跌停检查会被跳过 —— 回测用 warmup 覆盖首日，见
-    ``minute.service``）。
+    故不出现在结果里 —— 该日的涨跌停检查会被跳过。调用方必须保证帧内含有回测首日之
+    前的行情（``minute.service`` 默认向前多取若干自然日），否则引擎会就该日显式告警。
     """
     if frame is None or frame.empty or "close" not in frame.columns:
         return {}
@@ -125,13 +114,3 @@ def previous_close_by_session(frame: pd.DataFrame) -> dict[pd.Timestamp, float]:
         sessions[idx]: float(last_close.iloc[idx - 1])
         for idx in range(1, len(sessions))
     }
-
-
-def session_dates(frames: dict[str, pd.DataFrame]) -> list[date]:
-    """多标的分钟帧的交易日并集（升序）。"""
-    seen: set[pd.Timestamp] = set()
-    for frame in frames.values():
-        if frame is None or frame.empty:
-            continue
-        seen.update(pd.to_datetime(frame["datetime"]).dt.normalize().unique())
-    return [pd.Timestamp(ts).date() for ts in sorted(seen)]

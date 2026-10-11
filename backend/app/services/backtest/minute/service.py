@@ -49,8 +49,13 @@ from app.services.backtest.minute.engine import (
 )
 from app.services.backtest.minute.session import bars_per_day
 
-#: 交易日 / 自然日换算系数（与日线 warmup 回拉同口径）
+#: 交易日 / 自然日换算系数（与日线 warmup 回拉同口径：把交易日数换成自然日时**多取**）
 _CALENDAR_FACTOR = 1.6
+
+#: 为保证回测首日也能算涨跌停，额外向前多取的自然日（覆盖一个周末 + 一个节假日）。
+#: 分钟 bar 没有「昨日收盘」字段，首日的前收盘只能靠帧内的前一个交易日聚合出来 ——
+#: 不向前多取，首日就会静默失去涨跌停约束。与 ``warmup_sessions`` 无关，始终生效。
+_LIMIT_REFERENCE_DAYS = 7
 
 BenchmarkLoader = Callable[[str, str, str], Optional[pd.DataFrame]]
 
@@ -131,7 +136,8 @@ def run_minute_backtest(
         hold_days: 持仓交易日数（T+1 强制 >= 1）。
         depth_policy: ``strict``（超深度报错）/ ``truncate``（截断并注明）。
         warmup_sessions: 为指标预热额外回拉的交易日数（取数区间向前扩，但净值与成交
-            仍从 ``start_date`` 起算）。
+            仍从 ``start_date`` 起算）。另有始终生效的首日前收盘缓冲（
+            ``_LIMIT_REFERENCE_DAYS`` 自然日），与 warmup 无关。
         benchmark: 基准代码；给定时对齐到分钟网格并在 diagnostics 记录口径。
         loader / benchmark_loader: 注入点（测试与替换源用）。
 
@@ -155,20 +161,23 @@ def run_minute_backtest(
     if user_start > end:
         raise ValueError("start_date 不能晚于 end_date")
 
-    # warmup 只为指标预热：取数区间向前扩，但引擎的 trade_start 仍钉在用户区间起点
+    # warmup 只为指标预热：取数区间向前扩，但引擎的 trade_start 仍钉在用户区间起点。
+    # 额外再加 _LIMIT_REFERENCE_DAYS，保证回测首日也有前收盘价可算涨跌停。
     warmup_days = int(max(0, warmup_sessions) * _CALENDAR_FACTOR) + 1
-    load_start = (
-        user_start - timedelta(days=warmup_days) if warmup_sessions else user_start
+    requested_load_start = user_start - timedelta(
+        days=warmup_days + _LIMIT_REFERENCE_DAYS
     )
 
     # 深度裁决按**实际取数区间**做：warmup 拉不动就取不到指标，同样必须显式暴露
     decision = resolve_request_window(
-        key, load_start, end, policy=depth_policy, as_of=as_of_date
+        key, requested_load_start, end, policy=depth_policy, as_of=as_of_date
     )
     load_start = decision.effective_start
 
+    # 原始（未截断）区间交给 loader，让它按标的各自裁决并记录 —— 深度截断是逐标的的
+    # 事实，只在顶层 diagnostics 可见会让逐标的 provenance 的 truncated/depth_note 恒空
     frames, results, warnings = _load_minute_frames(
-        symbols, key, load_start, end, depth_policy, loader, as_of_date
+        symbols, key, requested_load_start, end, depth_policy, loader, as_of_date
     )
     if not frames:
         raise ValueError(
@@ -221,7 +230,9 @@ def run_minute_backtest(
         "load_window": {
             "start": load_start.isoformat(),
             "end": end.isoformat(),
+            "requested_start": requested_load_start.isoformat(),
             "warmup_sessions": int(max(0, warmup_sessions)),
+            "limit_reference_days": _LIMIT_REFERENCE_DAYS,
         },
         "depth_decision": {
             "policy": decision.policy,

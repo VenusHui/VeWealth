@@ -149,18 +149,98 @@ def test_loader_marks_empty_result_with_failure_reason():
     assert result.provenance.failure_reason
 
 
-def test_estimate_bar_count_scales_with_period_and_span():
-    assert (
-        estimate_bar_count(
-            pd.Timestamp("2026-01-05").date(), pd.Timestamp("2026-01-05").date(), "1"
-        )
-        == 240
+def test_estimate_bar_count_scales_with_period():
+    start, end = "2026-01-05", "2026-02-05"
+    assert estimate_fetch_bars("1", start, end) == 5 * estimate_fetch_bars(
+        "5", start, end
     )
-    assert estimate_fetch_bars("5", "2026-01-05", "2026-01-05") == 48
-    # 同一区间下 1min 的根数是 5min 的 5 倍
-    assert estimate_fetch_bars(
-        "1", "2026-01-05", "2026-02-05"
-    ) == 5 * estimate_fetch_bars("5", "2026-01-05", "2026-02-05")
+    assert estimate_fetch_bars("5", start, end) == 12 * estimate_fetch_bars(
+        "60", start, end
+    )
+
+
+def _business_days(start: str, end: str) -> int:
+    """窗口内的工作日数。
+
+    仓库里没有交易日历，工作日是真实交易日的**上界**（节假日只会更少）—— 估算根数连
+    工作日都覆盖不了，就一定覆盖不了真实交易日。
+    """
+    return len(pd.bdate_range(start, end))
+
+
+@pytest.mark.parametrize(
+    "start,end",
+    [
+        ("2026-06-15", "2026-10-02"),  # 评审给出的反例：109 自然日 / 80 个工作日
+        ("2025-09-12", "2026-01-07"),  # 1min 有效深度边界（约 120 自然日）
+        ("2025-01-01", "2026-01-01"),  # 5/15/30/60min 的长窗口
+        ("2026-06-15", "2026-06-30"),  # 短窗口
+        ("2026-09-28", "2026-10-09"),  # 跨国庆，工作日被压缩
+    ],
+)
+def test_estimate_bar_count_never_underestimates_the_window(start, end):
+    """``count`` 是源侧硬上限（从最新一根往前最多取 count 根），估小会静默砍掉窗口头部
+    且不可恢复 —— 所以估算必须只往多的方向偏。"""
+    for period, per_day in (("1", 240), ("5", 48), ("60", 4)):
+        estimated = estimate_bar_count(
+            pd.Timestamp(start).date(), pd.Timestamp(end).date(), period
+        )
+        lower_bound = _business_days(start, end) * per_day
+        assert estimated >= lower_bound, (
+            f"{start}~{end} period={period}: 估算 {estimated} 根 < 工作日下界 "
+            f"{lower_bound} 根"
+        )
+
+
+class _ProviderLikeFetch:
+    """复刻 provider 的取数语义：**从最新一根往前最多取 count 根**，再按区间过滤。
+
+    ``count`` 是硬上限，不是提示 —— 估小就等于向源要一段它给不出的历史，窗口头部被静默
+    砍掉。用真实的 provider 语义（而不是「返回整段历史」的宽松假函数）才能验出估算方向。
+    """
+
+    def __init__(self, history: pd.DataFrame, source: str = "mootdx"):
+        self.history = history
+        self.source = source
+        self.calls: list[dict] = []
+
+    def __call__(self, symbol, period, start_datetime, end_datetime, count, deadline):
+        self.calls.append({"count": count, "start_datetime": start_datetime})
+        window = self.history.tail(count)
+        mask = (window["datetime"] >= pd.Timestamp(start_datetime)) & (
+            window["datetime"] <= pd.Timestamp(end_datetime)
+        )
+        out = window[mask].copy()
+        out.attrs["source"] = self.source
+        return out
+
+
+def test_loader_covers_the_whole_window_when_count_is_the_binding_limit():
+    """评审的反例：源提供完整 80 个交易日，count 是源侧硬上限。
+
+    估算偏小时源只返回「最新 count 根」，窗口头部被砍掉并误报 gap。
+    """
+    days = pd.bdate_range("2026-06-15", "2026-10-02")
+    assert len(days) == 80
+    history = _minute_frame([day.strftime("%Y-%m-%d") for day in days])
+    fetch = _ProviderLikeFetch(history)
+    loader = MinuteDataLoader(fetch_minute=fetch)
+    result = loader.load("000001", "1", "2026-06-15", "2026-10-02", as_of="2026-10-05")
+
+    assert result.provenance.bar_count == 80 * 240
+    assert result.provenance.actual_start == "2026-06-15 09:31:00"
+    assert result.provenance.gap is False
+
+
+def test_loader_records_original_request_window_and_effective_start():
+    fetch = _FakeFetch({"000001": _minute_frame(["2026-01-05"])})
+    loader = MinuteDataLoader(fetch_minute=fetch)
+    result = loader.load("000001", "1", "2025-01-01", "2026-01-06", as_of=AS_OF)
+
+    # 原始请求区间原样保留，截断后的有效区间另给 —— 否则事后看不出被截掉多少
+    assert result.provenance.requested_start == "2025-01-01"
+    assert result.decision.effective_start.isoformat() == "2025-09-12"
+    assert result.provenance.truncated is True
 
 
 def test_provenance_summary_aggregates_sources_gaps_and_window():
@@ -323,3 +403,43 @@ def test_service_warmup_extends_load_window_but_keeps_trade_start():
     assert result["diagnostics"]["load_window"]["start"] < "2026-01-06"
     assert result["equity_curve"][0]["datetime"].startswith("2026-01-06")
     assert fetch.calls[0]["start_datetime"] < "2026-01-06"
+
+
+def test_service_always_reserves_limit_reference_buffer_before_start():
+    """首日前收盘价只能靠帧内的前一交易日聚合，取数区间必须始终向前留缓冲 ——
+    与 warmup_sessions 无关（默认 0 时也要有），否则回测首日静默失去涨跌停约束。"""
+    frames = {"000001": _minute_frame(["2026-01-05", "2026-01-06"])}
+    result, fetch = _run_service(
+        frames, None, start_date="2026-01-06", end_date="2026-01-06"
+    )
+
+    load_window = result["diagnostics"]["load_window"]
+    assert load_window["warmup_sessions"] == 0
+    assert load_window["limit_reference_days"] > 0
+    assert load_window["requested_start"] < "2026-01-06"
+    # 缓冲落在深度之内，所以实际生效的取数起点就是带缓冲的那个，没有被截断
+    assert load_window["start"] == load_window["requested_start"]
+    assert fetch.calls[0]["start_datetime"].startswith(load_window["start"])
+
+
+def test_service_records_per_symbol_depth_truncation():
+    """深度截断是**逐标的**的事实：交给 loader 原始区间，让它自己裁决并留痕。
+
+    顶层先截断再交给 loader 会让逐标的的 truncated / depth_exceeded / depth_note 恒为
+    空值，truncated_count 与对应告警因此不可达。
+    """
+    frames = {"000001": _minute_frame(["2026-01-05", "2026-01-06", "2026-01-07"])}
+    result, _ = _run_service(
+        frames, None, start_date="2025-01-01", end_date="2026-01-07"
+    )
+
+    provenance = result["diagnostics"]["data_provenance"]
+    assert provenance["truncated_count"] == 1
+    assert provenance["degraded"] is True
+    row = provenance["symbols"][0]
+    assert row["truncated"] is True
+    assert row["depth_exceeded"] is True
+    assert row["depth_note"] and "截断" in row["depth_note"]
+    # 逐标的记的是**原始**请求区间，截断后的区间由顶层 depth_decision 给
+    assert row["requested_start"] < result["diagnostics"]["load_window"]["start"]
+    assert any("取数区间被深度截断" in w for w in result["warnings"])

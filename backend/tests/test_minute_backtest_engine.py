@@ -14,8 +14,6 @@
 
 from __future__ import annotations
 
-from datetime import date
-
 import pandas as pd
 import pytest
 
@@ -380,9 +378,143 @@ def test_session_eod_curve_keeps_last_point_per_session():
     assert session_eod_curve([]) == []
 
 
-def test_session_dates_are_ordered_and_deduped():
-    from app.services.backtest.minute.session import session_dates
+def test_snapshot_time_is_session_last_bar_not_last_iterated_symbol():
+    """收盘快照必须落在当日**最晚**的 bar 上，与 equity_curve_eod 一致。
 
-    rows = _flat_day("2026-01-06", 10.0) + _flat_day("2026-01-05", 10.0)
-    dates = session_dates({"000001": _frame(rows)})
-    assert dates == [date(2026, 1, 5), date(2026, 1, 6)]
+    快照时点若取决于标的遍历顺序（「最后一个被遍历到的标的的最后一根 bar」），缺尾 bar
+    的标的排在后面就会把快照挪到 14:00，和日频曲线的取点对不上。
+    """
+    rows_a = _flat_day("2026-06-15", 10.0)  # 完整到 15:00
+    rows_b = [
+        row for row in _flat_day("2026-06-15", 20.0) if row[0] <= "2026-06-15 14:00:00"
+    ]
+    for data in (
+        {"000001": _frame(rows_a), "000002": _frame(rows_b)},
+        {"000002": _frame(rows_b), "000001": _frame(rows_a)},  # 顺序反转
+    ):
+        result = run_minute_portfolio(data, None, 100000.0, CostModel())
+        assert result.equity_curve[-1]["datetime"] == "2026-06-15 15:00:00"
+        assert len(result.positions_snapshot) == 1
+        assert result.positions_snapshot[0]["snapshot_time"] == "2026-06-15 15:00:00"
+
+
+def test_limit_up_deferral_warns_once_per_session_not_per_bar():
+    """全天封板 240 根 bar，顺延告警必须按 (标的, 交易日, 原因) 去重。"""
+    rows = _flat_day("2026-01-05", 10.0) + _flat_day("2026-01-06", 11.0)
+    result = run_minute_portfolio(
+        {"000001": _frame(rows)},
+        _orders([{"symbol": "000001", "trade_date": "2026-01-05"}]),
+        100000.0,
+        CostModel(),
+    )
+    defer_warnings = [w for w in result.warnings if "涨停" in w and "顺延" in w]
+    assert len(defer_warnings) == 1
+    assert "2026-01-06" in defer_warnings[0]
+
+
+def test_limit_down_sell_deferral_also_warns_once_per_session():
+    rows = (
+        _flat_day("2026-01-05", 10.0)
+        + _flat_day("2026-01-06", 10.0)
+        + _flat_day("2026-01-07", 9.0)
+    )
+    result = run_minute_portfolio(
+        {"000001": _frame(rows)},
+        _orders([{"symbol": "000001", "trade_date": "2026-01-05"}]),
+        100000.0,
+        CostModel(),
+        config=MinuteExecutionConfig(hold_days=1),
+    )
+    defer_warnings = [w for w in result.warnings if "跌停" in w and "顺延" in w]
+    assert len(defer_warnings) == 1
+    assert "2026-01-07" in defer_warnings[0]
+
+
+def test_missing_volume_column_does_not_count_as_halted():
+    """缺 volume 列 = 源没给成交量，不是「确实零成交」，不能整天判停牌。"""
+    columns = ["datetime", "open", "high", "low", "close"]
+    rows = [
+        [row[0], row[1], row[2], row[3], row[4]]
+        for row in _flat_day("2026-01-06", 10.0) + _flat_day("2026-01-07", 10.0)
+    ]
+    frame = pd.DataFrame(rows, columns=columns)
+    frame["datetime"] = pd.to_datetime(frame["datetime"])
+    result = run_minute_portfolio(
+        {"000001": frame},
+        _orders([{"symbol": "000001", "signal_datetime": "2026-01-06 10:00:00"}]),
+        100000.0,
+        CostModel(),
+        config=MinuteExecutionConfig(hold_days=1),
+    )
+    assert len(_buys(result)) == 1
+    assert len(_sells(result)) == 1
+    assert not any("停牌" in w for w in result.warnings)
+
+
+def test_all_nan_volume_does_not_count_as_halted():
+    rows = _flat_day("2026-01-06", 10.0) + _flat_day("2026-01-07", 10.0)
+    frame = _frame(rows)
+    frame["volume"] = float("nan")
+    result = run_minute_portfolio(
+        {"000001": frame},
+        _orders([{"symbol": "000001", "signal_datetime": "2026-01-06 10:00:00"}]),
+        100000.0,
+        CostModel(),
+        config=MinuteExecutionConfig(hold_days=1),
+    )
+    assert len(_buys(result)) == 1
+    assert not any("停牌" in w for w in result.warnings)
+
+
+def test_signal_in_closing_auction_defers_to_next_session_open():
+    """14:57–15:00 是收盘集合竞价，当日已无连续竞价成交，最早进次日开盘集合竞价。"""
+    rows = _flat_day("2026-01-06", 10.0) + _flat_day("2026-01-07", 10.0)
+    result = run_minute_portfolio(
+        {"000001": _frame(rows)},
+        _orders([{"symbol": "000001", "signal_datetime": "2026-01-06 14:57:00"}]),
+        100000.0,
+        CostModel(),
+    )
+    buys = _buys(result)
+    assert len(buys) == 1
+    assert buys[0]["datetime"] == "2026-01-07 09:31:00"
+    assert buys[0]["fill_phase"] == "call_auction"
+
+
+def test_signal_before_closing_auction_still_fills_same_day():
+    """14:56 仍在连续竞价内，下一根 bar（14:57）就是集合竞价首根，不受顺延影响。"""
+    rows = _flat_day("2026-01-06", 10.0) + _flat_day("2026-01-07", 10.0)
+    result = run_minute_portfolio(
+        {"000001": _frame(rows)},
+        _orders([{"symbol": "000001", "signal_datetime": "2026-01-06 14:55:00"}]),
+        100000.0,
+        CostModel(),
+    )
+    buys = _buys(result)
+    assert len(buys) == 1
+    assert buys[0]["datetime"] == "2026-01-06 14:56:00"
+
+
+def test_first_session_without_previous_close_warns_about_missing_limit():
+    """首日拿不到前收盘价 → 涨跌停约束缺失，必须显式告警而不是静默放宽。"""
+    rows = _flat_day("2026-01-06", 10.0) + _flat_day("2026-01-07", 10.0)
+    result = run_minute_portfolio(
+        {"000001": _frame(rows)},
+        None,
+        100000.0,
+        CostModel(),
+        trade_start="2026-01-06",
+    )
+    assert any("无前收盘价" in w and "涨跌停约束缺失" in w for w in result.warnings)
+
+
+def test_first_session_covered_by_prior_data_does_not_warn():
+    rows = _flat_day("2026-01-05", 10.0) + _flat_day("2026-01-06", 10.0)
+    result = run_minute_portfolio(
+        {"000001": _frame(rows)},
+        None,
+        100000.0,
+        CostModel(),
+        trade_start="2026-01-06",
+    )
+    assert not any("无前收盘价" in w for w in result.warnings)

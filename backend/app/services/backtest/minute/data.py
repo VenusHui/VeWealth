@@ -37,8 +37,16 @@ MINUTE_COLUMNS = ["datetime", "open", "high", "low", "close", "volume"]
 #: provenance 的 gap 暴露出来。
 DEFAULT_FETCH_BUDGET_SECONDS = 60.0
 
-#: 交易日 / 自然日换算系数（与日线 warmup 回拉同口径）
-_CALENDAR_FACTOR = 1.6
+#: 交易日 / 自然日比例（与 ``minute_backfill`` 同口径）。仓库内没有交易日历，这是估算。
+_TRADING_DAY_RATIO = 5.0 / 7.0
+
+#: 根数估算的安全余量。``count`` 在两条源链上都是**硬上限**（「从最新一根往前最多取
+#: count 根，再按区间过滤」），估小会静默砍掉窗口头部且不可恢复，估大只是多取几根再
+#: 被区间过滤掉 —— 所以只往多的方向留余量。
+_COUNT_SAFETY_MARGIN = 1.2
+
+#: 短窗口的固定余量（交易日）：比例折算出 0 时也要保证至少覆盖几天。
+_MIN_SESSION_SLACK = 2
 
 FetchMinuteFn = Callable[..., Optional[pd.DataFrame]]
 
@@ -65,10 +73,20 @@ def _default_fetch_minute(
 
 
 def estimate_bar_count(start: date, end: date, period: str) -> int:
-    """按自然日跨度估算需要拉取的 bar 数（交易日 ≈ 自然日 / 1.6）。"""
+    """按自然日跨度估算需要拉取的 bar 数 —— **只往多的方向估**。
+
+    这个数会作为 ``count`` 传给数据源，而 ``count`` 在两条源链上都是硬上限：源是「从最
+    新一根往前最多取 count 根，再按区间过滤」。估小 = 窗口头部被静默砍掉（还会让
+    ``gap`` 常态化误报，把真正的源侧缺口淹没在噪声里）；估大 = 多取几根再被区间过滤，
+    源数据不够时它自己就停了。所以这里按真实节假日比例折算后再乘安全余量。
+
+    注意方向：日线 warmup 的 ``× 1.6`` 是「交易日 → 自然日」（同一个比的另一侧，往多
+    了取自然日），照搬到这里方向就反了。
+    """
     span_days = max((end - start).days, 0)
-    sessions = max(1, int(span_days / _CALENDAR_FACTOR) + 1)
-    return sessions * bars_per_day(period)
+    sessions = int(span_days * _TRADING_DAY_RATIO * _COUNT_SAFETY_MARGIN)
+    sessions += _MIN_SESSION_SLACK
+    return max(1, sessions) * bars_per_day(period)
 
 
 def normalize_minute_frame(df: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
@@ -91,7 +109,9 @@ def normalize_minute_frame(df: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]
             elif col == "low":
                 work[col] = work[["open", "close"]].min(axis=1)
             else:
-                work[col] = 0.0
+                # volume 缺失时**不补 0**：那是「源没给成交量」，不是「确实零成交」，
+                # 补 0 会让该标的整天被判停牌（见 session.is_halted_day）
+                continue
         work[col] = pd.to_numeric(work[col], errors="coerce")
     work = work.dropna(subset=["open", "close"])
     if work.empty:
@@ -198,8 +218,10 @@ class MinuteDataLoader:
         provenance = DataProvenance(
             source=source,
             adjustment="",
-            requested_start=decision.effective_start.isoformat(),
-            requested_end=decision.effective_end.isoformat(),
+            # 记**原始**请求区间（截断前）：截断事实由 truncated / depth_note 标注，有效
+            # 区间由 decision.effective_start 给 —— 只留一个的话事后看不出被截掉多少
+            requested_start=decision.requested_start.isoformat(),
+            requested_end=decision.requested_end.isoformat(),
             actual_start=actual_start,
             actual_end=actual_end,
             bar_count=0 if df is None else int(len(df)),
@@ -267,6 +289,7 @@ def provenance_summary(results: list[MinuteLoadResult]) -> dict[str, Any]:
                 "source": prov.source,
                 "requested_start": prov.requested_start,
                 "requested_end": prov.requested_end,
+                "effective_start": result.decision.effective_start.isoformat(),
                 "actual_start": prov.actual_start,
                 "actual_end": prov.actual_end,
                 "bar_count": prov.bar_count,
@@ -274,6 +297,7 @@ def provenance_summary(results: list[MinuteLoadResult]) -> dict[str, Any]:
                 "gap": prov.gap,
                 "truncated": prov.truncated,
                 "depth_exceeded": prov.depth_exceeded,
+                "depth_note": prov.depth_note,
                 "failure_reason": prov.failure_reason,
             }
         )
