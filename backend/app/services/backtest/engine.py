@@ -162,6 +162,49 @@ def _max_affordable_quantity(
     return 0
 
 
+def size_entry_order(
+    *,
+    cash: float,
+    pretrade_equity: float,
+    held_value: float,
+    requested_pct: float | None,
+    default_position_size_pct: float,
+    max_total_position_pct: float,
+    deal_price: float,
+    cost_model: CostModel,
+    lot_size: int,
+) -> int:
+    """按现金与总仓位上限求单笔买单可成交数量（两条撮合链共用）。
+
+    先按「现金 + 剩余仓位额度」求整手数量，再扣掉买入费用对总仓位上限的影响逐手回退，
+    避免手续费把实际仓位顶破 ``max_total_position_pct``。日线（``run_portfolio``）与
+    分钟（``minute.engine.run_minute_portfolio``）语义一致，故共用。
+    """
+    raw_requested = requested_pct
+    if raw_requested is None or pd.isna(raw_requested):
+        requested_pct = default_position_size_pct
+    else:
+        requested_pct = float(raw_requested)
+    requested_pct = max(0.0, min(1.0, requested_pct))
+
+    remaining_exposure = max(0.0, pretrade_equity * max_total_position_pct - held_value)
+    exposure_budget = min(pretrade_equity * requested_pct, remaining_exposure)
+    qty = _max_affordable_quantity(
+        cash, exposure_budget, deal_price, cost_model, lot_size
+    )
+    while qty > 0:
+        prospective_amount = qty * deal_price
+        prospective_fee = cost_model.buy_cost(prospective_amount)
+        post_fee_equity = pretrade_equity - prospective_fee
+        if (
+            held_value + prospective_amount
+            <= post_fee_equity * max_total_position_pct + 1e-9
+        ):
+            break
+        qty -= lot_size
+    return qty
+
+
 def run_portfolio(
     market_data_map: dict[str, pd.DataFrame],
     orders_df: pd.DataFrame,
@@ -317,34 +360,21 @@ def run_portfolio(
                 for held_symbol, price in open_prices.items()
             )
             pretrade_equity = cash + held_value
-            remaining_exposure = max(
-                0.0, pretrade_equity * max_total_position_pct - held_value
-            )
-            raw_requested_pct = order.get("position_size_pct")
-            requested_pct = (
-                default_position_size_pct
-                if raw_requested_pct is None or pd.isna(raw_requested_pct)
-                else float(raw_requested_pct)
-            )
-            requested_pct = max(0.0, min(1.0, requested_pct))
-            exposure_budget = min(pretrade_equity * requested_pct, remaining_exposure)
             _, upper_limit = price_limit_bounds(
                 previous_close, symbol, trade_date, rules.get(symbol)
             )
             deal_price = min(cost_model.apply_buy_slippage(raw_open), upper_limit)
-            qty = _max_affordable_quantity(
-                cash, exposure_budget, deal_price, cost_model, lot_size
+            qty = size_entry_order(
+                cash=cash,
+                pretrade_equity=pretrade_equity,
+                held_value=held_value,
+                requested_pct=order.get("position_size_pct"),
+                default_position_size_pct=default_position_size_pct,
+                max_total_position_pct=max_total_position_pct,
+                deal_price=deal_price,
+                cost_model=cost_model,
+                lot_size=lot_size,
             )
-            while qty > 0:
-                prospective_amount = qty * deal_price
-                prospective_fee = cost_model.buy_cost(prospective_amount)
-                post_fee_equity = pretrade_equity - prospective_fee
-                if (
-                    held_value + prospective_amount
-                    <= post_fee_equity * max_total_position_pct + 1e-9
-                ):
-                    break
-                qty -= lot_size
             if qty <= 0:
                 warnings.append(
                     f"{symbol} {trade_date.date()}: 现金或仓位额度不足，未成交"

@@ -2035,6 +2035,9 @@ class AStockDataProvider(MarketDataProvider):
             logger.info(
                 f"股票 {stock_code} period={period} 由 mootdx 返回 (共{len(df)}行)"
             )
+            # 供分钟回测的 provenance 记录实际服务源（VEW-66）：各源窗口不同且滚动，
+            # 只有记下「这次是谁返回的」才能事后判断一次回测跑在什么数据上。
+            df.attrs["source"] = "mootdx"
             return df
 
         # 2. Fallback: Eastmoney HTTP
@@ -2076,6 +2079,7 @@ class AStockDataProvider(MarketDataProvider):
                         served = adjust if period != "1" else ""
                         df.attrs["adjust_served"] = served
                         df.attrs["adjust_degraded"] = bool(adjust) and served != adjust
+                        df.attrs["source"] = "eastmoney"
                         # Filter to requested datetime range
                         if "datetime" in df.columns:
                             df["datetime"] = pd.to_datetime(df["datetime"])
@@ -2123,6 +2127,7 @@ class AStockDataProvider(MarketDataProvider):
             logger.info(
                 f"股票 {stock_code} period={period} 由腾讯 ifzq 返回 (共{len(df)}行)"
             )
+            df.attrs["source"] = "tencent"
             return df
 
         logger.warning(
