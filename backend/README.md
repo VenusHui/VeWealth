@@ -234,10 +234,11 @@ pytest tests/
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET /api/health` | 总体健康状态（ok / degraded / unhealthy / unknown） |
+| `GET /api/health` | 总体健康状态（ok / degraded / unhealthy / unknown），另附 `capacity` 磁盘余量 |
 | `GET /api/health/sources?refresh=true` | 各数据源探针与运行状态快照（`refresh=true` 触发一轮实时探针） |
 | `GET /api/health/metrics` | 按数据源聚合的监控指标（请求量 / 成功率 / 平均耗时） |
 | `GET /api/health/events` | 最近的降级事件（失败 / 回退 / 恢复） |
+| `GET /api/health/capacity` | 磁盘余量快照（实时采样）+ 最近的容量状态跃迁事件 |
 
 ### 工作原理
 
@@ -250,6 +251,22 @@ pytest tests/
   （`[data-source] event_type source=... detail=...`），供日志采集 / 告警系统消费。
 - **定时检查**：APScheduler 按 `SOURCE_HEALTH_PROBE_CRON`（默认每 5 分钟）执行一轮探针。
 
+### 磁盘余量（VEW-67）
+
+生产 `/` 是单块 40 GB 盘，postgres + backend + frontend 都在上面，写满是一起挂。
+VEW-68 给 docker 构建缓存加了 1 GB 封顶（「能削」），本模块补的是「削不动了有人知道」：
+
+- **后端侧（查询入口）**：`app/core/capacity.py` 按 `DISK_HEADROOM_CRON` 采样挂载点余量，
+  只在**状态跃迁**时产出结构化日志与事件（`[capacity] low path=/ free_gb=...`）——
+  采样是分钟级，每次低于阈值都写一行会被自己淹没，反而看不出什么时候跌下去的。
+  `/api/health/capacity` 每次请求实时采样，读路径无副作用。
+- **部署侧（投递通道）**：`.github/scripts/disk_headroom_check.sh` 在部署前与清理构建
+  缓存后各判一次，低于临界值即 `::error::` 并让本次运行失败。**这是仓库内唯一会通知
+  到人的通道** —— 没有日志采集 / 告警系统，容器 stdout 里的告警日志不会主动到达任何人。
+- 阈值口径是**可用空间**（不是使用率）：40 GB 盘上的风险由「一次部署构建需要几个 GB
+  的瞬时空间」决定，绝对 GB 才对应这个风险。两侧共用 `DISK_HEADROOM_*`（部署脚本优先
+  读 `backend/settings/.prod.env`，读不到时用与 `config.py` 一致的默认值）。
+
 ### 配置
 
 | 配置项 | 默认值 | 说明 |
@@ -258,6 +275,19 @@ pytest tests/
 | `SOURCE_HEALTH_EVENT_LIMIT` | `200` | 降级事件环形缓冲上限 |
 | `SOURCE_HEALTH_FAIL_THRESHOLD` | `3` | 连续失败升级为 ERROR 告警的阈值 |
 | `SOURCE_HEALTH_PROBE_SYMBOL` | `000001` | 探针使用的样本股票代码 |
+| `DISK_HEADROOM_ENABLED` | `true` | 磁盘余量采样任务开关（只读采样） |
+| `DISK_HEADROOM_PATHS` | `/` | 采样的挂载点（逗号分隔） |
+| `DISK_HEADROOM_WARN_GB` | `10.0` | 警告阈值（可用空间低于此值） |
+| `DISK_HEADROOM_CRITICAL_GB` | `5.0` | 临界阈值（部署脚本据此判失败） |
+| `DISK_HEADROOM_EVENT_LIMIT` | `100` | 容量事件环形缓冲上限 |
+| `DISK_HEADROOM_CRON` | `*/10 * * * *` | 采样周期 |
+
+部署侧闸门可离线演练（不读 `df`）：
+
+```bash
+bash .github/scripts/disk_headroom_check.sh post-prune --free-gb 3   # 临界 → exit 1
+bash .github/scripts/disk_headroom_check.sh pre-deploy --free-gb 3   # 只注解，不中止
+```
 
 ## 🔒 安全性
 

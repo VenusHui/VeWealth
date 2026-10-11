@@ -238,9 +238,11 @@ jobs:
               exit 1
             fi
             
-            # 部署前先看一眼磁盘，容量异常时日志里能直接看到（VEW-68）
-            echo "📊 部署前磁盘使用："
-            df -h / | tail -1
+            # 部署前先看一眼磁盘（VEW-68），并按 VEW-67 的阈值给出注解。
+            # 此时旧容器还在跑，闸门只报数、不中止部署 —— 「盘不够」由本次运行末尾的
+            # post-prune 判定负责失败并通知，不会漏（见 .github/scripts/disk_headroom_check.sh）。
+            echo "📊 部署前磁盘检查："
+            bash .github/scripts/disk_headroom_check.sh pre-deploy
 
             # 停止旧容器
             echo "🛑 停止旧容器..."
@@ -286,8 +288,16 @@ jobs:
               echo "⚠️⚠️⚠️ 构建缓存清理失败：磁盘可能在持续增长，请人工检查（VEW-68）⚠️⚠️⚠️"
             fi
 
-            echo "📊 部署后磁盘使用："
-            df -h / | tail -1
+            # 盘余量闸门（VEW-67）：封顶失败、或余量低于临界阈值 → 本次运行判失败。
+            #
+            # 部署本身可能已经成功，为什么还要判失败：这是仓库内唯一会通知到人的通道
+            # （GitHub Actions 的注解与失败）。40 GB 单盘写满是 postgres + backend +
+            # frontend 一起挂，属于需要立刻有人处理的处境 —— 判绿等于没人知道。
+            echo "📊 部署后磁盘检查："
+            if ! PRUNE_FAILED=$prune_ok bash .github/scripts/disk_headroom_check.sh post-prune; then
+              echo "❌ 盘余量闸门未通过（VEW-67）：见上方 ::error:: 注解，服务本身可能仍在正常提供"
+              exit 1
+            fi
 
             echo "=========================================="
             echo "✅ 部署完成！"

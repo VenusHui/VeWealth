@@ -112,6 +112,25 @@ class Settings(BaseSettings):
     SOURCE_HEALTH_FAIL_THRESHOLD: int = 3  # 连续失败升级为 ERROR 告警的阈值
     SOURCE_HEALTH_PROBE_SYMBOL: str = "000001"  # 探针使用的样本股票代码
 
+    # 磁盘余量观测 / 告警（VEW-67）
+    # 生产 / 是单块 40 GB 盘，postgres + backend + frontend 都在上面，写满是一起挂。
+    # VEW-68 给构建缓存加了 1 GB 封顶（「能削」），本条补的是「削不动了有人知道」：
+    # 后端进程内定时采样 + 状态跃迁告警日志，部署流水线另按同一组阈值判定
+    # （.github/scripts/disk_headroom_check.sh，那才是会通知到人的通道）。
+    DISK_HEADROOM_ENABLED: bool = True
+    # 逗号分隔的挂载点。容器内 / 是 overlay、/app/data 是持久卷，两者都在宿主同一块盘上。
+    DISK_HEADROOM_PATHS: str = "/"
+    # 阈值口径是**可用空间**（不是使用率）：40 GB 盘上的风险由「一次部署构建需要几个 GB
+    # 的瞬时空间」决定，绝对 GB 才对应这个风险，百分比不对应。
+    # 警告 10 GB：容量规划文档（docs/plans/2026-10-05-…-capacity.md）选择的策略性预留
+    #   —— 覆盖一次部署构建 + 日常波动 + postgres 增长，不是从峰值实测反推的数。
+    # 临界 5 GB：VEW-67 立题时的实测读数（当时判定「写满一起挂」的那个值），低于它时
+    #   部署构建很可能把 / 吃满。
+    DISK_HEADROOM_WARN_GB: float = 10.0
+    DISK_HEADROOM_CRITICAL_GB: float = 5.0
+    DISK_HEADROOM_EVENT_LIMIT: int = 100  # 容量事件环形缓冲上限
+    DISK_HEADROOM_CRON: str = "*/10 * * * *"  # 余量采样周期（每10分钟，一次 statfs）
+
     # mootdx 镜像候选机制（VEW-55 / VEW-62）
     # 逗号分隔的 "ip:port"（或裸 ip，默认 7709 端口）。非空时**完整覆盖**内置
     # curated 列表：用于镜像池整体失效时的应急止血，代价是把主源收敛到配置的
