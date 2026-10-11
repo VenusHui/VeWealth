@@ -2,6 +2,7 @@
 
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
+import logging
 import re
 from typing import Any, Callable
 
@@ -33,6 +34,8 @@ from app.services import universe_service
 WARMUP_BUFFER_BARS = 30
 #: 交易日约占自然日比例，用于把 bar 数换算成回拉自然日（含节假日冗余）
 _CALENDAR_FACTOR = 1.6
+
+logger = logging.getLogger(__name__)
 
 
 class BacktestService:
