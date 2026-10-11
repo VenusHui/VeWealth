@@ -9,7 +9,8 @@
 # 通道（没有日志采集 / 告警系统，容器 stdout 里的告警日志不会主动到达任何人）。
 #
 # 阈值与后端共用一组配置（backend/settings/.prod.env 的 DISK_HEADROOM_*，字段定义见
-# backend/app/core/config.py）；env 文件读不到时用与后端一致的默认值。口径是**可用
+# backend/app/core/config.py）；env 文件读不到时用与后端一致的默认值（警告 12 GB /
+# 临界 10 GB，依据见 config.py 该字段上方注释）。口径是**可用
 # 空间**，不是使用率 —— 40 GB 盘上的风险由「一次部署构建需要几个 GB 的瞬时空间」决定。
 #
 # 用法：
@@ -98,10 +99,11 @@ is_number() {
   printf '%s' "$1" | grep -Eq '^[0-9]+([.][0-9]+)?$'
 }
 
-# 阈值优先级：命令行 > env 文件 > 与后端一致的默认值。记录来源，报错时能指到具体哪一项。
-WARN_GB=10
+# 阈值优先级：命令行 > env 文件 > 与后端一致的默认值（队长拍板 12/10，依据见 config.py）。
+# 记录来源，报错时能指到具体哪一项。
+WARN_GB=12
 WARN_SRC="默认值"
-CRITICAL_GB=5
+CRITICAL_GB=10
 CRITICAL_SRC="默认值"
 if [ -n "$WARN_GB_OVERRIDE" ]; then
   WARN_GB="$WARN_GB_OVERRIDE"
@@ -179,7 +181,7 @@ if [ "$below_critical" = "1" ]; then
 fi
 
 if [ "$below_warn" = "1" ]; then
-  echo "::warning::/ 可用空间 ${FREE_GB}GB 低于警告阈值 ${WARN_GB}GB：尚可部署，但余量已进入需要留意的区间（VEW-67；阈值依据待队长拍板，见 config.py）"
+  echo "::warning::/ 可用空间 ${FREE_GB}GB 低于警告阈值 ${WARN_GB}GB：尚可部署，但余量已进入需要留意的区间 —— 该谈「腾空间还是扩盘」了（VEW-67）"
   exit 0
 fi
 

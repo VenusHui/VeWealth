@@ -35,7 +35,7 @@ Docker 部署时通过 `docker-compose.yml` 将本目录挂载到容器 `backend
 | `CORS_ORIGINS` | 允许的前端来源（JSON 数组） | 必改（加入实际访问域名） |
 | `DATA_PROVIDER` | 行情数据源（`astock` / `akshare`） | 默认 `astock` |
 | `SCHEDULER_ENABLED` | 是否启用定时任务 | 默认 `true` |
-| `DISK_HEADROOM_WARN_GB` / `DISK_HEADROOM_CRITICAL_GB` | 磁盘余量告警 / 临界阈值（GB，可用空间口径） | 可选，默认 `10` / `5`；部署闸门 `.github/scripts/disk_headroom_check.sh` 也读这两项 |
+| `DISK_HEADROOM_WARN_GB` / `DISK_HEADROOM_CRITICAL_GB` | 磁盘余量告警 / 临界阈值（GB，可用空间口径） | 可选，默认 `12` / `10`；部署闸门 `.github/scripts/disk_headroom_check.sh` 也读这两项（`env` 文件缺这两个键时用同一组默认值）。依据：临界取容量规划文档的策略性预留下限（回填后剩余 ≥ 10 GB），警告取其上一档、低于实测常态区间 13–15 GB —— 详见 `config.py` 该字段上方注释 |
 | `TUSHARE_TOKEN` | Tushare 备用源 Token | 可选 |
 
 完整字段见 `backend/app/core/config.py` 中的 `Settings` 类（Pydantic `extra="ignore"`，未在类中声明的键会被静默忽略）。

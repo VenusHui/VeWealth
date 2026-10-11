@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -235,7 +236,8 @@ class DiskHeadroomGateTests(unittest.TestCase):
         self.assertNotIn("::error::", proc.stdout)
 
     def test_warning_headroom_does_not_fail(self):
-        proc = self._run("post-prune", "--free-gb", "7", "--env-file", "/nonexistent")
+        # 11 GB：落在拍板的 10–12 GB 预警带里（默认阈值 12/10）
+        proc = self._run("post-prune", "--free-gb", "11", "--env-file", "/nonexistent")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("::warning::", proc.stdout)
 
@@ -384,7 +386,65 @@ class DiskHeadroomGateTests(unittest.TestCase):
             "7.5",
         )
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertIn("::warning::", proc.stdout)  # 9 < 10 警告线，但不低于 7.5 临界
+        self.assertIn("::warning::", proc.stdout)  # 9 < 12 警告线，但不低于 7.5 临界
+
+    # ------------------------------------------------------------------
+    # 阈值默认值（队长拍板 12 / 10）：两处各写一份，漂了不会有症状
+    # ------------------------------------------------------------------
+
+    def test_default_thresholds_agree_across_backend_and_gate(self):
+        """`config.py` 与闸门脚本的默认值必须一致，且是拍板的那两个数。
+
+        为什么钉这个：`.prod.env` 目前**没有**这两个键，所以生效的就是默认值；而默认值在
+        两处各写了一份（Pydantic 的 float 与脚本里的字面量），漂了不会有任何症状 —— 后端
+        按一套阈值记事件、部署闸门按另一套判红。这里按源码文本比对（不 import settings，
+        避免读到 env 文件里的覆盖值，那样就测不到「默认值」本身了）。
+        """
+        config_src = (REPO_ROOT / "backend" / "app" / "core" / "config.py").read_text(
+            encoding="utf-8"
+        )
+        script_src = GATE_SCRIPT.read_text(encoding="utf-8")
+
+        def config_default(name: str) -> float:
+            m = re.search(rf"^[ \t]*{name}: float = ([0-9.]+)$", config_src, re.M)
+            self.assertIsNotNone(m, f"config.py 里找不到 {name} 的默认值")
+            return float(m.group(1))
+
+        def script_default(name: str) -> float:
+            m = re.search(rf"^{name}=([0-9.]+)$", script_src, re.M)
+            self.assertIsNotNone(m, f"闸门脚本里找不到 {name} 的默认值")
+            return float(m.group(1))
+
+        pairs = {
+            "DISK_HEADROOM_WARN_GB": "WARN_GB",
+            "DISK_HEADROOM_CRITICAL_GB": "CRITICAL_GB",
+        }
+        for cfg_key, sh_key in pairs.items():
+            self.assertEqual(
+                config_default(cfg_key),
+                script_default(sh_key),
+                f"{cfg_key} 与脚本 {sh_key} 的默认值不一致",
+            )
+        # 拍板的数值本身也钉住：改它必须是有意为之
+        self.assertEqual(config_default("DISK_HEADROOM_WARN_GB"), 12.0)
+        self.assertEqual(config_default("DISK_HEADROOM_CRITICAL_GB"), 10.0)
+
+    def test_default_bands_at_agreed_thresholds(self):
+        """按拍板值钉住三段：≥12 绿 / [10,12) 黄 / <10 红。"""
+        for free, expected_code, marker in (
+            ("12", 0, "✅"),
+            ("11.9", 0, "::warning::"),
+            ("10", 0, "::warning::"),  # 恰好等于临界线不算「低于」
+            ("9.9", 1, "::error::"),
+        ):
+            with self.subTest(free_gb=free):
+                proc = self._run(
+                    "post-prune", "--free-gb", free, "--env-file", "/nonexistent"
+                )
+                self.assertEqual(proc.returncode, expected_code, proc.stdout)
+                self.assertIn(marker, proc.stdout, proc.stdout)
+                if expected_code == 0 and marker == "✅":
+                    self.assertNotIn("::warning::", proc.stdout, proc.stdout)
 
     def test_real_df_path_never_crashes(self):
         """不传 --free-gb 时走真实 df；只要求脚本能给出结论，不断言具体读数。"""
