@@ -261,9 +261,9 @@ def run_minute_portfolio(
     if trade_start_ts is not None:
         for symbol, frame in data.items():
             first_session = pd.Timestamp(frame["session_date"].min())
-            if first_session < trade_start_ts:
-                continue  # 回测区间之前有行情，首日约束正常
-            if first_session not in prev_close_map.get(symbol, {}):
+            # 帧内首日不早于回测起点 ⇒ 帧里没有它的前一个交易日 ⇒ 前收盘价必然缺失
+            # （previous_close_by_session 的键是 sessions[1:]，首日永远不是键）
+            if first_session >= trade_start_ts:
                 warnings.append(
                     f"{symbol} {first_session.date()}: 窗口首日无前收盘价，"
                     "当日涨跌停约束缺失"

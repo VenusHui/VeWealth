@@ -232,6 +232,51 @@ def test_loader_covers_the_whole_window_when_count_is_the_binding_limit():
     assert result.provenance.gap is False
 
 
+def test_loader_lead_start_extends_fetch_without_changing_adjudication():
+    """``lead_start`` 只改变向源请求的窗口，裁决与留痕仍以用户区间为准。"""
+    fetch = _FakeFetch({"000001": _minute_frame(["2026-01-05"])})
+    loader = MinuteDataLoader(fetch_minute=fetch)
+    result = loader.load(
+        "000001", "1", "2026-01-05", "2026-01-06", as_of=AS_OF, lead_start="2025-12-29"
+    )
+
+    assert fetch.calls[0]["start_datetime"].startswith("2025-12-29")
+    assert result.decision.requested_start.isoformat() == "2026-01-05"
+    assert result.decision.effective_start.isoformat() == "2026-01-05"
+    assert result.provenance.requested_start == "2026-01-05"
+    assert result.provenance.truncated is False
+
+
+def test_loader_lead_start_never_shrinks_the_adjudicated_window():
+    """``lead_start`` 晚于用户区间起点时忽略 —— 不能借它少取用户要的数据。"""
+    fetch = _FakeFetch({"000001": _minute_frame(["2026-01-05"])})
+    loader = MinuteDataLoader(fetch_minute=fetch)
+    loader.load(
+        "000001", "1", "2026-01-05", "2026-01-06", as_of=AS_OF, lead_start="2026-01-06"
+    )
+    assert fetch.calls[0]["start_datetime"].startswith("2026-01-05")
+
+
+def test_loader_clamps_lead_start_to_depth_floor_under_strict_policy():
+    """缓冲不是用户请求：它落在深度之外时只夹紧，不能让 ``strict`` 报错。"""
+    fetch = _FakeFetch({"000001": _minute_frame(["2026-01-05"])})
+    loader = MinuteDataLoader(fetch_minute=fetch)
+    # as_of 2026-01-10 → 1min 下界 2025-09-12；lead_start 2025-01-01 远在界外
+    result = loader.load(
+        "000001",
+        "1",
+        "2026-01-05",
+        "2026-01-06",
+        policy="strict",
+        as_of=AS_OF,
+        lead_start="2025-01-01",
+    )
+
+    assert fetch.calls[0]["start_datetime"].startswith("2025-09-12")
+    assert result.decision.truncated is False
+    assert result.provenance.truncated is False
+
+
 def test_loader_records_original_request_window_and_effective_start():
     fetch = _FakeFetch({"000001": _minute_frame(["2026-01-05"])})
     loader = MinuteDataLoader(fetch_minute=fetch)
@@ -278,7 +323,7 @@ def _run_service(frames, orders, **kwargs):
         initial_cash=100000.0,
         cost_model=CostModel(),
         loader=loader,
-        as_of=AS_OF,
+        as_of=kwargs.pop("as_of", AS_OF),
         **kwargs,
     )
     return result, fetch
@@ -416,9 +461,10 @@ def test_service_always_reserves_limit_reference_buffer_before_start():
     load_window = result["diagnostics"]["load_window"]
     assert load_window["warmup_sessions"] == 0
     assert load_window["limit_reference_days"] > 0
-    assert load_window["requested_start"] < "2026-01-06"
-    # 缓冲落在深度之内，所以实际生效的取数起点就是带缓冲的那个，没有被截断
-    assert load_window["start"] == load_window["requested_start"]
+    assert load_window["desired_start"] < "2026-01-06"
+    # 缓冲落在深度之内，所以实际生效的取数起点就是带缓冲的那个，没有被夹紧
+    assert load_window["buffer_clamped"] is False
+    assert load_window["start"] == load_window["desired_start"]
     assert fetch.calls[0]["start_datetime"].startswith(load_window["start"])
 
 
@@ -443,3 +489,54 @@ def test_service_records_per_symbol_depth_truncation():
     # 逐标的记的是**原始**请求区间，截断后的区间由顶层 depth_decision 给
     assert row["requested_start"] < result["diagnostics"]["load_window"]["start"]
     assert any("取数区间被深度截断" in w for w in result["warnings"])
+
+
+def test_service_strict_policy_judges_the_user_window_not_the_internal_buffer():
+    """``strict`` 只裁决**用户请求区间**：内部向前多取的缓冲被深度挡住时夹紧即可。
+
+    回归：把内部缓冲一起送进裁决，会让一个完全落在深度内的请求被判死，报错还拿内部
+    起点当「请求起始」让用户缩短区间 —— 而用户的区间本来就在深度内。
+    """
+    frames = {"000001": _minute_frame(["2026-06-10", "2026-06-11"])}
+    # as_of 2026-10-05 → 1min 有效深度 120 天 → 下界 2026-06-07，用户起点 06-10 在界内
+    result, fetch = _run_service(
+        frames,
+        None,
+        start_date="2026-06-10",
+        end_date="2026-10-05",
+        depth_policy="strict",
+        as_of="2026-10-05",
+    )
+
+    assert result["diagnostics"]["depth_decision"]["truncated"] is False
+    load_window = result["diagnostics"]["load_window"]
+    # 缓冲（warmup 1 天 + 首日前收盘 7 天）想要 2026-06-02，被夹到深度下界
+    assert load_window["desired_start"] == "2026-06-02"
+    assert load_window["buffer_clamped"] is True
+    assert load_window["start"] == "2026-06-07"
+    assert fetch.calls[0]["start_datetime"].startswith("2026-06-07")
+    assert not any("深度不足" in w for w in result["warnings"])
+
+
+def test_service_does_not_report_truncation_when_only_the_buffer_is_clamped():
+    """缓冲被夹紧 ≠ 用户区间被截断。
+
+    回归：把内部缓冲算进用户区间的裁决后，同一请求会收到「结果不覆盖原始请求起点
+    2026-06-10」的告警，而 ``equity_curve`` 恰恰从 2026-06-10 09:31 开始 —— 归因错的
+    告警比没有告警更糟。
+    """
+    frames = {"000001": _minute_frame(["2026-06-10", "2026-06-11"])}
+    result, _ = _run_service(
+        frames,
+        None,
+        start_date="2026-06-10",
+        end_date="2026-10-05",
+        as_of="2026-10-05",
+    )
+
+    diagnostics = result["diagnostics"]
+    assert diagnostics["depth_decision"]["truncated"] is False
+    assert diagnostics["load_window"]["buffer_clamped"] is True
+    assert not any("深度不足" in w for w in result["warnings"])
+    # 结果确实覆盖了用户起点 —— 说「不覆盖」就是假的
+    assert result["equity_curve"][0]["datetime"].startswith("2026-06-10")

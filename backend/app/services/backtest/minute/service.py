@@ -3,7 +3,9 @@
 本模块把 P2 的三块拼起来，对外只暴露一个入口 :func:`run_minute_backtest`：
 
 1. **数据入口**（``minute.data``）：逐标的按需取数（mootdx 为主、腾讯 ``ifzq`` 为次），
-   不落常驻库；深度不足按 ``strict`` 报错或按 ``truncate`` 截断并注明。
+   不落常驻库；深度不足按 ``strict`` 报错或按 ``truncate`` 截断并注明。深度裁决只针对
+   **用户请求区间**，内部向前扩取的缓冲（指标 warmup、回测首日前收盘）被深度下界挡住
+   时只夹紧 —— 否则一个完全落在深度内的请求会因为内部多取几天而被 ``strict`` 判死。
 2. **分钟撮合**（``minute.engine``）：滑点/费用、涨跌停、停牌、集合竞价、T+1，
    可选止损止盈。
 3. **基准与因子对齐**（``minute.alignment``）：日线序列对齐到分钟 bar 时显式区分
@@ -75,12 +77,17 @@ def _default_benchmark_loader(
 def _load_minute_frames(
     symbols: list[str],
     period: str,
-    load_start: date,
+    request_start: date,
     end_date: date,
     policy: str,
     loader: MinuteDataLoader,
     as_of: date | None,
+    lead_start: date,
 ) -> tuple[dict[str, pd.DataFrame], list[MinuteLoadResult], list[str]]:
+    """逐标的取数：以**用户区间**做深度裁决，以 ``lead_start`` 作为实际取数起点。
+
+    两个窗口必须分开传 —— 见 :meth:`MinuteDataLoader.load`。
+    """
     frames: dict[str, pd.DataFrame] = {}
     results: list[MinuteLoadResult] = []
     warnings: list[str] = []
@@ -88,10 +95,11 @@ def _load_minute_frames(
         result = loader.load(
             symbol,
             period,
-            load_start,
+            request_start,
             end_date,
             policy=policy,
             as_of=as_of,
+            lead_start=lead_start,
         )
         results.append(result)
         if result.df is None or result.df.empty:
@@ -134,7 +142,9 @@ def run_minute_backtest(
         start_date / end_date: 回测区间（含首尾）。
         initial_cash: 初始资金。
         hold_days: 持仓交易日数（T+1 强制 >= 1）。
-        depth_policy: ``strict``（超深度报错）/ ``truncate``（截断并注明）。
+        depth_policy: ``strict``（超深度报错）/ ``truncate``（截断并注明）。只裁决
+            **用户请求区间** —— 内部向前扩取的缓冲（warmup 与首日前收盘）被深度下界
+            挡住时只夹紧，不会让 ``strict`` 报错。
         warmup_sessions: 为指标预热额外回拉的交易日数（取数区间向前扩，但净值与成交
             仍从 ``start_date`` 起算）。另有始终生效的首日前收盘缓冲（
             ``_LIMIT_REFERENCE_DAYS`` 自然日），与 warmup 无关。
@@ -164,20 +174,26 @@ def run_minute_backtest(
     # warmup 只为指标预热：取数区间向前扩，但引擎的 trade_start 仍钉在用户区间起点。
     # 额外再加 _LIMIT_REFERENCE_DAYS，保证回测首日也有前收盘价可算涨跌停。
     warmup_days = int(max(0, warmup_sessions) * _CALENDAR_FACTOR) + 1
-    requested_load_start = user_start - timedelta(
-        days=warmup_days + _LIMIT_REFERENCE_DAYS
-    )
+    buffer_days = warmup_days + _LIMIT_REFERENCE_DAYS
 
-    # 深度裁决按**实际取数区间**做：warmup 拉不动就取不到指标，同样必须显式暴露
+    # 深度裁决只对**用户区间**做：strict 报错、截断文案都是对用户说的，内部缓冲不是
+    # 用户请求，把它算进来会让完全合法的请求被判死（strict），或让告警声称「结果不
+    # 覆盖原始请求起点」而实际上 trade_start 仍钉在用户起点、结果完整覆盖。
     decision = resolve_request_window(
-        key, requested_load_start, end, policy=depth_policy, as_of=as_of_date
+        key, user_start, end, policy=depth_policy, as_of=as_of_date
     )
     load_start = decision.effective_start
 
-    # 原始（未截断）区间交给 loader，让它按标的各自裁决并记录 —— 深度截断是逐标的的
-    # 事实，只在顶层 diagnostics 可见会让逐标的 provenance 的 truncated/depth_note 恒空
+    # 内部缓冲在用户有效起点之上再向前扩，被深度下界挡住时**夹紧**（缓冲是内部便利，
+    # 不该触发 strict，也不该被描述成用户的请求超出深度）
+    desired_lead_start = load_start - timedelta(days=buffer_days)
+    lead_start = max(desired_lead_start, decision.depth_floor)
+    buffer_clamped = lead_start > desired_lead_start
+
+    # 用户区间（而非内部缓冲）交给 loader 裁决并留痕 —— 深度截断是逐标的的事实，只在
+    # 顶层 diagnostics 可见会让逐标的 provenance 的 truncated/depth_note 恒空
     frames, results, warnings = _load_minute_frames(
-        symbols, key, requested_load_start, end, depth_policy, loader, as_of_date
+        symbols, key, user_start, end, depth_policy, loader, as_of_date, lead_start
     )
     if not frames:
         raise ValueError(
@@ -187,9 +203,11 @@ def run_minute_backtest(
         )
 
     if decision.truncated:
+        # 只描述**用户区间**被截断：内部缓冲被夹紧不在此列（那不影响结果覆盖范围，
+        # 只可能让回测首日缺前收盘价，由引擎按实际数据告警）
         warnings.append(
-            f"分钟取数深度不足：{decision.note}；实际回测区间 "
-            f"{load_start}~{end}，结果不覆盖原始请求起点 {user_start}"
+            f"分钟取数深度不足：{decision.note}；用户请求区间起点 {user_start} "
+            f"超出源深度，实际回测从 {load_start} 起，结果不覆盖 {user_start}"
         )
 
     provenance = provenance_summary(results)
@@ -227,10 +245,13 @@ def run_minute_backtest(
             "start": user_start.isoformat(),
             "end": end.isoformat(),
         },
+        # 实际取数窗口（含内部缓冲）与它的构成。用户请求区间见 ``requested_window``
         "load_window": {
-            "start": load_start.isoformat(),
+            "start": lead_start.isoformat(),
             "end": end.isoformat(),
-            "requested_start": requested_load_start.isoformat(),
+            "desired_start": desired_lead_start.isoformat(),
+            "buffer_days": buffer_days,
+            "buffer_clamped": buffer_clamped,
             "warmup_sessions": int(max(0, warmup_sessions)),
             "limit_reference_days": _LIMIT_REFERENCE_DAYS,
         },

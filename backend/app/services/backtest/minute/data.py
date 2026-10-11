@@ -29,9 +29,6 @@ from app.services.backtest.minute.depth import (
 )
 from app.services.backtest.minute.session import bars_per_day
 
-#: 分钟 bar 的标准列（与数据源层输出契约一致）
-MINUTE_COLUMNS = ["datetime", "open", "high", "low", "close", "volume"]
-
 #: 单标的单次取数的墙钟预算（秒）。数据源层默认 12s 是给前端 15s 超时留的余量；回测
 #: 不是交互路径，长区间翻页需要更大预算，但仍有界 —— 超预算即返回已取部分，并由
 #: provenance 的 gap 暴露出来。
@@ -43,6 +40,10 @@ _TRADING_DAY_RATIO = 5.0 / 7.0
 #: 根数估算的安全余量。``count`` 在两条源链上都是**硬上限**（「从最新一根往前最多取
 #: count 根，再按区间过滤」），估小会静默砍掉窗口头部且不可恢复，估大只是多取几根再
 #: 被区间过滤掉 —— 所以只往多的方向留余量。
+#:
+#: 有效系数 ≈ 0.857（真实交易日/自然日 ≈ 0.666，即多翻约 1/4 的页）。这是拿取数预算
+#: 换「不砍窗口头部」：若长窗口开始频繁撞上 ``DEFAULT_FETCH_BUDGET_SECONDS``，先考虑
+#: 抬预算，再考虑把余量收到 1.1。
 _COUNT_SAFETY_MARGIN = 1.2
 
 #: 短窗口的固定余量（交易日）：比例折算出 0 时也要保证至少覆盖几天。
@@ -175,20 +176,33 @@ class MinuteDataLoader:
         end_date: date | str,
         policy: str = "truncate",
         as_of: date | str | None = None,
+        lead_start: date | str | None = None,
     ) -> MinuteLoadResult:
         """取一只标的的分钟数据（区间已按深度策略裁决）。
 
+        ``start_date`` / ``end_date`` 是**用户请求区间**：深度裁决、``strict`` 报错、
+        provenance 的 ``requested_*`` / ``truncated`` / ``depth_note`` 一律以它为准。
+        调用方内部为预热或首日前收盘多取的区间不是用户请求，拿它去报错或告警会把
+        「内部缓冲被夹紧」说成「用户的请求超出深度」。
+
+        ``lead_start`` 是内部向前扩取的起点（指标 warmup、回测首日前收盘）：只改变实际
+        向源请求的窗口，不参与裁决。早于裁决起点才生效（晚于等于则忽略，不能借它少取
+        用户要的数据），且同样被深度下界夹紧 —— 缓冲落在深度之外只夹紧、不报错。
+
         Raises:
-            MinuteDepthExceededError: ``strict`` 策略下请求超出源深度，或整个区间都在
-                可用深度之外。
+            MinuteDepthExceededError: ``strict`` 策略下**用户区间**超出源深度，或整个
+                区间都在可用深度之外。
         """
         decision = resolve_request_window(
             period, start_date, end_date, policy=policy, as_of=as_of
         )
-        count = estimate_bar_count(
-            decision.effective_start, decision.effective_end, decision.period
-        )
-        start_datetime = f"{decision.effective_start} 09:00:00"
+        fetch_start = decision.effective_start
+        if lead_start is not None:
+            lead = max(pd.Timestamp(lead_start).date(), decision.depth_floor)
+            if lead < fetch_start:
+                fetch_start = lead
+        count = estimate_bar_count(fetch_start, decision.effective_end, decision.period)
+        start_datetime = f"{fetch_start} 09:00:00"
         end_datetime = f"{decision.effective_end} 16:00:00"
 
         failure_reason: str | None = None
