@@ -393,12 +393,16 @@ class DiskHeadroomGateTests(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_default_thresholds_agree_across_backend_and_gate(self):
-        """`config.py` 与闸门脚本的默认值必须一致，且是拍板的那两个数。
+        """`Settings` 与闸门脚本的默认值必须一致，且是拍板的那两个数。
 
         为什么钉这个：`.prod.env` 目前**没有**这两个键，所以生效的就是默认值；而默认值在
-        两处各写了一份（Pydantic 的 float 与脚本里的字面量），漂了不会有任何症状 —— 后端
-        按一套阈值记事件、部署闸门按另一套判红。这里按源码文本比对（不 import settings，
-        避免读到 env 文件里的覆盖值，那样就测不到「默认值」本身了）。
+        两处各写了一份（Pydantic 的 float 与脚本里的字面量 —— shell 侧无法共用 Python
+        配置，这一份去不掉），漂了不会有任何症状：后端按一套阈值记事件、部署闸门按另一套
+        判红。这里按源码文本比对（不 import settings，避免读到 env 文件里的覆盖值，那样就
+        测不到「默认值」本身了）。
+
+        第三处副本（`CapacityMonitor` 的类默认值）已按评审 M2 去掉，改由
+        `test_monitor_class_has_no_threshold_defaults` 钉住。
         """
         config_src = (REPO_ROOT / "backend" / "app" / "core" / "config.py").read_text(
             encoding="utf-8"
@@ -428,6 +432,19 @@ class DiskHeadroomGateTests(unittest.TestCase):
         # 拍板的数值本身也钉住：改它必须是有意为之
         self.assertEqual(config_default("DISK_HEADROOM_WARN_GB"), 12.0)
         self.assertEqual(config_default("DISK_HEADROOM_CRITICAL_GB"), 10.0)
+
+    def test_monitor_class_has_no_threshold_defaults(self):
+        """`CapacityMonitor` 不留第三份阈值副本（评审 M2）。
+
+        类默认值曾是 `10.0 / 5.0`，也就是被拍板否掉的那一对：单例和现有测试都显式传值，
+        所以今天没有行为差异，但裸构造会按一套没人记得的旧政策行事 —— 正是上一条测试
+        想消灭的同一个漂移面。现在阈值必填，裸构造直接报错，而不是悄悄用一套别的数。
+        """
+        with self.assertRaises(TypeError):
+            CapacityMonitor(paths=["/"])
+        # 显式传值（单例与测试的用法）不受影响
+        monitor = CapacityMonitor(paths=["/"], warn_gb=12.0, critical_gb=10.0)
+        self.assertEqual((monitor.warn_gb, monitor.critical_gb), (12.0, 10.0))
 
     def test_default_bands_at_agreed_thresholds(self):
         """按拍板值钉住三段：≥12 绿 / [10,12) 黄 / <10 红。"""

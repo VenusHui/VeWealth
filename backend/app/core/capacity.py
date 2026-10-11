@@ -132,13 +132,21 @@ class CapacityMonitor:
     「当前状态」查 ``snapshot()`` / ``sample()``，「何时变的」查 ``events_recent()``。
 
     线程安全：采样与状态更新在锁内完成，调度任务与 HTTP 读路径可并发调用。
+
+    阈值（``warn_gb`` / ``critical_gb``）**必填**：这里刻意不留默认值 —— 阈值是策略
+    数字，唯一权威的默认值在 ``Settings.DISK_HEADROOM_*``（本模块的单例从那里取），
+    另一份副本在部署闸门 ``.github/scripts/disk_headroom_check.sh``（shell 侧无法共用
+    Python 配置），两者由 ``tests/test_capacity_vew67.py`` 钉住一致。类里再放一份就等于
+    第三个副本：裸构造会按一套没人记得的旧政策行事，而且漂了不会有任何症状 —— 正是
+    VEW-67 要消灭的那种失效（VEW-67 评审 M2）。
     """
 
     def __init__(
         self,
         paths: Optional[list[str]] = None,
-        warn_gb: float = 10.0,
-        critical_gb: float = 5.0,
+        *,
+        warn_gb: float,
+        critical_gb: float,
         event_limit: int = 100,
         usage_fn: Optional[Callable[[str], Any]] = None,
     ) -> None:
@@ -163,7 +171,7 @@ class CapacityMonitor:
         critical_gb: Optional[float] = None,
         event_limit: Optional[int] = None,
     ) -> None:
-        """应用启动时用配置覆盖默认参数。"""
+        """运行时覆盖构造时传入的阈值 / 挂载点 / 缓冲上限（应用启动时按配置调用）。"""
         with self._lock:
             if paths:
                 self._paths = list(paths)

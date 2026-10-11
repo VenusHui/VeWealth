@@ -289,8 +289,8 @@ VEW-68 给 docker 构建缓存加了 1 GB 封顶（「能削」），本模块�
 | `SOURCE_HEALTH_PROBE_SYMBOL` | `000001` | 探针使用的样本股票代码 |
 | `DISK_HEADROOM_ENABLED` | `true` | 磁盘余量采样任务开关（只读采样） |
 | `DISK_HEADROOM_PATHS` | `/` | 采样的挂载点（逗号分隔） |
-| `DISK_HEADROOM_WARN_GB` | `10.0` | 警告阈值（可用空间低于此值） |
-| `DISK_HEADROOM_CRITICAL_GB` | `5.0` | 临界阈值（部署脚本据此判失败） |
+| `DISK_HEADROOM_WARN_GB` | `12.0` | 警告阈值（可用空间低于此值） |
+| `DISK_HEADROOM_CRITICAL_GB` | `10.0` | 临界阈值（部署脚本据此判失败） |
 | `DISK_HEADROOM_EVENT_LIMIT` | `100` | 容量事件环形缓冲上限 |
 | `DISK_HEADROOM_CRON` | `*/10 * * * *` | 采样周期 |
 
