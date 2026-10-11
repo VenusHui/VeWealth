@@ -150,6 +150,30 @@ def capture_universe_snapshot():
         db.close()
 
 
+def check_disk_headroom():
+    """
+    磁盘余量采样任务（VEW-67）。
+
+    只采样、只在**状态跃迁**时产出告警日志（见 app/core/capacity.py）：40 GB 单盘上
+    postgres + backend + frontend 一起住，写满是一起挂，所以余量本身要成为可观测项。
+    会通知到人的通道是部署流水线的同名判定（.github/scripts/disk_headroom_check.sh），
+    这里负责的是「随时可查 + 状态变化留痕」。
+    """
+    from app.core.capacity import capacity_monitor
+
+    try:
+        snapshot = capacity_monitor.check()
+    except Exception as e:
+        logger.error(f"磁盘余量检查失败: {str(e)}", exc_info=True)
+        return None
+
+    summary = ", ".join(
+        f"{d['path']}={d['status']}(可用 {d['free_gb']}GB)" for d in snapshot["disks"]
+    )
+    logger.info(f"磁盘余量检查完成: {summary}")
+    return snapshot
+
+
 class AppScheduler:
     """应用调度器"""
 
@@ -216,6 +240,19 @@ class AppScheduler:
             logger.info(f"已添加任务: 分钟行情采集 ({settings.MINUTE_COLLECT_CRON})")
         else:
             logger.info("分钟行情采集任务已禁用 (MINUTE_COLLECT_ENABLED=False)")
+
+        # 磁盘余量采样任务（VEW-67）。只读采样、无副作用，默认开启。
+        if settings.DISK_HEADROOM_ENABLED:
+            self.scheduler.add_job(
+                check_disk_headroom,
+                trigger=CronTrigger.from_crontab(settings.DISK_HEADROOM_CRON),
+                id="disk_headroom_check",
+                name="磁盘余量检查",
+                replace_existing=True,
+            )
+            logger.info(f"已添加任务: 磁盘余量检查 ({settings.DISK_HEADROOM_CRON})")
+        else:
+            logger.info("磁盘余量检查任务已禁用 (DISK_HEADROOM_ENABLED=False)")
 
     def start(self):
         """启动调度器"""
